@@ -1,0 +1,100 @@
+# =============================================================================
+# Sentinel Apex — API Dockerfile
+# Multi-stage build: base → deps → builder → runner
+# =============================================================================
+# Build context must be the repository root so Turborepo can resolve the full
+# workspace graph:
+#   docker build -f infra/docker/Dockerfile.api -t sentinel-api .
+# =============================================================================
+
+ARG NODE_VERSION=20
+ARG PNPM_VERSION=9.1.0
+
+# =============================================================================
+# Stage 1 — base
+# Shared OS-level setup: apk packages, corepack, pnpm.
+# =============================================================================
+FROM node:${NODE_VERSION}-alpine AS base
+
+ARG PNPM_VERSION
+
+RUN apk add --no-cache \
+      libc6-compat \
+      dumb-init \
+    && corepack enable \
+    && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+ENV PNPM_HOME="/root/.local/share/pnpm"
+ENV PATH="${PNPM_HOME}:${PATH}"
+
+WORKDIR /app
+
+# =============================================================================
+# Stage 2 — deps
+# Install ALL workspace dependencies (including devDependencies) so turbo can
+# build packages that depend on each other.
+# =============================================================================
+FROM base AS deps
+
+# Copy manifests first for better layer caching.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY turbo.json ./
+
+# Copy each workspace package.json — avoids copying full source at this stage.
+COPY apps/api/package.json ./apps/api/package.json
+# Add additional workspace manifests as packages grow:
+# COPY packages/core/package.json ./packages/core/package.json
+# COPY packages/db/package.json   ./packages/db/package.json
+
+RUN pnpm install --frozen-lockfile
+
+# =============================================================================
+# Stage 3 — builder
+# Copy source, compile TypeScript, prune dev deps.
+# =============================================================================
+FROM deps AS builder
+
+ARG NODE_ENV=production
+ENV NODE_ENV=${NODE_ENV}
+
+# Copy the full source tree (respects .dockerignore at repo root).
+COPY . .
+
+# Build only the API and its internal dependencies via Turborepo.
+RUN pnpm turbo run build --filter=@sentinel-apex/api...
+
+# Prune the install to production-only deps for the runtime image.
+RUN pnpm deploy --filter=@sentinel-apex/api --prod /prod/api
+
+# =============================================================================
+# Stage 4 — runner
+# Minimal production image: non-root user, no build tooling.
+# =============================================================================
+FROM node:${NODE_VERSION}-alpine AS runner
+
+RUN apk add --no-cache \
+      libc6-compat \
+      dumb-init \
+    && addgroup --system --gid 1001 sentinel \
+    && adduser  --system --uid 1001 --ingroup sentinel sentinel
+
+WORKDIR /app
+
+# Copy the pruned production package from the builder.
+COPY --from=builder --chown=sentinel:sentinel /prod/api ./
+
+# Copy compiled output explicitly (pnpm deploy preserves dist/).
+# If your build writes outside dist/, adjust accordingly.
+# COPY --from=builder --chown=sentinel:sentinel /app/apps/api/dist ./dist
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+USER sentinel
+
+EXPOSE 3000
+EXPOSE 9090
+
+# dumb-init handles signals correctly (reaps zombies, forwards SIGTERM).
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "dist/index.js"]
