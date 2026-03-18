@@ -1,4 +1,4 @@
-import type { SentinelRuntime } from '@sentinel-apex/runtime';
+import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { authenticate } from '../middleware/auth.js';
 
@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 
 export async function controlRoutes(
   app: FastifyInstance,
-  runtime: SentinelRuntime,
+  controlPlane: RuntimeControlPlane,
 ): Promise<void> {
   app.post<{
     Body: { reason: string };
@@ -16,7 +16,7 @@ export async function controlRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const status = await runtime.activateKillSwitch(request.body.reason, 'api-control');
+      const status = await controlPlane.activateKillSwitch(request.body.reason, 'api-control');
 
       return reply.status(200).send({
         data: {
@@ -38,7 +38,7 @@ export async function controlRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const status = await runtime.resume(request.body.reason, request.body.confirmedBy);
+      const status = await controlPlane.resume(request.body.reason, request.body.confirmedBy);
 
       return reply.status(200).send({
         data: {
@@ -59,7 +59,8 @@ export async function controlRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const status = await runtime.getRuntimeStatus();
+      const status = await controlPlane.getRuntimeStatus();
+      const worker = await controlPlane.getWorkerStatus();
       return reply.status(200).send({
         data: {
           mode: status.executionMode,
@@ -67,6 +68,8 @@ export async function controlRoutes(
           halted: status.halted,
           lifecycleState: status.lifecycleState,
           projectionStatus: status.projectionStatus,
+          workerLifecycleState: worker.lifecycleState,
+          workerSchedulerState: worker.schedulerState,
         },
         meta: { correlationId: request.id },
       });
@@ -81,7 +84,7 @@ export async function controlRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const status = await runtime.setExecutionMode(request.body.mode);
+      const status = await controlPlane.setExecutionMode(request.body.mode);
       return reply.status(200).send({
         data: {
           acknowledged: true,

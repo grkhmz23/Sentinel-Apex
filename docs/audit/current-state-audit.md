@@ -6,7 +6,7 @@ Repo: `/workspaces/Sentinel-Apex`
 ## What Exists
 
 - Monorepo tooling: `pnpm`, Turborepo, TypeScript, ESLint, Prettier, Vitest.
-- App: `apps/api`.
+- Apps: `apps/api`, `apps/runtime-worker`.
 - Packages: `carry`, `config`, `db`, `domain`, `execution`, `observability`, `risk-engine`, `runtime`, `shared`, `strategy-engine`, `venue-adapters`.
 - Docs: `docs/prd`, `docs/architecture`, `docs/adr`, `docs/risk`, `docs/strategy`, `docs/audit`.
 - Infra: `docker-compose.yml`, `infra/docker/Dockerfile.api`, `infra/docker/docker-compose.local-db.yml`.
@@ -22,10 +22,14 @@ Repo: `/workspaces/Sentinel-Apex`
 - `packages/runtime` now provides:
   - explicit bootstrap and shutdown semantics
   - persisted runtime lifecycle state
+  - persisted worker lifecycle and scheduler state
+  - durable runtime commands for one-shot cycles and projection rebuilds
+  - durable mismatch and recovery event history
   - deterministic projection rebuild from persisted records
   - startup restoration of adapter state from persisted fills
-  - operator-safe pause, resume, cycle-run, and projection-rebuild controls
-- `apps/api` serves portfolio, risk, orders, positions, opportunities, events, runtime status, and control surfaces from persisted runtime-backed state.
+  - operator-safe pause, resume, cycle-run command, and projection-rebuild command controls
+- `apps/api` serves portfolio, risk, orders, positions, opportunities, events, runtime status, worker status, mismatch history, and control surfaces from persisted runtime-backed state.
+- `apps/runtime-worker` executes scheduled cycles, processes runtime commands, and persists scheduler/recovery visibility independently of the API process.
 - Local/dev Postgres workflow now exists through `pnpm db:start`, `pnpm db:health`, `pnpm db:migrate`, `pnpm db:reset`, and `pnpm db:stop`.
 - Deterministic carry simulation is now materially more credible:
   - funding opportunities use mark price instead of placeholder price `1`
@@ -34,8 +38,8 @@ Repo: `/workspaces/Sentinel-Apex`
 
 ## What Is Partial
 
-- Runtime projection updates still happen inline in the runtime process. They are replayable now, but not yet separated into an asynchronous projector.
-- The runtime is still an internal Phase 1 paper-trading service. There is no independent worker/scheduler process yet.
+- Runtime projection updates still happen inline inside the runtime execution path rather than a separate projector process.
+- The runtime is still an internal Phase 1 paper-trading service, but scheduled execution now runs in a dedicated worker instead of the API process.
 - Local/dev Postgres workflow is now first-class, but production deployment wiring, secret management, and hosted operational automation are still out of scope.
 - The API remains an internal control-plane API. There is still no operator UI.
 
@@ -43,13 +47,11 @@ Repo: `/workspaces/Sentinel-Apex`
 
 - `apps/ops-dashboard` does not exist.
 - Allocator, treasury, and backtest packages still do not exist.
-- There is still no reconciliation mismatch projection or escalation flow.
+- Mismatch handling is now durable and operator-visible, but automatic remediation remains intentionally limited to explicit rebuild/cycle commands.
 - API startup in this sandbox still cannot bind to `0.0.0.0` because of environment `listen EPERM` restrictions rather than an application defect.
 
 ## What Is Missing
 
-- A continuously running runtime worker or scheduler.
-- Reconciliation mismatch detection and recovery handling.
 - Operational dashboards and richer operator workflows.
 - Production-grade live venue integration.
 - Allocator, treasury, and backtest foundations.
@@ -82,8 +84,8 @@ Results:
 
 ## Recommended Next Actions
 
-1. Add a dedicated scheduler/worker process so cycle execution is not tied to API process lifetime.
-2. Add reconciliation mismatch detection, persistence, and operator-visible recovery flow.
+1. Add stronger reconciliation detectors that compare external venue state against persisted internal execution state.
+2. Decide whether rebuild commands should remain worker-executed commands or become an isolated maintenance process.
 3. Add a durable projection checkpoint model if projection fan-out becomes asynchronous in the next pass.
 4. Build `apps/ops-dashboard` against the now-truthful runtime/control-plane API.
 5. Start allocator and treasury work only after the runtime worker and reconciliation surfaces are stable.

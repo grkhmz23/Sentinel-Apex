@@ -1,4 +1,4 @@
-import type { SentinelRuntime } from '@sentinel-apex/runtime';
+import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { authenticate } from '../middleware/auth.js';
 
@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 
 export async function portfolioRoutes(
   app: FastifyInstance,
-  runtime: SentinelRuntime,
+  controlPlane: RuntimeControlPlane,
 ): Promise<void> {
   app.get(
     '/api/v1/portfolio',
@@ -14,7 +14,7 @@ export async function portfolioRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const portfolio = await runtime.getPortfolioSummary();
+      const portfolio = await controlPlane.getPortfolioSummary();
 
       return reply.status(200).send({
         data:
@@ -47,7 +47,7 @@ export async function portfolioRoutes(
     },
     async (request, reply) => {
       const limit = Math.min(Number.parseInt(request.query.limit ?? '50', 10), 500);
-      const snapshots = await runtime.listPortfolioSnapshots(limit);
+      const snapshots = await controlPlane.listPortfolioSnapshots(limit);
 
       return reply.status(200).send({
         data: snapshots,
@@ -66,7 +66,7 @@ export async function portfolioRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const pnlSummary = await runtime.getPnlSummary();
+      const pnlSummary = await controlPlane.getPnlSummary();
       return reply.status(200).send({
         data: pnlSummary,
         meta: { correlationId: request.id },

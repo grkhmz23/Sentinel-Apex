@@ -24,6 +24,7 @@ export DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_apex
 export API_SECRET_KEY=replace-with-at-least-32-characters
 export EXECUTION_MODE=dry-run
 export FEATURE_FLAG_LIVE_EXECUTION=false
+export RUNTIME_WORKER_CYCLE_INTERVAL_MS=60000
 ```
 
 ## Start Local Postgres
@@ -72,7 +73,20 @@ This stops the local Postgres container without deleting the volume.
 pnpm --filter @sentinel-apex/api dev
 ```
 
-The API bootstraps the in-process runtime, restores projections from persisted records on startup, and serves runtime-backed state from the configured `DATABASE_URL`.
+The API serves persisted runtime, worker, mismatch, and recovery state from the configured `DATABASE_URL`. It no longer owns the main cycle scheduler.
+
+## Start The Dedicated Runtime Worker
+
+```bash
+pnpm --filter @sentinel-apex/runtime-worker dev
+```
+
+The worker:
+
+1. bootstraps the runtime from durable state
+2. schedules recurring dry-run cycles
+3. processes durable runtime commands such as one-shot cycle runs and projection rebuilds
+4. persists worker health, mismatch state, and recovery history
 
 ## Run One Deterministic Runtime Cycle
 
@@ -101,4 +115,5 @@ This rebuilds current projections from persisted source records without creating
 - Dry-run remains the default and supported operating mode.
 - Live execution is still separately gated and opt-in only.
 - Projection rebuild is deterministic and idempotent.
+- Worker command state, mismatch records, and recovery events are durable and operator-visible through the API.
 - Tests may still use file-backed or in-memory PGlite for isolation and speed.

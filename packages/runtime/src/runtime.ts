@@ -27,6 +27,7 @@ import {
   type VenuePosition,
 } from '@sentinel-apex/venue-adapters';
 
+import { RuntimeHealthMonitor } from './health-monitor.js';
 import { DatabaseAuditWriter, RuntimeOrderStore, RuntimeStore } from './store.js';
 
 import type {
@@ -110,8 +111,11 @@ export interface SentinelRuntimeOptions {
 export class SentinelRuntime {
   private started = false;
   private closed = false;
+  private readonly healthMonitor: RuntimeHealthMonitor;
 
-  constructor(private readonly options: SentinelRuntimeOptions) {}
+  constructor(private readonly options: SentinelRuntimeOptions) {
+    this.healthMonitor = new RuntimeHealthMonitor(this.options.store);
+  }
 
   static async createDeterministic(
     connectionString: string,
@@ -198,7 +202,11 @@ export class SentinelRuntime {
 
     const portfolioTracker = new PortfolioStateTracker(adapters, logger, sleeveId);
 
-    await store.ensureRuntimeState(executionMode, liveExecutionEnabled);
+    await store.ensureRuntimeState(
+      executionMode,
+      liveExecutionEnabled,
+      effectiveRiskLimits as unknown as Record<string, unknown>,
+    );
 
     const runtime = new SentinelRuntime({
       connection,
@@ -429,6 +437,7 @@ export class SentinelRuntime {
       const dailyPnl = cumulativePnl;
 
       await this.options.store.persistPortfolioSnapshot({
+        sourceRunId: runId,
         snapshotAt: new Date(),
         portfolioState: refreshedPortfolio,
         riskSummary: finalRiskSummary,
@@ -480,6 +489,10 @@ export class SentinelRuntime {
         },
       });
 
+      await this.healthMonitor.resolveRuntimeFailure('sentinel-runtime', runId);
+      await this.healthMonitor.reconcileExecutionConsistency(runId, 'sentinel-runtime');
+      await this.healthMonitor.reconcileProjectionConsistency('sentinel-runtime');
+
       return {
         runId,
         opportunitiesDetected: planned.opportunitiesDetected.length,
@@ -524,6 +537,8 @@ export class SentinelRuntime {
         sleeveId: this.options.sleeveId,
         data: { runId, error: message },
       });
+
+      await this.healthMonitor.recordRuntimeFailure('sentinel-runtime', runId, message);
 
       throw error;
     }
@@ -628,6 +643,8 @@ export class SentinelRuntime {
         },
       });
     }
+
+    await this.healthMonitor.reconcileProjectionConsistency('sentinel-runtime');
 
     return this.getRuntimeStatus();
   }

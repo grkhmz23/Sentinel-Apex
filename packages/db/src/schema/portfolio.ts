@@ -6,6 +6,7 @@ export const portfolioSnapshots = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     snapshotAt: timestamp('snapshot_at', { withTimezone: true }).notNull(),
+    sourceRunId: text('source_run_id'),
     totalNav: text('total_nav').notNull(),
     grossExposure: text('gross_exposure').notNull(),
     netExposure: text('net_exposure').notNull(),
@@ -27,6 +28,7 @@ export const portfolioSnapshots = pgTable(
 export const portfolioCurrent = pgTable('portfolio_current', {
   id: text('id').primaryKey(),
   sourceSnapshotAt: timestamp('source_snapshot_at', { withTimezone: true }).notNull(),
+  sourceRunId: text('source_run_id'),
   totalNav: text('total_nav').notNull(),
   grossExposure: text('gross_exposure').notNull(),
   netExposure: text('net_exposure').notNull(),

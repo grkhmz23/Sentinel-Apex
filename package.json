@@ -15,6 +15,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
+    "worker:dev": "pnpm --filter @sentinel-apex/runtime-worker dev",
     "db:start": "./scripts/db-start.sh",
     "db:stop": "./scripts/db-stop.sh",
     "db:reset": "./scripts/db-reset.sh",

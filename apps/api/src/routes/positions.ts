@@ -1,4 +1,4 @@
-import type { SentinelRuntime } from '@sentinel-apex/runtime';
+import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { authenticate } from '../middleware/auth.js';
 
@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 
 export async function positionRoutes(
   app: FastifyInstance,
-  runtime: SentinelRuntime,
+  controlPlane: RuntimeControlPlane,
 ): Promise<void> {
   app.get<{
     Querystring: { limit?: string };
@@ -17,7 +17,7 @@ export async function positionRoutes(
     },
     async (request, reply) => {
       const limit = Math.min(Number.parseInt(request.query.limit ?? '100', 10), 500);
-      const positions = await runtime.listPositions(limit);
+      const positions = await controlPlane.listPositions(limit);
 
       return reply.status(200).send({
         data: positions,
@@ -38,7 +38,7 @@ export async function positionRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const position = await runtime.getPosition(request.params.id);
+      const position = await controlPlane.getPosition(request.params.id);
 
       if (position === null) {
         return reply.status(404).send({

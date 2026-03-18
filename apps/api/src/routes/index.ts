@@ -1,4 +1,4 @@
-import type { SentinelRuntime } from '@sentinel-apex/runtime';
+import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { controlRoutes } from './control.js';
 import { eventRoutes } from './events.js';
@@ -37,18 +37,18 @@ import type { FastifyInstance } from 'fastify';
  */
 export async function registerRoutes(
   app: FastifyInstance,
-  runtime: SentinelRuntime,
+  controlPlane: RuntimeControlPlane,
 ): Promise<void> {
   // Unauthenticated
   await app.register(healthRoutes);
 
   // Authenticated API routes
-  await portfolioRoutes(app, runtime);
-  await riskRoutes(app, runtime);
-  await orderRoutes(app, runtime);
-  await positionRoutes(app, runtime);
-  await opportunityRoutes(app, runtime);
-  await eventRoutes(app, runtime);
-  await runtimeRoutes(app, runtime);
-  await controlRoutes(app, runtime);
+  await portfolioRoutes(app, controlPlane);
+  await riskRoutes(app, controlPlane);
+  await orderRoutes(app, controlPlane);
+  await positionRoutes(app, controlPlane);
+  await opportunityRoutes(app, controlPlane);
+  await eventRoutes(app, controlPlane);
+  await runtimeRoutes(app, controlPlane);
+  await controlRoutes(app, controlPlane);
 }

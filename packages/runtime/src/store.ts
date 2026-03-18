@@ -1,4 +1,4 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
 import {
   auditEvents,
@@ -11,7 +11,11 @@ import {
   riskCurrent,
   riskBreaches,
   riskSnapshots,
+  runtimeCommands,
+  runtimeMismatches,
+  runtimeRecoveryEvents,
   runtimeState,
+  runtimeWorkerState,
   strategyIntents,
   strategyOpportunities,
   strategyRuns,
@@ -32,9 +36,18 @@ import type {
   PortfolioSummaryView,
   PositionView,
   RiskBreachView,
+  RuntimeCommandStatus,
+  RuntimeCommandType,
+  RuntimeCommandView,
   RuntimeLifecycleState,
+  RuntimeMismatchStatus,
+  RuntimeMismatchView,
+  RuntimeRecoveryEventView,
   RiskSummaryView,
   RuntimeStatusView,
+  WorkerLifecycleState,
+  WorkerSchedulerState,
+  WorkerStatusView,
 } from './types.js';
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -53,6 +66,10 @@ function toIsoString(value: Date | string | null | undefined): string | null {
 
 function serialiseMap(map: Map<string, string>): Record<string, string> {
   return Object.fromEntries(map.entries());
+}
+
+function asJsonObject(value: unknown): Record<string, unknown> {
+  return asRecord(value);
 }
 
 function extractSleeveId(intent: OrderIntent): string {
@@ -254,6 +271,7 @@ export class RuntimeStore {
   async ensureRuntimeState(
     executionMode: 'dry-run' | 'live',
     liveExecutionEnabled: boolean,
+    riskLimits: Record<string, unknown>,
   ): Promise<void> {
     const now = new Date();
     await this.db
@@ -262,6 +280,7 @@ export class RuntimeStore {
         id: 'primary',
         executionMode,
         liveExecutionEnabled,
+        riskLimits,
         halted: false,
         lifecycleState: 'starting',
         projectionStatus: 'stale',
@@ -285,6 +304,7 @@ export class RuntimeStore {
       return {
         executionMode: 'dry-run',
         liveExecutionEnabled: false,
+        riskLimits: {},
         halted: false,
         lifecycleState: 'stopped',
         projectionStatus: 'stale',
@@ -307,6 +327,7 @@ export class RuntimeStore {
     return {
       executionMode: row.executionMode as 'dry-run' | 'live',
       liveExecutionEnabled: row.liveExecutionEnabled,
+      riskLimits: asJsonObject(row.riskLimits),
       halted: row.halted,
       lifecycleState: row.lifecycleState as RuntimeLifecycleState,
       projectionStatus: row.projectionStatus as ProjectionStatus,
@@ -330,6 +351,7 @@ export class RuntimeStore {
     patch: {
       executionMode?: 'dry-run' | 'live';
       liveExecutionEnabled?: boolean;
+      riskLimits?: Record<string, unknown>;
       halted?: boolean;
       lifecycleState?: RuntimeLifecycleState;
       projectionStatus?: ProjectionStatus;
@@ -355,6 +377,7 @@ export class RuntimeStore {
         ...(patch.liveExecutionEnabled !== undefined
           ? { liveExecutionEnabled: patch.liveExecutionEnabled }
           : {}),
+        ...(patch.riskLimits !== undefined ? { riskLimits: patch.riskLimits } : {}),
         ...(patch.halted !== undefined ? { halted: patch.halted } : {}),
         ...(patch.lifecycleState !== undefined ? { lifecycleState: patch.lifecycleState } : {}),
         ...(patch.projectionStatus !== undefined ? { projectionStatus: patch.projectionStatus } : {}),
@@ -384,6 +407,235 @@ export class RuntimeStore {
         updatedAt: new Date(),
       })
       .where(eq(runtimeState.id, 'primary'));
+  }
+
+  async ensureWorkerState(workerId: string, cycleIntervalMs: number): Promise<void> {
+    await this.db
+      .insert(runtimeWorkerState)
+      .values({
+        id: 'primary',
+        workerId,
+        lifecycleState: 'stopped',
+        schedulerState: 'idle',
+        cycleIntervalMs,
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing({
+        target: runtimeWorkerState.id,
+      });
+  }
+
+  async getWorkerStatus(): Promise<WorkerStatusView> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeWorkerState)
+      .where(eq(runtimeWorkerState.id, 'primary'))
+      .limit(1);
+
+    if (row === undefined) {
+      return {
+        workerId: 'unassigned',
+        lifecycleState: 'stopped',
+        schedulerState: 'idle',
+        currentOperation: null,
+        currentCommandId: null,
+        currentRunId: null,
+        cycleIntervalMs: 60000,
+        processId: null,
+        hostname: null,
+        lastHeartbeatAt: null,
+        lastStartedAt: null,
+        lastStoppedAt: null,
+        lastRunStartedAt: null,
+        lastRunCompletedAt: null,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        lastFailureReason: null,
+        nextScheduledRunAt: null,
+        updatedAt: new Date(0).toISOString(),
+      };
+    }
+
+    return {
+      workerId: row.workerId,
+      lifecycleState: row.lifecycleState as WorkerLifecycleState,
+      schedulerState: row.schedulerState as WorkerSchedulerState,
+      currentOperation: row.currentOperation ?? null,
+      currentCommandId: row.currentCommandId ?? null,
+      currentRunId: row.currentRunId ?? null,
+      cycleIntervalMs: row.cycleIntervalMs,
+      processId: row.processId ?? null,
+      hostname: row.hostname ?? null,
+      lastHeartbeatAt: toIsoString(row.lastHeartbeatAt),
+      lastStartedAt: toIsoString(row.lastStartedAt),
+      lastStoppedAt: toIsoString(row.lastStoppedAt),
+      lastRunStartedAt: toIsoString(row.lastRunStartedAt),
+      lastRunCompletedAt: toIsoString(row.lastRunCompletedAt),
+      lastSuccessAt: toIsoString(row.lastSuccessAt),
+      lastFailureAt: toIsoString(row.lastFailureAt),
+      lastFailureReason: row.lastFailureReason ?? null,
+      nextScheduledRunAt: toIsoString(row.nextScheduledRunAt),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async updateWorkerStatus(
+    patch: {
+      workerId?: string;
+      lifecycleState?: WorkerLifecycleState;
+      schedulerState?: WorkerSchedulerState;
+      currentOperation?: string | null;
+      currentCommandId?: string | null;
+      currentRunId?: string | null;
+      cycleIntervalMs?: number;
+      processId?: number | null;
+      hostname?: string | null;
+      lastHeartbeatAt?: Date | null;
+      lastStartedAt?: Date | null;
+      lastStoppedAt?: Date | null;
+      lastRunStartedAt?: Date | null;
+      lastRunCompletedAt?: Date | null;
+      lastSuccessAt?: Date | null;
+      lastFailureAt?: Date | null;
+      lastFailureReason?: string | null;
+      nextScheduledRunAt?: Date | null;
+    },
+  ): Promise<void> {
+    await this.db
+      .update(runtimeWorkerState)
+      .set({
+        ...(patch.workerId !== undefined ? { workerId: patch.workerId } : {}),
+        ...(patch.lifecycleState !== undefined ? { lifecycleState: patch.lifecycleState } : {}),
+        ...(patch.schedulerState !== undefined ? { schedulerState: patch.schedulerState } : {}),
+        ...(patch.currentOperation !== undefined ? { currentOperation: patch.currentOperation } : {}),
+        ...(patch.currentCommandId !== undefined ? { currentCommandId: patch.currentCommandId } : {}),
+        ...(patch.currentRunId !== undefined ? { currentRunId: patch.currentRunId } : {}),
+        ...(patch.cycleIntervalMs !== undefined ? { cycleIntervalMs: patch.cycleIntervalMs } : {}),
+        ...(patch.processId !== undefined ? { processId: patch.processId } : {}),
+        ...(patch.hostname !== undefined ? { hostname: patch.hostname } : {}),
+        ...(patch.lastHeartbeatAt !== undefined ? { lastHeartbeatAt: patch.lastHeartbeatAt } : {}),
+        ...(patch.lastStartedAt !== undefined ? { lastStartedAt: patch.lastStartedAt } : {}),
+        ...(patch.lastStoppedAt !== undefined ? { lastStoppedAt: patch.lastStoppedAt } : {}),
+        ...(patch.lastRunStartedAt !== undefined ? { lastRunStartedAt: patch.lastRunStartedAt } : {}),
+        ...(patch.lastRunCompletedAt !== undefined ? { lastRunCompletedAt: patch.lastRunCompletedAt } : {}),
+        ...(patch.lastSuccessAt !== undefined ? { lastSuccessAt: patch.lastSuccessAt } : {}),
+        ...(patch.lastFailureAt !== undefined ? { lastFailureAt: patch.lastFailureAt } : {}),
+        ...(patch.lastFailureReason !== undefined ? { lastFailureReason: patch.lastFailureReason } : {}),
+        ...(patch.nextScheduledRunAt !== undefined ? { nextScheduledRunAt: patch.nextScheduledRunAt } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeWorkerState.id, 'primary'));
+  }
+
+  async enqueueRuntimeCommand(input: {
+    commandId: string;
+    commandType: RuntimeCommandType;
+    requestedBy: string;
+    payload?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.db
+      .insert(runtimeCommands)
+      .values({
+        commandId: input.commandId,
+        commandType: input.commandType,
+        status: 'pending',
+        requestedBy: input.requestedBy,
+        payload: input.payload ?? {},
+        result: {},
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing({
+        target: runtimeCommands.commandId,
+      });
+  }
+
+  async getRuntimeCommand(commandId: string): Promise<RuntimeCommandView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeCommands)
+      .where(eq(runtimeCommands.commandId, commandId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      commandId: row.commandId,
+      commandType: row.commandType as RuntimeCommandType,
+      status: row.status as RuntimeCommandStatus,
+      requestedBy: row.requestedBy,
+      claimedBy: row.claimedBy ?? null,
+      payload: asJsonObject(row.payload),
+      result: asJsonObject(row.result),
+      errorMessage: row.errorMessage ?? null,
+      requestedAt: row.requestedAt.toISOString(),
+      startedAt: toIsoString(row.startedAt),
+      completedAt: toIsoString(row.completedAt),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async claimNextPendingCommand(claimedBy: string): Promise<RuntimeCommandView | null> {
+    const [pending] = await this.db
+      .select()
+      .from(runtimeCommands)
+      .where(eq(runtimeCommands.status, 'pending'))
+      .orderBy(runtimeCommands.requestedAt)
+      .limit(1);
+
+    if (pending === undefined) {
+      return null;
+    }
+
+    await this.db
+      .update(runtimeCommands)
+      .set({
+        status: 'running',
+        claimedBy,
+        startedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(runtimeCommands.commandId, pending.commandId),
+          eq(runtimeCommands.status, 'pending'),
+        ),
+      );
+
+    return this.getRuntimeCommand(pending.commandId);
+  }
+
+  async completeRuntimeCommand(
+    commandId: string,
+    result: Record<string, unknown>,
+  ): Promise<RuntimeCommandView | null> {
+    await this.db
+      .update(runtimeCommands)
+      .set({
+        status: 'completed',
+        result,
+        errorMessage: null,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeCommands.commandId, commandId));
+
+    return this.getRuntimeCommand(commandId);
+  }
+
+  async failRuntimeCommand(commandId: string, errorMessage: string): Promise<RuntimeCommandView | null> {
+    await this.db
+      .update(runtimeCommands)
+      .set({
+        status: 'failed',
+        errorMessage,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeCommands.commandId, commandId));
+
+    return this.getRuntimeCommand(commandId);
   }
 
   async createStrategyRun(input: {
@@ -589,6 +841,7 @@ export class RuntimeStore {
   }
 
   async persistPortfolioSnapshot(input: {
+    sourceRunId: string | null;
     snapshotAt: Date;
     portfolioState: PortfolioState;
     riskSummary: RiskSummary;
@@ -604,6 +857,7 @@ export class RuntimeStore {
 
     await this.db.insert(portfolioSnapshots).values({
       snapshotAt: input.snapshotAt,
+      sourceRunId: input.sourceRunId,
       totalNav: input.portfolioState.totalNav,
       grossExposure: input.portfolioState.grossExposure,
       netExposure: input.portfolioState.netExposure,
@@ -622,6 +876,7 @@ export class RuntimeStore {
       .values({
         id: 'primary',
         sourceSnapshotAt: input.snapshotAt,
+        sourceRunId: input.sourceRunId,
         totalNav: input.portfolioState.totalNav,
         grossExposure: input.portfolioState.grossExposure,
         netExposure: input.portfolioState.netExposure,
@@ -639,6 +894,7 @@ export class RuntimeStore {
         target: portfolioCurrent.id,
         set: {
           sourceSnapshotAt: input.snapshotAt,
+          sourceRunId: input.sourceRunId,
           totalNav: input.portfolioState.totalNav,
           grossExposure: input.portfolioState.grossExposure,
           netExposure: input.portfolioState.netExposure,
@@ -825,6 +1081,7 @@ export class RuntimeStore {
       .values({
         id: 'primary',
         sourceSnapshotAt: row.snapshotAt,
+        sourceRunId: row.sourceRunId ?? null,
         totalNav: row.totalNav,
         grossExposure: row.grossExposure,
         netExposure: row.netExposure,
@@ -842,6 +1099,7 @@ export class RuntimeStore {
         target: portfolioCurrent.id,
         set: {
           sourceSnapshotAt: row.snapshotAt,
+          sourceRunId: row.sourceRunId ?? null,
           totalNav: row.totalNav,
           grossExposure: row.grossExposure,
           netExposure: row.netExposure,
@@ -1154,5 +1412,352 @@ export class RuntimeStore {
       correlationId: row.correlationId ?? null,
       data: row.data as Record<string, unknown>,
     }));
+  }
+
+  async upsertMismatch(input: {
+    dedupeKey: string;
+    category: string;
+    severity: string;
+    sourceComponent: string;
+    entityType?: string | null;
+    entityId?: string | null;
+    summary: string;
+    details?: Record<string, unknown>;
+    detectedAt: Date;
+  }): Promise<RuntimeMismatchView> {
+    const [existing] = await this.db
+      .select()
+      .from(runtimeMismatches)
+      .where(eq(runtimeMismatches.dedupeKey, input.dedupeKey))
+      .limit(1);
+
+    if (existing === undefined) {
+      await this.db.insert(runtimeMismatches).values({
+        dedupeKey: input.dedupeKey,
+        category: input.category,
+        severity: input.severity,
+        sourceComponent: input.sourceComponent,
+        entityType: input.entityType ?? null,
+        entityId: input.entityId ?? null,
+        summary: input.summary,
+        details: input.details ?? {},
+        status: 'open',
+        firstDetectedAt: input.detectedAt,
+        lastDetectedAt: input.detectedAt,
+        occurrenceCount: 1,
+        updatedAt: new Date(),
+      });
+    } else {
+      const nextStatus: RuntimeMismatchStatus =
+        existing.status === 'resolved' ? 'open' : (existing.status as RuntimeMismatchStatus);
+
+      await this.db
+        .update(runtimeMismatches)
+        .set({
+          category: input.category,
+          severity: input.severity,
+          sourceComponent: input.sourceComponent,
+          entityType: input.entityType ?? null,
+          entityId: input.entityId ?? null,
+          summary: input.summary,
+          details: input.details ?? {},
+          status: nextStatus,
+          lastDetectedAt: input.detectedAt,
+          occurrenceCount: existing.occurrenceCount + 1,
+          resolvedAt: null,
+          resolvedBy: null,
+          resolutionSummary: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(runtimeMismatches.dedupeKey, input.dedupeKey));
+    }
+
+    const record = await this.getMismatchByDedupeKey(input.dedupeKey);
+    if (record === null) {
+      throw new Error(`RuntimeStore.upsertMismatch: mismatch "${input.dedupeKey}" was not persisted`);
+    }
+    return record;
+  }
+
+  async getMismatchByDedupeKey(dedupeKey: string): Promise<RuntimeMismatchView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeMismatches)
+      .where(eq(runtimeMismatches.dedupeKey, dedupeKey))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      dedupeKey: row.dedupeKey,
+      category: row.category,
+      severity: row.severity,
+      sourceComponent: row.sourceComponent,
+      entityType: row.entityType ?? null,
+      entityId: row.entityId ?? null,
+      summary: row.summary,
+      details: asJsonObject(row.details),
+      status: row.status as RuntimeMismatchStatus,
+      firstDetectedAt: row.firstDetectedAt.toISOString(),
+      lastDetectedAt: row.lastDetectedAt.toISOString(),
+      occurrenceCount: row.occurrenceCount,
+      acknowledgedAt: toIsoString(row.acknowledgedAt),
+      acknowledgedBy: row.acknowledgedBy ?? null,
+      resolvedAt: toIsoString(row.resolvedAt),
+      resolvedBy: row.resolvedBy ?? null,
+      resolutionSummary: row.resolutionSummary ?? null,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async acknowledgeMismatch(
+    mismatchId: string,
+    actorId: string,
+    summary: string | null = null,
+  ): Promise<RuntimeMismatchView | null> {
+    await this.db
+      .update(runtimeMismatches)
+      .set({
+        status: 'acknowledged',
+        acknowledgedAt: new Date(),
+        acknowledgedBy: actorId,
+        resolutionSummary: summary,
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeMismatches.id, mismatchId));
+
+    return this.getMismatchById(mismatchId);
+  }
+
+  async resolveMismatch(
+    dedupeKey: string,
+    resolvedBy: string,
+    resolutionSummary: string,
+  ): Promise<RuntimeMismatchView | null> {
+    await this.db
+      .update(runtimeMismatches)
+      .set({
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolvedBy,
+        resolutionSummary,
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeMismatches.dedupeKey, dedupeKey));
+
+    return this.getMismatchByDedupeKey(dedupeKey);
+  }
+
+  async getMismatchById(mismatchId: string): Promise<RuntimeMismatchView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeMismatches)
+      .where(eq(runtimeMismatches.id, mismatchId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      dedupeKey: row.dedupeKey,
+      category: row.category,
+      severity: row.severity,
+      sourceComponent: row.sourceComponent,
+      entityType: row.entityType ?? null,
+      entityId: row.entityId ?? null,
+      summary: row.summary,
+      details: asJsonObject(row.details),
+      status: row.status as RuntimeMismatchStatus,
+      firstDetectedAt: row.firstDetectedAt.toISOString(),
+      lastDetectedAt: row.lastDetectedAt.toISOString(),
+      occurrenceCount: row.occurrenceCount,
+      acknowledgedAt: toIsoString(row.acknowledgedAt),
+      acknowledgedBy: row.acknowledgedBy ?? null,
+      resolvedAt: toIsoString(row.resolvedAt),
+      resolvedBy: row.resolvedBy ?? null,
+      resolutionSummary: row.resolutionSummary ?? null,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async listMismatches(
+    limit: number,
+    status?: RuntimeMismatchStatus,
+  ): Promise<RuntimeMismatchView[]> {
+    const rows = status === undefined
+      ? await this.db
+        .select()
+        .from(runtimeMismatches)
+        .orderBy(desc(runtimeMismatches.lastDetectedAt))
+        .limit(limit)
+      : await this.db
+        .select()
+        .from(runtimeMismatches)
+        .where(eq(runtimeMismatches.status, status))
+        .orderBy(desc(runtimeMismatches.lastDetectedAt))
+        .limit(limit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      dedupeKey: row.dedupeKey,
+      category: row.category,
+      severity: row.severity,
+      sourceComponent: row.sourceComponent,
+      entityType: row.entityType ?? null,
+      entityId: row.entityId ?? null,
+      summary: row.summary,
+      details: asJsonObject(row.details),
+      status: row.status as RuntimeMismatchStatus,
+      firstDetectedAt: row.firstDetectedAt.toISOString(),
+      lastDetectedAt: row.lastDetectedAt.toISOString(),
+      occurrenceCount: row.occurrenceCount,
+      acknowledgedAt: toIsoString(row.acknowledgedAt),
+      acknowledgedBy: row.acknowledgedBy ?? null,
+      resolvedAt: toIsoString(row.resolvedAt),
+      resolvedBy: row.resolvedBy ?? null,
+      resolutionSummary: row.resolutionSummary ?? null,
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  }
+
+  async countOpenMismatches(): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(runtimeMismatches)
+      .where(eq(runtimeMismatches.status, 'open'));
+
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async recordRecoveryEvent(input: {
+    mismatchId?: string | null;
+    commandId?: string | null;
+    runId?: string | null;
+    eventType: string;
+    status: string;
+    sourceComponent: string;
+    actorId?: string | null;
+    message: string;
+    details?: Record<string, unknown>;
+    occurredAt?: Date;
+  }): Promise<void> {
+    await this.db.insert(runtimeRecoveryEvents).values({
+      mismatchId: input.mismatchId ?? null,
+      commandId: input.commandId ?? null,
+      runId: input.runId ?? null,
+      eventType: input.eventType,
+      status: input.status,
+      sourceComponent: input.sourceComponent,
+      actorId: input.actorId ?? null,
+      message: input.message,
+      details: input.details ?? {},
+      occurredAt: input.occurredAt ?? new Date(),
+    });
+  }
+
+  async listRecoveryEvents(limit: number): Promise<RuntimeRecoveryEventView[]> {
+    const rows = await this.db
+      .select()
+      .from(runtimeRecoveryEvents)
+      .orderBy(desc(runtimeRecoveryEvents.occurredAt))
+      .limit(limit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      mismatchId: row.mismatchId ?? null,
+      commandId: row.commandId ?? null,
+      runId: row.runId ?? null,
+      eventType: row.eventType,
+      status: row.status,
+      sourceComponent: row.sourceComponent,
+      actorId: row.actorId ?? null,
+      message: row.message,
+      details: asJsonObject(row.details),
+      occurredAt: row.occurredAt.toISOString(),
+    }));
+  }
+
+  async getLatestRecoveryEvent(): Promise<RuntimeRecoveryEventView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeRecoveryEvents)
+      .orderBy(desc(runtimeRecoveryEvents.occurredAt))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      mismatchId: row.mismatchId ?? null,
+      commandId: row.commandId ?? null,
+      runId: row.runId ?? null,
+      eventType: row.eventType,
+      status: row.status,
+      sourceComponent: row.sourceComponent,
+      actorId: row.actorId ?? null,
+      message: row.message,
+      details: asJsonObject(row.details),
+      occurredAt: row.occurredAt.toISOString(),
+    };
+  }
+
+  async countApprovedIntentsForRun(runId: string): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(strategyIntents)
+      .where(and(eq(strategyIntents.runId, runId), eq(strategyIntents.approved, true)));
+
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async countOrdersForRun(runId: string): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(orders)
+      .where(eq(orders.strategyRunId, runId));
+
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async getProjectionSources(): Promise<{
+    latestSuccessfulRunId: string | null;
+    runtimeProjectionSourceRunId: string | null;
+    riskCurrentSourceRunId: string | null;
+    portfolioCurrentSourceRunId: string | null;
+    projectionStatus: ProjectionStatus;
+  }> {
+    const [runtimeRow] = await this.db
+      .select({
+        projectionStatus: runtimeState.projectionStatus,
+        lastProjectionSourceRunId: runtimeState.lastProjectionSourceRunId,
+      })
+      .from(runtimeState)
+      .where(eq(runtimeState.id, 'primary'))
+      .limit(1);
+
+    const [riskRow] = await this.db
+      .select({ sourceRunId: riskCurrent.sourceRunId })
+      .from(riskCurrent)
+      .limit(1);
+
+    const [portfolioRow] = await this.db
+      .select({ sourceRunId: portfolioCurrent.sourceRunId })
+      .from(portfolioCurrent)
+      .limit(1);
+
+    return {
+      latestSuccessfulRunId: await this.getLatestSuccessfulRunId(),
+      runtimeProjectionSourceRunId: runtimeRow?.lastProjectionSourceRunId ?? null,
+      riskCurrentSourceRunId: riskRow?.sourceRunId ?? null,
+      portfolioCurrentSourceRunId: portfolioRow?.sourceRunId ?? null,
+      projectionStatus: (runtimeRow?.projectionStatus ?? 'stale') as ProjectionStatus,
+    };
   }
 }

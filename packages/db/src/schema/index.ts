@@ -12,9 +12,13 @@ export { portfolioCurrent, portfolioSnapshots, riskBreaches } from './portfolio.
 
 export {
   executionEvents,
+  runtimeCommands,
+  runtimeMismatches,
+  runtimeRecoveryEvents,
   riskCurrent,
   riskSnapshots,
   runtimeState,
+  runtimeWorkerState,
   strategyIntents,
   strategyOpportunities,
   strategyRuns,

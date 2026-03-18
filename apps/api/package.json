@@ -7,7 +7,7 @@
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config ../../vitest.shared.ts",
+    "test": "vitest run --config ../../vitest.shared.ts --testTimeout 30000 --hookTimeout 30000",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {

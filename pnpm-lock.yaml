@@ -95,6 +95,31 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.37)
 
+  apps/runtime-worker:
+    dependencies:
+      '@sentinel-apex/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@sentinel-apex/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@sentinel-apex/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+    devDependencies:
+      '@types/node':
+        specifier: ^20.12.12
+        version: 20.19.37
+      tsx:
+        specifier: ^4.11.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@20.19.37)
+
   packages/carry:
     dependencies:
       '@sentinel-apex/domain':

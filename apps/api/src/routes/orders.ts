@@ -1,4 +1,4 @@
-import type { SentinelRuntime } from '@sentinel-apex/runtime';
+import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { authenticate } from '../middleware/auth.js';
 
@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 
 export async function orderRoutes(
   app: FastifyInstance,
-  runtime: SentinelRuntime,
+  controlPlane: RuntimeControlPlane,
 ): Promise<void> {
   app.get<{
     Querystring: { limit?: string };
@@ -17,7 +17,7 @@ export async function orderRoutes(
     },
     async (request, reply) => {
       const limit = Math.min(Number.parseInt(request.query.limit ?? '100', 10), 500);
-      const orders = await runtime.listOrders(limit);
+      const orders = await controlPlane.listOrders(limit);
 
       return reply.status(200).send({
         data: orders,
@@ -38,7 +38,7 @@ export async function orderRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const order = await runtime.getOrder(request.params.clientOrderId);
+      const order = await controlPlane.getOrder(request.params.clientOrderId);
 
       if (order === null) {
         return reply.status(404).send({

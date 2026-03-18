@@ -2,11 +2,11 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import Fastify from 'fastify';
 
-import type { SentinelRuntime } from '@sentinel-apex/runtime';
+import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { errorHandler } from './middleware/error-handler.js';
 import { registerRoutes } from './routes/index.js';
-import { createRuntimeFromEnv } from './runtime.js';
+import { createControlPlaneFromEnv } from './runtime.js';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -17,7 +17,7 @@ import type { FastifyInstance } from 'fastify';
  * without binding to a port (using Fastify's inject() for in-process requests).
  */
 export async function createApp(
-  options: { runtime?: SentinelRuntime } = {},
+  options: { controlPlane?: RuntimeControlPlane } = {},
 ): Promise<FastifyInstance> {
   const app = Fastify({
     // Disable Fastify's built-in logger; we use @sentinel-apex/observability (pino) directly.
@@ -45,15 +45,18 @@ export async function createApp(
 
   app.setErrorHandler(errorHandler);
 
-  const runtime = options.runtime ?? await createRuntimeFromEnv();
+  const ownsControlPlane = options.controlPlane === undefined;
+  const controlPlane = options.controlPlane ?? await createControlPlaneFromEnv();
 
   app.addHook('onClose', async () => {
-    await runtime.close();
+    if (ownsControlPlane) {
+      await controlPlane.close();
+    }
   });
 
   // ── Routes ────────────────────────────────────────────────────────────────
 
-  await registerRoutes(app, runtime);
+  await registerRoutes(app, controlPlane);
 
   return app;
 }
