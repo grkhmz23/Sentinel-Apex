@@ -5,10 +5,15 @@ import {
   createDatabaseConnection,
 } from '@sentinel-apex/db';
 
+import { remediationFailureNextStatus } from './mismatch-lifecycle.js';
 import { SentinelRuntime, type DeterministicRuntimeScenario } from './runtime.js';
 import { DatabaseAuditWriter, RuntimeStore } from './store.js';
 
-import type { RuntimeCommandView, WorkerStatusView } from './types.js';
+import type {
+  RuntimeCommandView,
+  RuntimeRemediationActionType,
+  WorkerStatusView,
+} from './types.js';
 
 export interface RuntimeWorkerOptions {
   workerId?: string;
@@ -18,6 +23,36 @@ export interface RuntimeWorkerOptions {
 
 function isClosedDatabaseError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('PGlite is closed');
+}
+
+interface RemediationContext {
+  mismatchId: string;
+  remediationType: RuntimeRemediationActionType;
+  requestedBy: string | null;
+}
+
+function getRemediationContext(command: RuntimeCommandView): RemediationContext | null {
+  const raw = command.payload['remediation'];
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+
+  const remediation = raw as Record<string, unknown>;
+  const mismatchId = remediation['mismatchId'];
+  const remediationType = remediation['remediationType'];
+  const requestedBy = remediation['requestedBy'];
+  if (
+    typeof mismatchId !== 'string'
+    || (remediationType !== 'run_cycle' && remediationType !== 'rebuild_projections')
+  ) {
+    return null;
+  }
+
+  return {
+    mismatchId,
+    remediationType,
+    requestedBy: typeof requestedBy === 'string' ? requestedBy : null,
+  };
 }
 
 export class RuntimeWorker {
@@ -242,6 +277,8 @@ export class RuntimeWorker {
   }
 
   private async executeCommand(command: RuntimeCommandView): Promise<void> {
+    const remediation = getRemediationContext(command);
+
     await this.store.updateWorkerStatus({
       schedulerState: 'running',
       currentOperation: command.commandType,
@@ -251,7 +288,8 @@ export class RuntimeWorker {
       nextScheduledRunAt: null,
     });
 
-    await this.store.recordRecoveryEvent({
+    const startedEvent = await this.store.recordRecoveryEvent({
+      mismatchId: remediation?.mismatchId ?? null,
       commandId: command.commandId,
       eventType: 'runtime_command_started',
       status: 'running',
@@ -260,6 +298,21 @@ export class RuntimeWorker {
       message: `Runtime command ${command.commandType} started.`,
       details: command.payload,
     });
+
+    if (remediation !== null) {
+      const remediationAttempt = await this.store.getMismatchRemediationByCommandId(command.commandId);
+      if (remediationAttempt !== null) {
+        await this.store.updateMismatchRemediationById(remediationAttempt.id, {
+          status: 'running',
+          startedAt: new Date(),
+          latestRecoveryEventId: startedEvent.id,
+        });
+        await this.store.updateMismatchById(remediation.mismatchId, {
+          linkedCommandId: command.commandId,
+          linkedRecoveryEventId: startedEvent.id,
+        });
+      }
+    }
 
     try {
       if (command.commandType === 'run_cycle') {
@@ -283,7 +336,8 @@ export class RuntimeWorker {
           lastFailureAt: null,
           lastFailureReason: null,
         });
-        await this.store.recordRecoveryEvent({
+        const completedEvent = await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
           commandId: command.commandId,
           runId: result.runId,
           eventType: 'runtime_command_completed',
@@ -293,6 +347,66 @@ export class RuntimeWorker {
           message: 'Runtime cycle command completed.',
           details: {
             runId: result.runId,
+          },
+        });
+
+        if (remediation !== null) {
+          const remediationAttempt = await this.store.getMismatchRemediationByCommandId(command.commandId);
+          if (remediationAttempt !== null) {
+            await this.store.updateMismatchRemediationById(remediationAttempt.id, {
+              status: 'completed',
+              completedAt: new Date(),
+              outcomeSummary: `Remediation ${remediation.remediationType} completed successfully.`,
+              latestRecoveryEventId: completedEvent.id,
+            });
+            await this.store.updateMismatchById(remediation.mismatchId, {
+              linkedCommandId: command.commandId,
+              linkedRecoveryEventId: completedEvent.id,
+            });
+          }
+        }
+        return;
+      }
+
+      if (command.commandType === 'run_reconciliation') {
+        const reconciliationRun = await this.runtime.runReconciliation({
+          trigger: typeof command.payload['trigger'] === 'string'
+            ? String(command.payload['trigger'])
+            : 'manual_reconciliation',
+          sourceComponent: 'runtime-worker',
+          triggerReference: typeof command.payload['triggerReference'] === 'string'
+            ? String(command.payload['triggerReference'])
+            : null,
+          triggeredBy: typeof command.payload['triggeredBy'] === 'string'
+            ? String(command.payload['triggeredBy'])
+            : null,
+        });
+
+        await this.store.completeRuntimeCommand(command.commandId, {
+          reconciliationRunId: reconciliationRun.id,
+          reconciliationRunStatus: reconciliationRun.status,
+          findingCount: reconciliationRun.findingCount,
+          linkedMismatchCount: reconciliationRun.linkedMismatchCount,
+        });
+        await this.store.updateWorkerStatus({
+          schedulerState: 'waiting',
+          currentOperation: null,
+          currentCommandId: null,
+          lastSuccessAt: new Date(),
+          lastFailureAt: null,
+          lastFailureReason: null,
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
+          commandId: command.commandId,
+          eventType: 'runtime_command_completed',
+          status: 'completed',
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message: 'Reconciliation command completed.',
+          details: {
+            reconciliationRunId: reconciliationRun.id,
+            findingCount: reconciliationRun.findingCount,
           },
         });
         return;
@@ -312,7 +426,8 @@ export class RuntimeWorker {
         lastFailureAt: null,
         lastFailureReason: null,
       });
-      await this.store.recordRecoveryEvent({
+      const completedEvent = await this.store.recordRecoveryEvent({
+        mismatchId: remediation?.mismatchId ?? null,
         commandId: command.commandId,
         eventType: 'runtime_command_completed',
         status: 'completed',
@@ -323,23 +438,88 @@ export class RuntimeWorker {
           lastProjectionSourceRunId: status.lastProjectionSourceRunId,
         },
       });
+
+      if (remediation !== null) {
+        const remediationAttempt = await this.store.getMismatchRemediationByCommandId(command.commandId);
+        if (remediationAttempt !== null) {
+          await this.store.updateMismatchRemediationById(remediationAttempt.id, {
+            status: 'completed',
+            completedAt: new Date(),
+            outcomeSummary: `Remediation ${remediation.remediationType} completed successfully.`,
+            latestRecoveryEventId: completedEvent.id,
+          });
+          await this.store.updateMismatchById(remediation.mismatchId, {
+            linkedCommandId: command.commandId,
+            linkedRecoveryEventId: completedEvent.id,
+          });
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.store.failRuntimeCommand(command.commandId, message);
-      const mismatch = await this.store.upsertMismatch({
-        dedupeKey: `runtime_command_failure:${command.commandId}`,
-        category: 'recovery_action_failure',
-        severity: 'medium',
-        sourceComponent: 'runtime-worker',
-        entityType: 'runtime_command',
-        entityId: command.commandId,
-        summary: message,
-        details: {
-          commandType: command.commandType,
+
+      if (remediation !== null) {
+        const remediationAttempt = await this.store.getMismatchRemediationByCommandId(command.commandId);
+        const mismatch = await this.store.getMismatchById(remediation.mismatchId);
+        const nextStatus = mismatch === null ? 'reopened' : remediationFailureNextStatus(mismatch.status);
+        const failedEvent = await this.store.recordRecoveryEvent({
+          mismatchId: remediation.mismatchId,
           commandId: command.commandId,
-        },
-        detectedAt: new Date(),
-      });
+          eventType: 'mismatch_remediation_failed',
+          status: nextStatus,
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message,
+          details: {
+            remediationId: remediationAttempt?.id ?? null,
+            remediationType: remediation.remediationType,
+          },
+        });
+        if (remediationAttempt !== null) {
+          await this.store.updateMismatchRemediationById(remediationAttempt.id, {
+            status: 'failed',
+            failedAt: new Date(),
+            outcomeSummary: message,
+            latestRecoveryEventId: failedEvent.id,
+          });
+        }
+        if (mismatch !== null) {
+          await this.store.updateMismatchById(remediation.mismatchId, {
+            status: nextStatus,
+            linkedCommandId: command.commandId,
+            linkedRecoveryEventId: failedEvent.id,
+            reopenedAt: new Date(),
+            reopenedBy: this.workerId,
+            reopenSummary: message,
+            lastStatusChangeAt: new Date(),
+          });
+        }
+      } else {
+        const { mismatch, outcome } = await this.store.upsertMismatch({
+          dedupeKey: `runtime_command_failure:${command.commandId}`,
+          category: 'recovery_action_failure',
+          severity: 'medium',
+          sourceComponent: 'runtime-worker',
+          entityType: 'runtime_command',
+          entityId: command.commandId,
+          summary: message,
+          details: {
+            commandType: command.commandType,
+            commandId: command.commandId,
+          },
+          detectedAt: new Date(),
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: mismatch.id,
+          commandId: command.commandId,
+          eventType: outcome === 'reopened' ? 'runtime_command_failure_reopened' : 'runtime_command_failed',
+          status: mismatch.status,
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message,
+        });
+      }
+
       await this.store.updateWorkerStatus({
         lifecycleState: 'degraded',
         schedulerState: 'waiting',
@@ -347,15 +527,6 @@ export class RuntimeWorker {
         currentCommandId: null,
         lastFailureAt: new Date(),
         lastFailureReason: message,
-      });
-      await this.store.recordRecoveryEvent({
-        mismatchId: mismatch.id,
-        commandId: command.commandId,
-        eventType: 'runtime_command_failed',
-        status: 'failed',
-        sourceComponent: 'runtime-worker',
-        actorId: this.workerId,
-        message,
       });
     }
   }

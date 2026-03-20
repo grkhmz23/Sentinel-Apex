@@ -5,6 +5,16 @@ import {
 } from '@sentinel-apex/db';
 import { createId } from '@sentinel-apex/domain';
 
+import {
+  acknowledgeNextStatus,
+  remediationFailureNextStatus,
+  recoveryNextStatus,
+  reopenNextStatus,
+  resolveNextStatus,
+  RuntimeMismatchLifecycleError,
+  RuntimeMismatchNotFoundError,
+  verifyNextStatus,
+} from './mismatch-lifecycle.js';
 import { DatabaseAuditWriter, RuntimeStore } from './store.js';
 
 import type {
@@ -19,11 +29,25 @@ import type {
   RiskSummaryView,
   RuntimeCommandType,
   RuntimeCommandView,
+  RuntimeMismatchDetailView,
+  RuntimeMismatchRemediationView,
+  RuntimeMismatchSourceKind,
+  RuntimeMismatchStatus,
+  RuntimeMismatchSummaryView,
   RuntimeMismatchView,
   RuntimeOverviewView,
   RuntimeReadApi,
+  RuntimeReconciliationFindingDetailView,
+  RuntimeReconciliationFindingSeverity,
+  RuntimeReconciliationFindingStatus,
+  RuntimeReconciliationFindingType,
+  RuntimeReconciliationFindingView,
+  RuntimeReconciliationRunView,
+  RuntimeReconciliationSummaryView,
+  RuntimeRemediationActionType,
   RuntimeRecoveryEventView,
   RuntimeStatusView,
+  RuntimeVerificationOutcome,
   WorkerStatusView,
 } from './types.js';
 
@@ -98,35 +122,41 @@ export class RuntimeControlPlane implements RuntimeReadApi {
   }
 
   async getRuntimeOverview(): Promise<RuntimeOverviewView> {
-    const [runtime, worker, openMismatchCount, lastRecoveryEvent] = await Promise.all([
+    const [runtime, worker, openMismatchCount, mismatchSummary, lastRecoveryEvent, latestReconciliationRun, reconciliationSummary] = await Promise.all([
       this.store.getRuntimeStatus(),
       this.store.getWorkerStatus(),
       this.store.countOpenMismatches(),
+      this.store.summarizeMismatches(),
       this.store.getLatestRecoveryEvent(),
+      this.store.getLatestReconciliationRun(),
+      this.store.summarizeLatestReconciliation(),
     ]);
 
     const degradedReasons = [
       runtime.lastError,
       runtime.reason,
       worker.lastFailureReason,
-      openMismatchCount > 0 ? `${openMismatchCount} open mismatches` : null,
+      mismatchSummary.activeMismatchCount > 0 ? `${mismatchSummary.activeMismatchCount} active mismatches` : null,
     ].filter((value): value is string => value !== null && value.length > 0);
 
     return {
       runtime,
       worker,
       openMismatchCount,
+      mismatchStatusCounts: mismatchSummary.statusCounts,
       degradedReasons,
       lastRecoveryEvent,
+      latestReconciliationRun,
+      reconciliationSummary,
     };
   }
 
-  async enqueueCommand(
+  private async createCommandRecord(
+    commandId: string,
     commandType: RuntimeCommandType,
     requestedBy: string,
-    payload: Record<string, unknown> = {},
+    payload: Record<string, unknown>,
   ): Promise<RuntimeCommandView> {
-    const commandId = createId();
     await this.store.enqueueRuntimeCommand({
       commandId,
       commandType,
@@ -146,17 +176,206 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
     const command = await this.store.getRuntimeCommand(commandId);
     if (command === null) {
-      throw new Error(`RuntimeControlPlane.enqueueCommand: command "${commandId}" was not persisted`);
+      throw new Error(`RuntimeControlPlane.createCommandRecord: command "${commandId}" was not persisted`);
     }
+
     return command;
+  }
+
+  async enqueueCommand(
+    commandType: RuntimeCommandType,
+    requestedBy: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<RuntimeCommandView> {
+    const commandId = createId();
+    return this.createCommandRecord(commandId, commandType, requestedBy, payload);
   }
 
   async getCommand(commandId: string): Promise<RuntimeCommandView | null> {
     return this.store.getRuntimeCommand(commandId);
   }
 
-  async listMismatches(limit = 100, status?: 'open' | 'acknowledged' | 'resolved'): Promise<RuntimeMismatchView[]> {
-    return this.store.listMismatches(limit, status);
+  async listMismatches(
+    limit = 100,
+    filters: {
+      status?: RuntimeMismatchStatus;
+      severity?: string;
+      sourceKind?: RuntimeMismatchSourceKind;
+      category?: string;
+    } = {},
+  ): Promise<RuntimeMismatchView[]> {
+    return this.store.listMismatches(limit, filters);
+  }
+
+  async getMismatchDetail(mismatchId: string): Promise<RuntimeMismatchDetailView | null> {
+    return this.store.getMismatchDetail(mismatchId);
+  }
+
+  async summarizeMismatches(): Promise<RuntimeMismatchSummaryView> {
+    return this.store.summarizeMismatches();
+  }
+
+  async listMismatchRemediationHistory(
+    mismatchId: string,
+    limit = 50,
+  ): Promise<RuntimeMismatchRemediationView[]> {
+    await this.getRequiredMismatch(mismatchId);
+    return this.store.listMismatchRemediations(mismatchId, limit);
+  }
+
+  async getLatestMismatchRemediation(
+    mismatchId: string,
+  ): Promise<RuntimeMismatchRemediationView | null> {
+    await this.getRequiredMismatch(mismatchId);
+    return this.store.getLatestMismatchRemediation(mismatchId);
+  }
+
+  async enqueueReconciliationRun(
+    requestedBy: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<RuntimeCommandView> {
+    return this.enqueueCommand('run_reconciliation', requestedBy, payload);
+  }
+
+  async listReconciliationRuns(limit = 50): Promise<RuntimeReconciliationRunView[]> {
+    return this.store.listReconciliationRuns(limit);
+  }
+
+  async getReconciliationRun(
+    reconciliationRunId: string,
+  ): Promise<RuntimeReconciliationRunView | null> {
+    return this.store.getReconciliationRun(reconciliationRunId);
+  }
+
+  async listReconciliationFindings(input: {
+    limit?: number;
+    findingType?: RuntimeReconciliationFindingType;
+    severity?: RuntimeReconciliationFindingSeverity;
+    status?: RuntimeReconciliationFindingStatus;
+    mismatchId?: string;
+    reconciliationRunId?: string;
+  } = {}): Promise<RuntimeReconciliationFindingView[]> {
+    return this.store.listReconciliationFindings({
+      limit: input.limit ?? 100,
+      ...(input.findingType !== undefined ? { findingType: input.findingType } : {}),
+      ...(input.severity !== undefined ? { severity: input.severity } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.mismatchId !== undefined ? { mismatchId: input.mismatchId } : {}),
+      ...(input.reconciliationRunId !== undefined
+        ? { reconciliationRunId: input.reconciliationRunId }
+        : {}),
+    });
+  }
+
+  async getReconciliationFinding(
+    findingId: string,
+  ): Promise<RuntimeReconciliationFindingDetailView | null> {
+    return this.store.getReconciliationFindingDetail(findingId);
+  }
+
+  async getReconciliationSummary(): Promise<RuntimeReconciliationSummaryView | null> {
+    return this.store.summarizeLatestReconciliation();
+  }
+
+  async listRuntimeCommands(limit = 100): Promise<RuntimeCommandView[]> {
+    return this.store.listRuntimeCommands(limit);
+  }
+
+  async listMismatchFindings(
+    mismatchId: string,
+    limit = 100,
+  ): Promise<RuntimeReconciliationFindingView[]> {
+    await this.getRequiredMismatch(mismatchId);
+    return this.store.listReconciliationFindings({
+      limit,
+      mismatchId,
+    });
+  }
+
+  async remediateMismatch(input: {
+    mismatchId: string;
+    actorId: string;
+    remediationType: RuntimeRemediationActionType;
+    summary?: string | null;
+  }): Promise<RuntimeMismatchRemediationView> {
+    const mismatch = await this.getRequiredMismatch(input.mismatchId);
+    if (mismatch.status === 'resolved' || mismatch.status === 'verified') {
+      throw new RuntimeMismatchLifecycleError(
+        `Cannot start remediation for mismatch "${input.mismatchId}" from status "${mismatch.status}".`,
+      );
+    }
+
+    const inFlight = await this.store.getInFlightMismatchRemediation(input.mismatchId);
+    if (inFlight !== null) {
+      throw new RuntimeMismatchLifecycleError(
+        `Mismatch "${input.mismatchId}" already has remediation "${inFlight.id}" in flight.`,
+      );
+    }
+
+    const runtimeStatus = await this.store.getRuntimeStatus();
+    if (
+      input.remediationType === 'run_cycle'
+      && (runtimeStatus.halted || runtimeStatus.lifecycleState === 'paused' || runtimeStatus.lifecycleState === 'stopped')
+    ) {
+      throw new RuntimeMismatchLifecycleError(
+        `Cannot start run_cycle remediation while runtime is ${runtimeStatus.lifecycleState}.`,
+      );
+    }
+
+    const summary = input.summary?.trim() ?? null;
+    const commandId = createId();
+    const payload: Record<string, unknown> = {
+      ...(input.remediationType === 'run_cycle'
+        ? { triggerSource: `mismatch-remediation:${input.mismatchId}` }
+        : {}),
+      remediation: {
+        mismatchId: input.mismatchId,
+        remediationType: input.remediationType,
+        requestedBy: input.actorId,
+      },
+    };
+
+    await this.createCommandRecord(commandId, input.remediationType, input.actorId, payload);
+    const remediation = await this.store.createMismatchRemediation({
+      mismatchId: input.mismatchId,
+      remediationType: input.remediationType,
+      commandId,
+      requestedBy: input.actorId,
+      requestedSummary: summary,
+    });
+
+    const nextStatus = recoveryNextStatus(mismatch.status);
+    await this.store.updateMismatchById(input.mismatchId, {
+      status: nextStatus,
+      recoveryStartedAt: new Date(),
+      recoveryStartedBy: input.actorId,
+      recoverySummary: summary ?? `Remediation ${input.remediationType} requested.`,
+      linkedCommandId: commandId,
+      linkedRecoveryEventId: null,
+      lastStatusChangeAt: new Date(),
+    });
+
+    await this.store.recordRecoveryEvent({
+      mismatchId: input.mismatchId,
+      commandId,
+      eventType: 'mismatch_remediation_requested',
+      status: nextStatus,
+      sourceComponent: 'api-control-plane',
+      actorId: input.actorId,
+      message: summary ?? `Mismatch remediation ${input.remediationType} requested.`,
+      details: {
+        mismatchId: input.mismatchId,
+        remediationId: remediation.id,
+        remediationType: input.remediationType,
+      },
+    });
+
+    return this.store.getMismatchRemediationById(remediation.id).then((result) => {
+      if (result === null) {
+        throw new Error(`RuntimeControlPlane.remediateMismatch: remediation "${remediation.id}" was not persisted`);
+      }
+      return result;
+    });
   }
 
   async acknowledgeMismatch(
@@ -164,8 +383,21 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     actorId: string,
     summary: string | null = null,
   ): Promise<RuntimeMismatchView | null> {
-    const mismatch = await this.store.acknowledgeMismatch(mismatchId, actorId, summary);
-    if (mismatch !== null) {
+    const mismatch = await this.getRequiredMismatch(mismatchId);
+    const nextStatus = acknowledgeNextStatus(mismatch.status);
+
+    if (nextStatus === mismatch.status) {
+      return mismatch;
+    }
+
+    const updated = await this.store.updateMismatchById(mismatchId, {
+      status: nextStatus,
+      acknowledgedAt: new Date(),
+      acknowledgedBy: actorId,
+      lastStatusChangeAt: new Date(),
+    });
+
+    if (updated !== null) {
       await this.store.recordRecoveryEvent({
         mismatchId,
         eventType: 'mismatch_acknowledged',
@@ -178,11 +410,253 @@ export class RuntimeControlPlane implements RuntimeReadApi {
         },
       });
     }
-    return mismatch;
+
+    return updated;
+  }
+
+  async startMismatchRecovery(input: {
+    mismatchId: string;
+    actorId: string;
+    summary: string | null;
+    commandId?: string | null;
+    linkedRecoveryEventId?: string | null;
+  }): Promise<RuntimeMismatchView | null> {
+    if (
+      (input.summary === null || input.summary.trim().length === 0)
+      && (input.commandId === undefined || input.commandId === null)
+      && (input.linkedRecoveryEventId === undefined || input.linkedRecoveryEventId === null)
+    ) {
+      throw new RuntimeMismatchLifecycleError(
+        'Recovery start requires a summary, linked commandId, or linked recoveryEventId.',
+      );
+    }
+
+    const mismatch = await this.getRequiredMismatch(input.mismatchId);
+    const nextStatus = recoveryNextStatus(mismatch.status);
+
+    if (nextStatus === mismatch.status) {
+      return mismatch;
+    }
+
+    const updated = await this.store.updateMismatchById(input.mismatchId, {
+      status: nextStatus,
+      recoveryStartedAt: new Date(),
+      recoveryStartedBy: input.actorId,
+      recoverySummary: input.summary,
+      linkedCommandId: input.commandId ?? null,
+      linkedRecoveryEventId: input.linkedRecoveryEventId ?? null,
+      lastStatusChangeAt: new Date(),
+    });
+
+    if (updated !== null) {
+      await this.store.recordRecoveryEvent({
+        mismatchId: input.mismatchId,
+        commandId: input.commandId ?? null,
+        eventType: 'mismatch_recovery_started',
+        status: 'recovering',
+        sourceComponent: 'api-control-plane',
+        actorId: input.actorId,
+        message: input.summary ?? `Mismatch ${input.mismatchId} moved to recovering.`,
+        details: {
+          mismatchId: input.mismatchId,
+          linkedRecoveryEventId: input.linkedRecoveryEventId ?? null,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async resolveMismatch(input: {
+    mismatchId: string;
+    actorId: string;
+    summary: string;
+    commandId?: string | null;
+    linkedRecoveryEventId?: string | null;
+  }): Promise<RuntimeMismatchView | null> {
+    if (input.summary.trim().length === 0) {
+      throw new RuntimeMismatchLifecycleError('Mismatch resolution summary is required.');
+    }
+
+    const mismatch = await this.getRequiredMismatch(input.mismatchId);
+    const nextStatus = resolveNextStatus(mismatch.status);
+
+    if (nextStatus === mismatch.status) {
+      return mismatch;
+    }
+
+    const now = new Date();
+    const updated = await this.store.updateMismatchById(input.mismatchId, {
+      status: nextStatus,
+      resolvedAt: now,
+      resolvedBy: input.actorId,
+      resolutionSummary: input.summary,
+      linkedCommandId: input.commandId ?? mismatch.linkedCommandId,
+      linkedRecoveryEventId: input.linkedRecoveryEventId ?? mismatch.linkedRecoveryEventId,
+      lastStatusChangeAt: now,
+    });
+
+    if (updated !== null) {
+      await this.store.recordRecoveryEvent({
+        mismatchId: input.mismatchId,
+        commandId: input.commandId ?? mismatch.linkedCommandId,
+        eventType: 'mismatch_resolved',
+        status: 'resolved',
+        sourceComponent: 'api-control-plane',
+        actorId: input.actorId,
+        message: input.summary,
+        details: {
+          mismatchId: input.mismatchId,
+          linkedRecoveryEventId: input.linkedRecoveryEventId ?? mismatch.linkedRecoveryEventId,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async verifyMismatch(input: {
+    mismatchId: string;
+    actorId: string;
+    summary: string;
+    outcome?: RuntimeVerificationOutcome;
+  }): Promise<RuntimeMismatchView | null> {
+    const outcome = input.outcome ?? 'verified';
+    if (input.summary.trim().length === 0) {
+      throw new RuntimeMismatchLifecycleError('Mismatch verification summary is required.');
+    }
+
+    const mismatch = await this.getRequiredMismatch(input.mismatchId);
+    const nextStatus = verifyNextStatus(mismatch.status, outcome);
+
+    if (nextStatus === mismatch.status) {
+      return mismatch;
+    }
+
+    const now = new Date();
+    const updated = await this.store.updateMismatchById(input.mismatchId, {
+      status: nextStatus,
+      verifiedAt: now,
+      verifiedBy: input.actorId,
+      verificationSummary: input.summary,
+      verificationOutcome: outcome,
+      ...(outcome === 'failed'
+        ? {
+          reopenedAt: now,
+          reopenedBy: input.actorId,
+          reopenSummary: input.summary,
+        }
+        : {}),
+      lastStatusChangeAt: now,
+    });
+
+    if (mismatch !== null) {
+      await this.store.recordRecoveryEvent({
+        mismatchId: input.mismatchId,
+        eventType: outcome === 'verified' ? 'mismatch_verified' : 'mismatch_verification_failed',
+        status: outcome === 'verified' ? 'verified' : 'reopened',
+        sourceComponent: 'api-control-plane',
+        actorId: input.actorId,
+        message: input.summary,
+        details: {
+          mismatchId: input.mismatchId,
+          outcome,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async reopenMismatch(
+    mismatchId: string,
+    actorId: string,
+    summary: string,
+  ): Promise<RuntimeMismatchView | null> {
+    if (summary.trim().length === 0) {
+      throw new RuntimeMismatchLifecycleError('Mismatch reopen summary is required.');
+    }
+
+    const mismatch = await this.getRequiredMismatch(mismatchId);
+    const nextStatus = reopenNextStatus(mismatch.status);
+
+    if (nextStatus === mismatch.status) {
+      return mismatch;
+    }
+
+    const updated = await this.store.updateMismatchById(mismatchId, {
+      status: nextStatus,
+      reopenedAt: new Date(),
+      reopenedBy: actorId,
+      reopenSummary: summary,
+      lastStatusChangeAt: new Date(),
+    });
+
+    if (updated !== null) {
+      await this.store.recordRecoveryEvent({
+        mismatchId,
+        commandId: updated.linkedCommandId,
+        eventType: 'mismatch_reopened',
+        status: 'reopened',
+        sourceComponent: 'api-control-plane',
+        actorId,
+        message: summary,
+        details: {
+          mismatchId,
+        },
+      });
+    }
+
+    return updated;
   }
 
   async listRecoveryEvents(limit = 100): Promise<RuntimeRecoveryEventView[]> {
     return this.store.listRecoveryEvents(limit);
+  }
+
+  async listRecoveryOutcomes(limit = 100): Promise<RuntimeRecoveryEventView[]> {
+    return this.store.listRecoveryOutcomes(limit);
+  }
+
+  async recordFailedRemediationOutcome(input: {
+    mismatchId: string;
+    commandId: string;
+    remediationId: string;
+    actorId: string;
+    summary: string;
+  }): Promise<RuntimeMismatchView | null> {
+    const mismatch = await this.getRequiredMismatch(input.mismatchId);
+    const nextStatus = remediationFailureNextStatus(mismatch.status);
+    const event = await this.store.recordRecoveryEvent({
+      mismatchId: input.mismatchId,
+      commandId: input.commandId,
+      eventType: 'mismatch_remediation_failed',
+      status: nextStatus,
+      sourceComponent: 'runtime-worker',
+      actorId: input.actorId,
+      message: input.summary,
+      details: {
+        mismatchId: input.mismatchId,
+        remediationId: input.remediationId,
+      },
+    });
+
+    await this.store.updateMismatchRemediationById(input.remediationId, {
+      status: 'failed',
+      failedAt: new Date(),
+      outcomeSummary: input.summary,
+      latestRecoveryEventId: event.id,
+    });
+
+    return this.store.updateMismatchById(input.mismatchId, {
+      status: nextStatus,
+      linkedCommandId: input.commandId,
+      linkedRecoveryEventId: event.id,
+      reopenedAt: new Date(),
+      reopenedBy: input.actorId,
+      reopenSummary: input.summary,
+      lastStatusChangeAt: new Date(),
+    });
   }
 
   async activateKillSwitch(reason: string, actorId: string): Promise<RuntimeStatusView> {
@@ -260,5 +734,13 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     });
 
     return this.store.getRuntimeStatus();
+  }
+
+  private async getRequiredMismatch(mismatchId: string): Promise<RuntimeMismatchView> {
+    const mismatch = await this.store.getMismatchById(mismatchId);
+    if (mismatch === null) {
+      throw new RuntimeMismatchNotFoundError(`Mismatch "${mismatchId}" was not found.`);
+    }
+    return mismatch;
   }
 }

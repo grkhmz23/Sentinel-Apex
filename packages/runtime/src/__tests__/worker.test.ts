@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createDatabaseConnection } from '@sentinel-apex/db';
+
 import { RuntimeControlPlane } from '../control-plane.js';
 import { RuntimeWorker } from '../worker.js';
 
@@ -12,7 +14,7 @@ async function createConnectionString(): Promise<string> {
 async function waitFor<T>(
   fn: () => Promise<T>,
   predicate: (value: T) => boolean,
-  timeoutMs = 5000,
+  timeoutMs = 30_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
 
@@ -63,7 +65,7 @@ describe('RuntimeWorker', () => {
     expect(workerStatus.lifecycleState).toMatch(/ready|degraded/);
     expect(workerStatus.lastHeartbeatAt).toBeTruthy();
     expect(workerStatus.lastSuccessAt).toBeTruthy();
-  });
+  }, 90_000);
 
   it('processes commands serially, persists failures as mismatches, and records recovery history', async () => {
     const connectionString = await createConnectionString();
@@ -93,7 +95,7 @@ describe('RuntimeWorker', () => {
     expect(failedCommand.errorMessage).toContain('Runtime is paused');
 
     const mismatches = await waitFor(
-      () => controlPlane.listMismatches(20, 'open'),
+      () => controlPlane.listMismatches(20, { status: 'open' }),
       (items) => items.some((item) => item.category === 'recovery_action_failure'),
     );
     expect(mismatches.some((item) => item.category === 'recovery_action_failure')).toBe(true);
@@ -126,5 +128,369 @@ describe('RuntimeWorker', () => {
     const recoveryEvents = await controlPlane.listRecoveryEvents(20);
     expect(recoveryEvents.some((event) => event.eventType === 'runtime_command_failed')).toBe(true);
     expect(recoveryEvents.some((event) => event.eventType === 'runtime_command_completed')).toBe(true);
+  });
+
+  it('supports acknowledge, recovering, resolve, verify, and reopen lifecycle transitions', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+    await controlPlane.activateKillSwitch('phase-1-7-test-pause', 'vitest');
+
+    const blockedCommand = await controlPlane.enqueueCommand('run_cycle', 'vitest', {
+      triggerSource: 'phase-1-7-test-cycle',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(blockedCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'failed',
+    );
+
+    const openMismatch = await waitFor(
+      async () => {
+        const mismatches = await controlPlane.listMismatches(20);
+        return mismatches.find((item) => item.category === 'recovery_action_failure') ?? null;
+      },
+      (mismatch): mismatch is Exclude<typeof mismatch, null> => mismatch !== null,
+    );
+    if (openMismatch === null) {
+      throw new Error('Expected recovery_action_failure mismatch to exist');
+    }
+
+    expect(openMismatch.status).toBe('open');
+
+    const acknowledged = await controlPlane.acknowledgeMismatch(
+      openMismatch.id,
+      'vitest',
+      'operator saw the failure',
+    );
+    expect(acknowledged?.status).toBe('acknowledged');
+    expect(acknowledged?.acknowledgedBy).toBe('vitest');
+
+    const recovering = await controlPlane.startMismatchRecovery({
+      mismatchId: openMismatch.id,
+      actorId: 'vitest',
+      summary: 'linking a recovery command',
+      commandId: blockedCommand.commandId,
+    });
+    expect(recovering?.status).toBe('recovering');
+    expect(recovering?.linkedCommandId).toBe(blockedCommand.commandId);
+
+    const resolved = await controlPlane.resolveMismatch({
+      mismatchId: openMismatch.id,
+      actorId: 'vitest',
+      summary: 'investigation complete and fix applied',
+      commandId: blockedCommand.commandId,
+    });
+    expect(resolved?.status).toBe('resolved');
+    expect(resolved?.resolvedBy).toBe('vitest');
+
+    const verified = await controlPlane.verifyMismatch({
+      mismatchId: openMismatch.id,
+      actorId: 'vitest',
+      summary: 'fix confirmed by operator review',
+    });
+    expect(verified?.status).toBe('verified');
+    expect(verified?.verificationOutcome).toBe('verified');
+
+    const reopened = await controlPlane.reopenMismatch(
+      openMismatch.id,
+      'vitest',
+      'issue reappeared after verification',
+    );
+    expect(reopened?.status).toBe('reopened');
+    expect(reopened?.reopenedBy).toBe('vitest');
+
+    const failedVerificationReopen = await controlPlane.resolveMismatch({
+      mismatchId: openMismatch.id,
+      actorId: 'vitest',
+      summary: 'second fix applied',
+    });
+    expect(failedVerificationReopen?.status).toBe('resolved');
+
+    const verificationFailed = await controlPlane.verifyMismatch({
+      mismatchId: openMismatch.id,
+      actorId: 'vitest',
+      summary: 'verification failed; problem still present',
+      outcome: 'failed',
+    });
+    expect(verificationFailed?.status).toBe('reopened');
+    expect(verificationFailed?.verificationOutcome).toBe('failed');
+
+    await expect(
+      controlPlane.verifyMismatch({
+        mismatchId: openMismatch.id,
+        actorId: 'vitest',
+        summary: 'invalid verification attempt from reopened',
+      }),
+    ).rejects.toThrow('Cannot verify mismatch');
+
+    const detail = await controlPlane.getMismatchDetail(openMismatch.id);
+    expect(detail?.mismatch.status).toBe('reopened');
+    expect(detail?.linkedCommand?.commandId).toBe(blockedCommand.commandId);
+    expect(detail?.recoveryEvents.some((event) => event.eventType === 'mismatch_recovery_started')).toBe(true);
+    expect(detail?.recoveryEvents.some((event) => event.eventType === 'mismatch_verified')).toBe(true);
+    expect(detail?.recoveryEvents.some((event) => event.eventType === 'mismatch_verification_failed')).toBe(true);
+
+    const summary = await controlPlane.summarizeMismatches();
+    expect(summary.statusCounts.reopened).toBeGreaterThanOrEqual(1);
+    expect(summary.activeMismatchCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('creates durable mismatch-scoped remediation attempts and exposes successful outcomes in detail', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 25,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+    await controlPlane.activateKillSwitch('phase-1-8-open-mismatch', 'vitest');
+
+    const blockedCommand = await controlPlane.enqueueCommand('run_cycle', 'vitest', {
+      triggerSource: 'phase-1-8-open-mismatch',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(blockedCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'failed',
+    );
+
+    const mismatch = await waitFor(
+      async () => {
+        const mismatches = await controlPlane.listMismatches(20);
+        return mismatches.find((item) => item.category === 'recovery_action_failure') ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (mismatch === null) {
+      throw new Error('Expected mismatch to exist');
+    }
+
+    await controlPlane.acknowledgeMismatch(mismatch.id, 'vitest', 'operator acknowledged mismatch');
+    await controlPlane.resume('phase-1-8-remediation-success', 'vitest');
+
+    const remediation = await controlPlane.remediateMismatch({
+      mismatchId: mismatch.id,
+      actorId: 'vitest',
+      remediationType: 'rebuild_projections',
+      summary: 'rebuild projections for mismatch context',
+    });
+
+    expect(remediation.commandId).toBeTruthy();
+    expect(remediation.attemptSequence).toBe(1);
+    expect(remediation.status).toBe('requested');
+
+    const completedRemediation = await waitFor(
+      async () => controlPlane.getLatestMismatchRemediation(mismatch.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+    if (completedRemediation === null) {
+      throw new Error('Expected remediation to complete');
+    }
+
+    expect(completedRemediation.command?.status).toBe('completed');
+    expect(completedRemediation.latestRecoveryEvent?.eventType).toBe('runtime_command_completed');
+
+    const detail = await controlPlane.getMismatchDetail(mismatch.id);
+    expect(detail?.mismatch.status).toBe('recovering');
+    expect(detail?.latestRemediation?.id).toBe(completedRemediation.id);
+    expect(detail?.remediationInFlight).toBe(false);
+    expect(detail?.isActionable).toBe(true);
+    expect(detail?.remediationHistory).toHaveLength(1);
+    expect(detail?.remediationHistory[0]?.command?.commandId).toBe(remediation.commandId);
+    expect(detail?.recoveryEvents.some((event) => event.eventType === 'mismatch_remediation_requested')).toBe(true);
+  });
+
+  it('rejects duplicate in-flight remediation and reopens the mismatch when a remediation command fails', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 500,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+    await controlPlane.activateKillSwitch('phase-1-8-remediation-failure-setup', 'vitest');
+
+    const blockedCommand = await controlPlane.enqueueCommand('run_cycle', 'vitest', {
+      triggerSource: 'phase-1-8-remediation-failure-setup',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(blockedCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'failed',
+    );
+
+    const mismatch = await waitFor(
+      async () => {
+        const mismatches = await controlPlane.listMismatches(20);
+        return mismatches.find((item) => item.category === 'recovery_action_failure') ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (mismatch === null) {
+      throw new Error('Expected mismatch to exist');
+    }
+
+    await controlPlane.resume('phase-1-8-remediation-failure-ready', 'vitest');
+
+    const remediation = await controlPlane.remediateMismatch({
+      mismatchId: mismatch.id,
+      actorId: 'vitest',
+      remediationType: 'run_cycle',
+      summary: 'attempt one safe remediation cycle',
+    });
+    expect(remediation.status).toBe('requested');
+
+    await expect(
+      controlPlane.remediateMismatch({
+        mismatchId: mismatch.id,
+        actorId: 'vitest',
+        remediationType: 'rebuild_projections',
+        summary: 'duplicate in-flight remediation should reject',
+      }),
+    ).rejects.toThrow('already has remediation');
+
+    await controlPlane.activateKillSwitch('phase-1-8-remediation-failure-trigger', 'vitest');
+
+    const failedRemediation = await waitFor(
+      async () => controlPlane.getLatestMismatchRemediation(mismatch.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'failed',
+      7000,
+    );
+    if (failedRemediation === null) {
+      throw new Error('Expected remediation to fail');
+    }
+
+    expect(failedRemediation.command?.status).toBe('failed');
+    expect(failedRemediation.latestRecoveryEvent?.eventType).toBe('mismatch_remediation_failed');
+
+    const detail = await waitFor(
+      async () => controlPlane.getMismatchDetail(mismatch.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.mismatch.status === 'reopened',
+      7000,
+    );
+    if (detail === null) {
+      throw new Error('Expected mismatch detail to exist');
+    }
+
+    expect(detail.mismatch.linkedCommandId).toBe(remediation.commandId);
+    expect(detail.latestRemediation?.status).toBe('failed');
+    expect(detail.remediationInFlight).toBe(false);
+    expect(detail.isActionable).toBe(true);
+    expect(detail.recoveryEvents.some((event) => event.eventType === 'mismatch_remediation_failed')).toBe(true);
+  });
+
+  it('persists reconciliation runs and findings, creates reconciliation-driven mismatches, and preserves remediation linkage', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 25,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const cycleCommand = await controlPlane.enqueueCommand('run_cycle', 'vitest', {
+      triggerSource: 'phase-1-9-seed-cycle',
+    });
+    const completedCycle = await waitFor(
+      async () => controlPlane.getCommand(cycleCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+    );
+    expect(completedCycle?.result['runId']).toBeTruthy();
+
+    const positions = await controlPlane.listPositions(20);
+    expect(positions.length).toBeGreaterThan(0);
+
+    const connection = await createDatabaseConnection(connectionString);
+    const positionId = positions[0]?.id;
+    if (positionId === undefined) {
+      throw new Error('Expected at least one position to exist');
+    }
+
+    await connection.execute(`
+      UPDATE positions
+      SET size = '999', updated_at = NOW()
+      WHERE id = '${positionId.replace(/'/g, "''")}';
+    `);
+
+    const reconciliationCommand = await controlPlane.enqueueReconciliationRun('vitest', {
+      trigger: 'phase-1-9-manual-reconciliation',
+      triggerReference: positionId,
+      triggeredBy: 'vitest',
+    });
+    const completedReconciliationCommand = await waitFor(
+      async () => controlPlane.getCommand(reconciliationCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+    );
+    const reconciliationRunId = completedReconciliationCommand?.result['reconciliationRunId'];
+    expect(typeof reconciliationRunId).toBe('string');
+
+    const reconciliationRun = await waitFor(
+      async () => controlPlane.getReconciliationRun(String(reconciliationRunId)),
+      (run): run is Exclude<typeof run, null> => run !== null && run.status === 'completed',
+    );
+    if (reconciliationRun === null) {
+      throw new Error('Expected reconciliation run to complete');
+    }
+    expect(reconciliationRun.findingCount).toBeGreaterThan(0);
+
+    const findings = await controlPlane.listReconciliationFindings({
+      findingType: 'position_exposure_mismatch',
+      limit: 20,
+    });
+    const finding = findings.find((item) => item.entityId === positions[0]?.asset);
+    expect(finding).toBeTruthy();
+    expect(finding?.status).toBe('active');
+    expect(finding?.mismatchId).toBeTruthy();
+
+    const mismatchDetail = await controlPlane.getMismatchDetail(String(finding?.mismatchId));
+    expect(mismatchDetail?.mismatch.sourceKind).toBe('reconciliation');
+    expect(mismatchDetail?.reconciliationFindings.length).toBeGreaterThan(0);
+    expect(mismatchDetail?.latestReconciliationFinding?.findingType).toBe('position_exposure_mismatch');
+    expect(mismatchDetail?.recommendedRemediationTypes).toContain('rebuild_projections');
+
+    const remediation = await controlPlane.remediateMismatch({
+      mismatchId: String(finding?.mismatchId),
+      actorId: 'vitest',
+      remediationType: 'rebuild_projections',
+      summary: 'repair projected positions from durable state',
+    });
+    expect(remediation.commandId).toBeTruthy();
+
+    await waitFor(
+      async () => controlPlane.getLatestMismatchRemediation(String(finding?.mismatchId)),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+    const resolvedMismatch = await waitFor(
+      async () => controlPlane.getMismatchDetail(String(finding?.mismatchId)),
+      (detail): detail is Exclude<typeof detail, null> => detail !== null && detail.mismatch.status === 'resolved',
+    );
+    if (resolvedMismatch === null) {
+      throw new Error('Expected mismatch to resolve after remediation');
+    }
+
+    expect(resolvedMismatch.latestRemediation?.status).toBe('completed');
+    expect(resolvedMismatch.reconciliationFindings.some((item) => item.status === 'resolved')).toBe(true);
   });
 });

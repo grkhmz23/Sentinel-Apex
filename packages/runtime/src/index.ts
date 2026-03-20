@@ -1,6 +1,11 @@
 export { RuntimeStore, RuntimeOrderStore, DatabaseAuditWriter } from './store.js';
 export { RuntimeControlPlane } from './control-plane.js';
 export { RuntimeHealthMonitor } from './health-monitor.js';
+export { RuntimeReconciliationEngine } from './reconciliation-engine.js';
+export {
+  RuntimeMismatchLifecycleError,
+  RuntimeMismatchNotFoundError,
+} from './mismatch-lifecycle.js';
 export { SentinelRuntime } from './runtime.js';
 export { RuntimeWorker } from './worker.js';
 export type { DeterministicRuntimeScenario } from './runtime.js';
@@ -19,10 +24,24 @@ export type {
   RuntimeCommandStatus,
   RuntimeCommandType,
   RuntimeCommandView,
+  RuntimeMismatchDetailView,
   RuntimeMismatchStatus,
+  RuntimeMismatchRemediationView,
+  RuntimeMismatchSourceKind,
   RuntimeMismatchView,
   RuntimeOverviewView,
   RuntimeReadApi,
+  RuntimeReconciliationFindingDetailView,
+  RuntimeReconciliationFindingSeverity,
+  RuntimeReconciliationFindingStatus,
+  RuntimeReconciliationFindingType,
+  RuntimeReconciliationFindingView,
+  RuntimeReconciliationRunStatus,
+  RuntimeReconciliationRunType,
+  RuntimeReconciliationRunView,
+  RuntimeReconciliationSummaryView,
+  RuntimeRemediationActionType,
+  RuntimeRemediationStatus,
   RuntimeRecoveryEventView,
   RuntimeLifecycleState,
   RiskSummaryView,

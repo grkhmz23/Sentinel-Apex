@@ -5,6 +5,9 @@ import {
   RuntimeWorker,
   type DeterministicRuntimeScenario,
   type RuntimeCommandView,
+  type RuntimeMismatchRemediationView,
+  type RuntimeMismatchStatus,
+  type RuntimeReconciliationRunView,
 } from '@sentinel-apex/runtime';
 
 export async function createApiHarness(
@@ -52,15 +55,16 @@ export async function waitForMismatch(
   controlPlane: RuntimeControlPlane,
   category: string,
   timeoutMs = 5000,
-): Promise<Array<{ id: string; category: string }>> {
+): Promise<Array<{ id: string; category: string; status: RuntimeMismatchStatus }>> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const mismatches = await controlPlane.listMismatches(20, 'open');
+    const mismatches = await controlPlane.listMismatches(20);
     if (mismatches.some((mismatch) => mismatch.category === category)) {
       return mismatches.map((mismatch) => ({
         id: mismatch.id,
         category: mismatch.category,
+        status: mismatch.status,
       }));
     }
 
@@ -68,4 +72,63 @@ export async function waitForMismatch(
   }
 
   throw new Error(`Timed out waiting for mismatch category ${category}`);
+}
+
+export async function waitForMismatchStatus(
+  controlPlane: RuntimeControlPlane,
+  mismatchId: string,
+  status: RuntimeMismatchStatus,
+  timeoutMs = 5000,
+): Promise<NonNullable<Awaited<ReturnType<RuntimeControlPlane['getMismatchDetail']>>>> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const detail = await controlPlane.getMismatchDetail(mismatchId);
+    if (detail !== null && detail.mismatch.status === status) {
+      return detail;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error(`Timed out waiting for mismatch ${mismatchId} to reach status ${status}`);
+}
+
+export async function waitForRemediationStatus(
+  controlPlane: RuntimeControlPlane,
+  mismatchId: string,
+  status: RuntimeMismatchRemediationView['status'],
+  timeoutMs = 5000,
+): Promise<RuntimeMismatchRemediationView> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remediation = await controlPlane.getLatestMismatchRemediation(mismatchId);
+    if (remediation !== null && remediation.status === status) {
+      return remediation;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error(`Timed out waiting for mismatch ${mismatchId} remediation to reach status ${status}`);
+}
+
+export async function waitForReconciliationRun(
+  controlPlane: RuntimeControlPlane,
+  reconciliationRunId: string,
+  timeoutMs = 5000,
+): Promise<RuntimeReconciliationRunView> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const run = await controlPlane.getReconciliationRun(reconciliationRunId);
+    if (run !== null && (run.status === 'completed' || run.status === 'failed')) {
+      return run;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error(`Timed out waiting for reconciliation run ${reconciliationRunId}`);
 }

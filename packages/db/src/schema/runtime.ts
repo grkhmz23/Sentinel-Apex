@@ -241,6 +241,7 @@ export const runtimeMismatches = pgTable(
     dedupeKey: text('dedupe_key').notNull().unique(),
     category: text('category').notNull(),
     severity: text('severity').notNull(),
+    sourceKind: text('source_kind').notNull().default('workflow'),
     sourceComponent: text('source_component').notNull(),
     entityType: text('entity_type'),
     entityId: text('entity_id'),
@@ -252,9 +253,22 @@ export const runtimeMismatches = pgTable(
     occurrenceCount: integer('occurrence_count').notNull().default(1),
     acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
     acknowledgedBy: text('acknowledged_by'),
+    recoveryStartedAt: timestamp('recovery_started_at', { withTimezone: true }),
+    recoveryStartedBy: text('recovery_started_by'),
+    recoverySummary: text('recovery_summary'),
+    linkedCommandId: text('linked_command_id'),
+    linkedRecoveryEventId: text('linked_recovery_event_id'),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     resolvedBy: text('resolved_by'),
     resolutionSummary: text('resolution_summary'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    verifiedBy: text('verified_by'),
+    verificationSummary: text('verification_summary'),
+    verificationOutcome: text('verification_outcome'),
+    reopenedAt: timestamp('reopened_at', { withTimezone: true }),
+    reopenedBy: text('reopened_by'),
+    reopenSummary: text('reopen_summary'),
+    lastStatusChangeAt: timestamp('last_status_change_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -263,6 +277,100 @@ export const runtimeMismatches = pgTable(
     statusIdx: index('runtime_mismatches_status_idx').on(t.status),
     categoryIdx: index('runtime_mismatches_category_idx').on(t.category),
     lastDetectedAtIdx: index('runtime_mismatches_last_detected_at_idx').on(t.lastDetectedAt),
+  }),
+);
+
+export const runtimeReconciliationRuns = pgTable(
+  'runtime_reconciliation_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runType: text('run_type').notNull(),
+    trigger: text('trigger').notNull(),
+    triggerReference: text('trigger_reference'),
+    sourceComponent: text('source_component').notNull(),
+    triggeredBy: text('triggered_by'),
+    status: text('status').notNull(),
+    findingCount: integer('finding_count').notNull().default(0),
+    linkedMismatchCount: integer('linked_mismatch_count').notNull().default(0),
+    summary: jsonb('summary').notNull().default({}),
+    errorMessage: text('error_message'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    runTypeIdx: index('runtime_reconciliation_runs_run_type_idx').on(t.runType),
+    triggerIdx: index('runtime_reconciliation_runs_trigger_idx').on(t.trigger),
+    statusIdx: index('runtime_reconciliation_runs_status_idx').on(t.status),
+    startedAtIdx: index('runtime_reconciliation_runs_started_at_idx').on(t.startedAt),
+  }),
+);
+
+export const runtimeReconciliationFindings = pgTable(
+  'runtime_reconciliation_findings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reconciliationRunId: uuid('reconciliation_run_id')
+      .notNull()
+      .references(() => runtimeReconciliationRuns.id),
+    dedupeKey: text('dedupe_key').notNull(),
+    findingType: text('finding_type').notNull(),
+    severity: text('severity').notNull(),
+    status: text('status').notNull(),
+    sourceComponent: text('source_component').notNull(),
+    subsystem: text('subsystem').notNull(),
+    venueId: text('venue_id'),
+    entityType: text('entity_type'),
+    entityId: text('entity_id'),
+    mismatchId: uuid('mismatch_id').references(() => runtimeMismatches.id),
+    summary: text('summary').notNull(),
+    expectedState: jsonb('expected_state').notNull().default({}),
+    actualState: jsonb('actual_state').notNull().default({}),
+    delta: jsonb('delta').notNull().default({}),
+    details: jsonb('details').notNull().default({}),
+    detectedAt: timestamp('detected_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    reconciliationRunIdIdx: index('runtime_reconciliation_findings_run_id_idx').on(t.reconciliationRunId),
+    dedupeKeyIdx: index('runtime_reconciliation_findings_dedupe_key_idx').on(t.dedupeKey),
+    findingTypeIdx: index('runtime_reconciliation_findings_finding_type_idx').on(t.findingType),
+    severityIdx: index('runtime_reconciliation_findings_severity_idx').on(t.severity),
+    statusIdx: index('runtime_reconciliation_findings_status_idx').on(t.status),
+    mismatchIdIdx: index('runtime_reconciliation_findings_mismatch_id_idx').on(t.mismatchId),
+    detectedAtIdx: index('runtime_reconciliation_findings_detected_at_idx').on(t.detectedAt),
+  }),
+);
+
+export const runtimeMismatchRemediations = pgTable(
+  'runtime_mismatch_remediations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    mismatchId: uuid('mismatch_id')
+      .notNull()
+      .references(() => runtimeMismatches.id),
+    attemptSequence: integer('attempt_sequence').notNull(),
+    remediationType: text('remediation_type').notNull(),
+    commandId: text('command_id')
+      .notNull()
+      .references(() => runtimeCommands.commandId),
+    status: text('status').notNull(),
+    requestedBy: text('requested_by').notNull(),
+    requestedSummary: text('requested_summary'),
+    outcomeSummary: text('outcome_summary'),
+    latestRecoveryEventId: uuid('latest_recovery_event_id'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    mismatchIdIdx: index('runtime_mismatch_remediations_mismatch_id_idx').on(t.mismatchId),
+    commandIdIdx: index('runtime_mismatch_remediations_command_id_idx').on(t.commandId),
+    statusIdx: index('runtime_mismatch_remediations_status_idx').on(t.status),
+    requestedAtIdx: index('runtime_mismatch_remediations_requested_at_idx').on(t.requestedAt),
   }),
 );
 

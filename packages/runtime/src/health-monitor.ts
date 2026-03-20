@@ -9,7 +9,7 @@ export class RuntimeHealthMonitor {
     const dedupeKey = `execution_state_mismatch:${runId}`;
 
     if (orderCount < approvedIntentCount) {
-      const mismatch = await this.store.upsertMismatch({
+      const { mismatch, outcome } = await this.store.upsertMismatch({
         dedupeKey,
         category: 'execution_state_mismatch',
         severity: 'high',
@@ -28,8 +28,8 @@ export class RuntimeHealthMonitor {
       await this.store.recordRecoveryEvent({
         mismatchId: mismatch.id,
         runId,
-        eventType: 'execution_mismatch_detected',
-        status: 'open',
+        eventType: outcome === 'reopened' ? 'execution_mismatch_reopened' : 'execution_mismatch_detected',
+        status: mismatch.status,
         sourceComponent,
         message: mismatch.summary,
         details: mismatch.details,
@@ -37,7 +37,7 @@ export class RuntimeHealthMonitor {
       return;
     }
 
-    const resolved = await this.store.resolveMismatch(
+    const resolved = await this.resolveMismatchByDedupeKey(
       dedupeKey,
       sourceComponent,
       `Execution records are consistent for run ${runId}.`,
@@ -102,7 +102,7 @@ export class RuntimeHealthMonitor {
   }
 
   async recordRuntimeFailure(sourceComponent: string, runId: string | null, message: string): Promise<void> {
-    const mismatch = await this.store.upsertMismatch({
+    const { mismatch, outcome } = await this.store.upsertMismatch({
       dedupeKey: 'runtime_failure:primary',
       category: 'runtime_failure',
       severity: 'high',
@@ -119,8 +119,8 @@ export class RuntimeHealthMonitor {
     await this.store.recordRecoveryEvent({
       mismatchId: mismatch.id,
       runId,
-      eventType: 'runtime_failure_detected',
-      status: 'open',
+      eventType: outcome === 'reopened' ? 'runtime_failure_reopened' : 'runtime_failure_detected',
+      status: mismatch.status,
       sourceComponent,
       message,
       details: {
@@ -130,7 +130,7 @@ export class RuntimeHealthMonitor {
   }
 
   async resolveRuntimeFailure(sourceComponent: string, runId: string | null): Promise<void> {
-    const resolved = await this.store.resolveMismatch(
+    const resolved = await this.resolveMismatchByDedupeKey(
       'runtime_failure:primary',
       sourceComponent,
       'Runtime recovered and completed a healthy execution path.',
@@ -166,7 +166,7 @@ export class RuntimeHealthMonitor {
       input.expectedRunId === null
       || (input.actualRunId === input.expectedRunId && input.projectionStatus === 'fresh')
     ) {
-      const resolved = await this.store.resolveMismatch(
+      const resolved = await this.resolveMismatchByDedupeKey(
         input.dedupeKey,
         input.sourceComponent,
         `Projection ${input.entityType} is aligned with the latest successful run.`,
@@ -190,7 +190,7 @@ export class RuntimeHealthMonitor {
       return;
     }
 
-    const mismatch = await this.store.upsertMismatch({
+    const { mismatch, outcome } = await this.store.upsertMismatch({
       dedupeKey: input.dedupeKey,
       category: input.category,
       severity: 'medium',
@@ -208,11 +208,30 @@ export class RuntimeHealthMonitor {
 
     await this.store.recordRecoveryEvent({
       mismatchId: mismatch.id,
-      eventType: 'projection_mismatch_detected',
-      status: 'open',
+      eventType: outcome === 'reopened' ? 'projection_mismatch_reopened' : 'projection_mismatch_detected',
+      status: mismatch.status,
       sourceComponent: input.sourceComponent,
       message: mismatch.summary,
       details: mismatch.details,
+    });
+  }
+
+  private async resolveMismatchByDedupeKey(
+    dedupeKey: string,
+    sourceComponent: string,
+    resolutionSummary: string,
+  ): Promise<Awaited<ReturnType<RuntimeStore['updateMismatchByDedupeKey']>>> {
+    const existing = await this.store.getMismatchByDedupeKey(dedupeKey);
+    if (existing === null || existing.status === 'verified') {
+      return null;
+    }
+
+    return this.store.updateMismatchByDedupeKey(dedupeKey, {
+      status: 'resolved',
+      resolvedAt: new Date(),
+      resolvedBy: sourceComponent,
+      resolutionSummary,
+      lastStatusChangeAt: new Date(),
     });
   }
 }

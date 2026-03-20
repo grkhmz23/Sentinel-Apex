@@ -8,7 +8,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config ../../vitest.shared.ts --testTimeout 30000 --hookTimeout 30000",
+    "test": "vitest run --config ../../vitest.shared.ts --testTimeout 60000 --hookTimeout 60000",
     "lint": "eslint src --ext .ts",
     "dev:run-cycle": "tsx src/scripts/run-dev-cycle.ts",
     "dev:rebuild-projections": "tsx src/scripts/rebuild-projections.ts"

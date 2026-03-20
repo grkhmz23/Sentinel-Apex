@@ -28,6 +28,7 @@ import {
 } from '@sentinel-apex/venue-adapters';
 
 import { RuntimeHealthMonitor } from './health-monitor.js';
+import { RuntimeReconciliationEngine } from './reconciliation-engine.js';
 import { DatabaseAuditWriter, RuntimeOrderStore, RuntimeStore } from './store.js';
 
 import type {
@@ -40,6 +41,7 @@ import type {
   PositionView,
   RiskBreachView,
   RuntimeLifecycleState,
+  RuntimeReconciliationRunView,
   RiskSummaryView,
   RuntimeCycleOutcome,
   RuntimeStatusView,
@@ -112,9 +114,15 @@ export class SentinelRuntime {
   private started = false;
   private closed = false;
   private readonly healthMonitor: RuntimeHealthMonitor;
+  private readonly reconciliationEngine: RuntimeReconciliationEngine;
 
   constructor(private readonly options: SentinelRuntimeOptions) {
     this.healthMonitor = new RuntimeHealthMonitor(this.options.store);
+    this.reconciliationEngine = new RuntimeReconciliationEngine(
+      this.options.store,
+      this.options.adapters,
+      this.options.logger,
+    );
   }
 
   static async createDeterministic(
@@ -490,8 +498,11 @@ export class SentinelRuntime {
       });
 
       await this.healthMonitor.resolveRuntimeFailure('sentinel-runtime', runId);
-      await this.healthMonitor.reconcileExecutionConsistency(runId, 'sentinel-runtime');
-      await this.healthMonitor.reconcileProjectionConsistency('sentinel-runtime');
+      await this.runReconciliation({
+        trigger: 'post_cycle',
+        sourceComponent: 'sentinel-runtime',
+        triggerReference: runId,
+      });
 
       return {
         runId,
@@ -644,9 +655,28 @@ export class SentinelRuntime {
       });
     }
 
-    await this.healthMonitor.reconcileProjectionConsistency('sentinel-runtime');
+    await this.runReconciliation({
+      trigger: emitAuditEvent ? 'projection_rebuild' : 'runtime_startup',
+      sourceComponent: 'sentinel-runtime',
+      triggerReference: lastSuccessfulRunId,
+    });
 
     return this.getRuntimeStatus();
+  }
+
+  async runReconciliation(input: {
+    trigger: string;
+    sourceComponent: string;
+    triggerReference?: string | null;
+    triggeredBy?: string | null;
+  }): Promise<RuntimeReconciliationRunView> {
+    const result = await this.reconciliationEngine.run({
+      trigger: input.trigger,
+      sourceComponent: input.sourceComponent,
+      triggerReference: input.triggerReference ?? null,
+      triggeredBy: input.triggeredBy ?? null,
+    });
+    return result.run;
   }
 
   async activateKillSwitch(reason: string, actorId: string): Promise<RuntimeStatusView> {

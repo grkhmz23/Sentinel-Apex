@@ -21,7 +21,7 @@
     "db:reset": "./scripts/db-reset.sh",
     "db:health": "./scripts/db-health.sh",
     "db:migrate": "./scripts/db-migrate.sh",
-    "test": "turbo run test",
+    "test": "turbo run test --concurrency=4",
     "lint": "turbo run lint --concurrency=4",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,mjs,json,yaml,yml,md}\" --ignore-path .gitignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,mjs,json,yaml,yml,md}\" --ignore-path .gitignore",

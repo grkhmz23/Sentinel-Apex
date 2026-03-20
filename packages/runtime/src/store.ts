@@ -12,7 +12,10 @@ import {
   riskBreaches,
   riskSnapshots,
   runtimeCommands,
+  runtimeMismatchRemediations,
   runtimeMismatches,
+  runtimeReconciliationFindings,
+  runtimeReconciliationRuns,
   runtimeRecoveryEvents,
   runtimeState,
   runtimeWorkerState,
@@ -40,9 +43,25 @@ import type {
   RuntimeCommandType,
   RuntimeCommandView,
   RuntimeLifecycleState,
+  RuntimeMismatchDetailView,
+  RuntimeMismatchRemediationView,
+  RuntimeMismatchSourceKind,
   RuntimeMismatchStatus,
+  RuntimeMismatchSummaryView,
   RuntimeMismatchView,
+  RuntimeReconciliationFindingDetailView,
+  RuntimeReconciliationFindingSeverity,
+  RuntimeReconciliationFindingStatus,
+  RuntimeReconciliationFindingType,
+  RuntimeReconciliationFindingView,
+  RuntimeReconciliationRunStatus,
+  RuntimeReconciliationRunType,
+  RuntimeReconciliationRunView,
+  RuntimeReconciliationSummaryView,
+  RuntimeRemediationActionType,
+  RuntimeRemediationStatus,
   RuntimeRecoveryEventView,
+  RuntimeVerificationOutcome,
   RiskSummaryView,
   RuntimeStatusView,
   WorkerLifecycleState,
@@ -78,6 +97,216 @@ function extractSleeveId(intent: OrderIntent): string {
     throw new Error(`Order intent "${intent.intentId}" is missing metadata.sleeveId`);
   }
   return raw;
+}
+
+function createMismatchStatusCounts(): Record<RuntimeMismatchStatus, number> {
+  return {
+    open: 0,
+    acknowledged: 0,
+    recovering: 0,
+    resolved: 0,
+    verified: 0,
+    reopened: 0,
+  };
+}
+
+function createFindingStatusCounts(): Record<RuntimeReconciliationFindingStatus, number> {
+  return {
+    active: 0,
+    resolved: 0,
+  };
+}
+
+function createFindingSeverityCounts(): Record<RuntimeReconciliationFindingSeverity, number> {
+  return {
+    low: 0,
+    medium: 0,
+    high: 0,
+    critical: 0,
+  };
+}
+
+function createFindingTypeCounts(): Record<RuntimeReconciliationFindingType, number> {
+  return {
+    order_state_mismatch: 0,
+    position_exposure_mismatch: 0,
+    projection_state_mismatch: 0,
+    stale_projection_state: 0,
+    command_outcome_mismatch: 0,
+  };
+}
+
+function isMismatchActionable(
+  status: RuntimeMismatchStatus,
+  remediationInFlight: boolean,
+): boolean {
+  if (remediationInFlight) {
+    return false;
+  }
+
+  return status === 'open'
+    || status === 'acknowledged'
+    || status === 'recovering'
+    || status === 'reopened';
+}
+
+function recommendedRemediationsForMismatch(
+  mismatch: RuntimeMismatchView,
+  latestFinding: RuntimeReconciliationFindingView | null,
+): RuntimeRemediationActionType[] {
+  const findingType = latestFinding?.findingType ?? null;
+  if (
+    findingType === 'projection_state_mismatch'
+    || findingType === 'stale_projection_state'
+    || mismatch.category === 'projection_mismatch'
+  ) {
+    return ['rebuild_projections'];
+  }
+
+  if (
+    findingType === 'order_state_mismatch'
+    || findingType === 'position_exposure_mismatch'
+    || findingType === 'command_outcome_mismatch'
+    || mismatch.category === 'execution_state_mismatch'
+  ) {
+    return ['run_cycle', 'rebuild_projections'];
+  }
+
+  return ['run_cycle'];
+}
+
+function mapMismatchRow(row: typeof runtimeMismatches.$inferSelect): RuntimeMismatchView {
+  return {
+    id: row.id,
+    dedupeKey: row.dedupeKey,
+    category: row.category,
+    severity: row.severity,
+    sourceKind: row.sourceKind as RuntimeMismatchSourceKind,
+    sourceComponent: row.sourceComponent,
+    entityType: row.entityType ?? null,
+    entityId: row.entityId ?? null,
+    summary: row.summary,
+    details: asJsonObject(row.details),
+    status: row.status as RuntimeMismatchStatus,
+    firstDetectedAt: row.firstDetectedAt.toISOString(),
+    lastDetectedAt: row.lastDetectedAt.toISOString(),
+    occurrenceCount: row.occurrenceCount,
+    acknowledgedAt: toIsoString(row.acknowledgedAt),
+    acknowledgedBy: row.acknowledgedBy ?? null,
+    recoveryStartedAt: toIsoString(row.recoveryStartedAt),
+    recoveryStartedBy: row.recoveryStartedBy ?? null,
+    recoverySummary: row.recoverySummary ?? null,
+    linkedCommandId: row.linkedCommandId ?? null,
+    linkedRecoveryEventId: row.linkedRecoveryEventId ?? null,
+    resolvedAt: toIsoString(row.resolvedAt),
+    resolvedBy: row.resolvedBy ?? null,
+    resolutionSummary: row.resolutionSummary ?? null,
+    verifiedAt: toIsoString(row.verifiedAt),
+    verifiedBy: row.verifiedBy ?? null,
+    verificationSummary: row.verificationSummary ?? null,
+    verificationOutcome: row.verificationOutcome as RuntimeVerificationOutcome | null,
+    reopenedAt: toIsoString(row.reopenedAt),
+    reopenedBy: row.reopenedBy ?? null,
+    reopenSummary: row.reopenSummary ?? null,
+    lastStatusChangeAt: row.lastStatusChangeAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapReconciliationRunRow(
+  row: typeof runtimeReconciliationRuns.$inferSelect,
+): RuntimeReconciliationRunView {
+  return {
+    id: row.id,
+    runType: row.runType as RuntimeReconciliationRunType,
+    trigger: row.trigger,
+    triggerReference: row.triggerReference ?? null,
+    sourceComponent: row.sourceComponent,
+    triggeredBy: row.triggeredBy ?? null,
+    status: row.status as RuntimeReconciliationRunStatus,
+    findingCount: row.findingCount,
+    linkedMismatchCount: row.linkedMismatchCount,
+    summary: asJsonObject(row.summary),
+    errorMessage: row.errorMessage ?? null,
+    startedAt: row.startedAt.toISOString(),
+    completedAt: toIsoString(row.completedAt),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapReconciliationFindingRow(
+  row: typeof runtimeReconciliationFindings.$inferSelect,
+): RuntimeReconciliationFindingView {
+  return {
+    id: row.id,
+    reconciliationRunId: row.reconciliationRunId,
+    dedupeKey: row.dedupeKey,
+    findingType: row.findingType as RuntimeReconciliationFindingType,
+    severity: row.severity as RuntimeReconciliationFindingSeverity,
+    status: row.status as RuntimeReconciliationFindingStatus,
+    sourceComponent: row.sourceComponent,
+    subsystem: row.subsystem,
+    venueId: row.venueId ?? null,
+    entityType: row.entityType ?? null,
+    entityId: row.entityId ?? null,
+    mismatchId: row.mismatchId ?? null,
+    summary: row.summary,
+    expectedState: asJsonObject(row.expectedState),
+    actualState: asJsonObject(row.actualState),
+    delta: asJsonObject(row.delta),
+    details: asJsonObject(row.details),
+    detectedAt: row.detectedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapRecoveryEventRow(row: typeof runtimeRecoveryEvents.$inferSelect): RuntimeRecoveryEventView {
+  return {
+    id: row.id,
+    mismatchId: row.mismatchId ?? null,
+    commandId: row.commandId ?? null,
+    runId: row.runId ?? null,
+    eventType: row.eventType,
+    status: row.status,
+    sourceComponent: row.sourceComponent,
+    actorId: row.actorId ?? null,
+    message: row.message,
+    details: asJsonObject(row.details),
+    occurredAt: row.occurredAt.toISOString(),
+  };
+}
+
+async function mapRemediationRow(
+  store: RuntimeStore,
+  row: typeof runtimeMismatchRemediations.$inferSelect,
+): Promise<RuntimeMismatchRemediationView> {
+  const [command, latestRecoveryEvent] = await Promise.all([
+    store.getRuntimeCommand(row.commandId),
+    row.latestRecoveryEventId === null
+      ? Promise.resolve<RuntimeRecoveryEventView | null>(null)
+      : store.getRecoveryEventById(row.latestRecoveryEventId),
+  ]);
+
+  return {
+    id: row.id,
+    mismatchId: row.mismatchId,
+    attemptSequence: row.attemptSequence,
+    remediationType: row.remediationType as RuntimeRemediationActionType,
+    commandId: row.commandId,
+    status: row.status as RuntimeRemediationStatus,
+    requestedBy: row.requestedBy,
+    requestedSummary: row.requestedSummary ?? null,
+    outcomeSummary: row.outcomeSummary ?? null,
+    latestRecoveryEventId: row.latestRecoveryEventId ?? null,
+    requestedAt: row.requestedAt.toISOString(),
+    startedAt: toIsoString(row.startedAt),
+    completedAt: toIsoString(row.completedAt),
+    failedAt: toIsoString(row.failedAt),
+    updatedAt: row.updatedAt.toISOString(),
+    command,
+    latestRecoveryEvent,
+  };
 }
 
 export class DatabaseAuditWriter implements AuditWriter {
@@ -638,6 +867,405 @@ export class RuntimeStore {
     return this.getRuntimeCommand(commandId);
   }
 
+  async createReconciliationRun(input: {
+    runType?: RuntimeReconciliationRunType;
+    trigger: string;
+    triggerReference?: string | null;
+    sourceComponent: string;
+    triggeredBy?: string | null;
+  }): Promise<RuntimeReconciliationRunView> {
+    const [inserted] = await this.db
+      .insert(runtimeReconciliationRuns)
+      .values({
+        runType: input.runType ?? 'runtime_reconciliation',
+        trigger: input.trigger,
+        triggerReference: input.triggerReference ?? null,
+        sourceComponent: input.sourceComponent,
+        triggeredBy: input.triggeredBy ?? null,
+        status: 'running',
+        summary: {},
+        startedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (inserted === undefined) {
+      throw new Error('RuntimeStore.createReconciliationRun: run was not persisted');
+    }
+
+    return mapReconciliationRunRow(inserted);
+  }
+
+  async getReconciliationRun(
+    reconciliationRunId: string,
+  ): Promise<RuntimeReconciliationRunView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeReconciliationRuns)
+      .where(eq(runtimeReconciliationRuns.id, reconciliationRunId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return mapReconciliationRunRow(row);
+  }
+
+  async listReconciliationRuns(limit: number): Promise<RuntimeReconciliationRunView[]> {
+    const rows = await this.db
+      .select()
+      .from(runtimeReconciliationRuns)
+      .orderBy(desc(runtimeReconciliationRuns.startedAt))
+      .limit(limit);
+
+    return rows.map((row) => mapReconciliationRunRow(row));
+  }
+
+  async getLatestReconciliationRun(): Promise<RuntimeReconciliationRunView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeReconciliationRuns)
+      .orderBy(desc(runtimeReconciliationRuns.startedAt))
+      .limit(1);
+
+    return row === undefined ? null : mapReconciliationRunRow(row);
+  }
+
+  async getLatestCompletedReconciliationRun(): Promise<RuntimeReconciliationRunView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeReconciliationRuns)
+      .where(eq(runtimeReconciliationRuns.status, 'completed'))
+      .orderBy(desc(runtimeReconciliationRuns.completedAt), desc(runtimeReconciliationRuns.startedAt))
+      .limit(1);
+
+    return row === undefined ? null : mapReconciliationRunRow(row);
+  }
+
+  async completeReconciliationRun(input: {
+    reconciliationRunId: string;
+    findingCount: number;
+    linkedMismatchCount: number;
+    summary: Record<string, unknown>;
+  }): Promise<RuntimeReconciliationRunView | null> {
+    await this.db
+      .update(runtimeReconciliationRuns)
+      .set({
+        status: 'completed',
+        findingCount: input.findingCount,
+        linkedMismatchCount: input.linkedMismatchCount,
+        summary: input.summary,
+        errorMessage: null,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeReconciliationRuns.id, input.reconciliationRunId));
+
+    return this.getReconciliationRun(input.reconciliationRunId);
+  }
+
+  async failReconciliationRun(input: {
+    reconciliationRunId: string;
+    errorMessage: string;
+    summary?: Record<string, unknown>;
+  }): Promise<RuntimeReconciliationRunView | null> {
+    await this.db
+      .update(runtimeReconciliationRuns)
+      .set({
+        status: 'failed',
+        errorMessage: input.errorMessage,
+        summary: input.summary ?? {},
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeReconciliationRuns.id, input.reconciliationRunId));
+
+    return this.getReconciliationRun(input.reconciliationRunId);
+  }
+
+  async recordReconciliationFinding(input: {
+    reconciliationRunId: string;
+    dedupeKey: string;
+    findingType: RuntimeReconciliationFindingType;
+    severity: RuntimeReconciliationFindingSeverity;
+    status: RuntimeReconciliationFindingStatus;
+    sourceComponent: string;
+    subsystem: string;
+    venueId?: string | null;
+    entityType?: string | null;
+    entityId?: string | null;
+    mismatchId?: string | null;
+    summary: string;
+    expectedState?: Record<string, unknown>;
+    actualState?: Record<string, unknown>;
+    delta?: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    detectedAt?: Date;
+  }): Promise<RuntimeReconciliationFindingView> {
+    const [inserted] = await this.db
+      .insert(runtimeReconciliationFindings)
+      .values({
+        reconciliationRunId: input.reconciliationRunId,
+        dedupeKey: input.dedupeKey,
+        findingType: input.findingType,
+        severity: input.severity,
+        status: input.status,
+        sourceComponent: input.sourceComponent,
+        subsystem: input.subsystem,
+        venueId: input.venueId ?? null,
+        entityType: input.entityType ?? null,
+        entityId: input.entityId ?? null,
+        mismatchId: input.mismatchId ?? null,
+        summary: input.summary,
+        expectedState: input.expectedState ?? {},
+        actualState: input.actualState ?? {},
+        delta: input.delta ?? {},
+        details: input.details ?? {},
+        detectedAt: input.detectedAt ?? new Date(),
+      })
+      .returning();
+
+    if (inserted === undefined) {
+      throw new Error(`RuntimeStore.recordReconciliationFinding: finding "${input.dedupeKey}" was not persisted`);
+    }
+
+    return mapReconciliationFindingRow(inserted);
+  }
+
+  async getReconciliationFinding(
+    findingId: string,
+  ): Promise<RuntimeReconciliationFindingView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeReconciliationFindings)
+      .where(eq(runtimeReconciliationFindings.id, findingId))
+      .limit(1);
+
+    return row === undefined ? null : mapReconciliationFindingRow(row);
+  }
+
+  async listReconciliationFindings(input: {
+    limit: number;
+    findingType?: RuntimeReconciliationFindingType;
+    severity?: RuntimeReconciliationFindingSeverity;
+    status?: RuntimeReconciliationFindingStatus;
+    mismatchId?: string;
+    reconciliationRunId?: string;
+  }): Promise<RuntimeReconciliationFindingView[]> {
+    const predicates = [
+      input.findingType !== undefined ? eq(runtimeReconciliationFindings.findingType, input.findingType) : undefined,
+      input.severity !== undefined ? eq(runtimeReconciliationFindings.severity, input.severity) : undefined,
+      input.status !== undefined ? eq(runtimeReconciliationFindings.status, input.status) : undefined,
+      input.mismatchId !== undefined ? eq(runtimeReconciliationFindings.mismatchId, input.mismatchId) : undefined,
+      input.reconciliationRunId !== undefined
+        ? eq(runtimeReconciliationFindings.reconciliationRunId, input.reconciliationRunId)
+        : undefined,
+    ].filter((value): value is NonNullable<typeof value> => value !== undefined);
+
+    const rows = predicates.length === 0
+      ? await this.db
+        .select()
+        .from(runtimeReconciliationFindings)
+        .orderBy(desc(runtimeReconciliationFindings.detectedAt), desc(runtimeReconciliationFindings.createdAt))
+        .limit(input.limit)
+      : await this.db
+        .select()
+        .from(runtimeReconciliationFindings)
+        .where(and(...predicates))
+        .orderBy(desc(runtimeReconciliationFindings.detectedAt), desc(runtimeReconciliationFindings.createdAt))
+        .limit(input.limit);
+
+    return rows.map((row) => mapReconciliationFindingRow(row));
+  }
+
+  async getReconciliationFindingDetail(
+    findingId: string,
+  ): Promise<RuntimeReconciliationFindingDetailView | null> {
+    const finding = await this.getReconciliationFinding(findingId);
+    if (finding === null) {
+      return null;
+    }
+
+    const [run, mismatch] = await Promise.all([
+      this.getReconciliationRun(finding.reconciliationRunId),
+      finding.mismatchId === null ? Promise.resolve<RuntimeMismatchView | null>(null) : this.getMismatchById(finding.mismatchId),
+    ]);
+
+    return {
+      finding,
+      run,
+      mismatch,
+    };
+  }
+
+  async summarizeLatestReconciliation(): Promise<RuntimeReconciliationSummaryView | null> {
+    const latestRun = await this.getLatestReconciliationRun();
+    const latestCompletedRun = await this.getLatestCompletedReconciliationRun();
+
+    if (latestRun === null) {
+      return null;
+    }
+
+    const findings = await this.listReconciliationFindings({
+      limit: 500,
+      reconciliationRunId: latestRun.id,
+    });
+
+    const latestStatusCounts = createFindingStatusCounts();
+    const latestSeverityCounts = createFindingSeverityCounts();
+    const latestTypeCounts = createFindingTypeCounts();
+
+    for (const finding of findings) {
+      latestStatusCounts[finding.status] += 1;
+      latestSeverityCounts[finding.severity] += 1;
+      latestTypeCounts[finding.findingType] += 1;
+    }
+
+    return {
+      latestRun,
+      latestCompletedRun,
+      latestFindingCount: findings.length,
+      latestLinkedMismatchCount: findings.filter((finding) => finding.mismatchId !== null).length,
+      latestStatusCounts,
+      latestSeverityCounts,
+      latestTypeCounts,
+    };
+  }
+
+  async createMismatchRemediation(input: {
+    mismatchId: string;
+    remediationType: RuntimeRemediationActionType;
+    commandId: string;
+    requestedBy: string;
+    requestedSummary?: string | null;
+  }): Promise<RuntimeMismatchRemediationView> {
+    const rows = await this.db
+      .select({
+        attemptSequence: sql<number>`coalesce(max(${runtimeMismatchRemediations.attemptSequence}), 0)`,
+      })
+      .from(runtimeMismatchRemediations)
+      .where(eq(runtimeMismatchRemediations.mismatchId, input.mismatchId));
+
+    const nextAttemptSequence = Number(rows[0]?.attemptSequence ?? 0) + 1;
+
+    const [inserted] = await this.db
+      .insert(runtimeMismatchRemediations)
+      .values({
+        mismatchId: input.mismatchId,
+        attemptSequence: nextAttemptSequence,
+        remediationType: input.remediationType,
+        commandId: input.commandId,
+        status: 'requested',
+        requestedBy: input.requestedBy,
+        requestedSummary: input.requestedSummary ?? null,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (inserted === undefined) {
+      throw new Error(`RuntimeStore.createMismatchRemediation: remediation for mismatch "${input.mismatchId}" was not persisted`);
+    }
+
+    return mapRemediationRow(this, inserted);
+  }
+
+  async getMismatchRemediationById(remediationId: string): Promise<RuntimeMismatchRemediationView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeMismatchRemediations)
+      .where(eq(runtimeMismatchRemediations.id, remediationId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return mapRemediationRow(this, row);
+  }
+
+  async getMismatchRemediationByCommandId(commandId: string): Promise<RuntimeMismatchRemediationView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeMismatchRemediations)
+      .where(eq(runtimeMismatchRemediations.commandId, commandId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return mapRemediationRow(this, row);
+  }
+
+  async getLatestMismatchRemediation(
+    mismatchId: string,
+  ): Promise<RuntimeMismatchRemediationView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeMismatchRemediations)
+      .where(eq(runtimeMismatchRemediations.mismatchId, mismatchId))
+      .orderBy(desc(runtimeMismatchRemediations.attemptSequence))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return mapRemediationRow(this, row);
+  }
+
+  async getInFlightMismatchRemediation(
+    mismatchId: string,
+  ): Promise<RuntimeMismatchRemediationView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeMismatchRemediations)
+      .where(
+        and(
+          eq(runtimeMismatchRemediations.mismatchId, mismatchId),
+          sql`${runtimeMismatchRemediations.status} in ('requested', 'running')`,
+        ),
+      )
+      .orderBy(desc(runtimeMismatchRemediations.attemptSequence))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return mapRemediationRow(this, row);
+  }
+
+  async listMismatchRemediations(
+    mismatchId: string,
+    limit = 50,
+  ): Promise<RuntimeMismatchRemediationView[]> {
+    const rows = await this.db
+      .select()
+      .from(runtimeMismatchRemediations)
+      .where(eq(runtimeMismatchRemediations.mismatchId, mismatchId))
+      .orderBy(desc(runtimeMismatchRemediations.attemptSequence))
+      .limit(limit);
+
+    return Promise.all(rows.map((row) => mapRemediationRow(this, row)));
+  }
+
+  async updateMismatchRemediationById(
+    remediationId: string,
+    patch: Partial<typeof runtimeMismatchRemediations.$inferInsert>,
+  ): Promise<RuntimeMismatchRemediationView | null> {
+    await this.db
+      .update(runtimeMismatchRemediations)
+      .set({
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeMismatchRemediations.id, remediationId));
+
+    return this.getMismatchRemediationById(remediationId);
+  }
+
   async createStrategyRun(input: {
     runId: string;
     sleeveId: string;
@@ -1178,6 +1806,85 @@ export class RuntimeStore {
     return row?.runId ?? null;
   }
 
+  async getStrategyRun(runId: string): Promise<{
+    runId: string;
+    status: string;
+    startedAt: string;
+    completedAt: string | null;
+  } | null> {
+    const [row] = await this.db
+      .select({
+        runId: strategyRuns.runId,
+        status: strategyRuns.status,
+        startedAt: strategyRuns.startedAt,
+        completedAt: strategyRuns.completedAt,
+      })
+      .from(strategyRuns)
+      .where(eq(strategyRuns.runId, runId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      runId: row.runId,
+      status: row.status,
+      startedAt: row.startedAt.toISOString(),
+      completedAt: toIsoString(row.completedAt),
+    };
+  }
+
+  async listRuntimeCommands(limit: number): Promise<RuntimeCommandView[]> {
+    const rows = await this.db
+      .select()
+      .from(runtimeCommands)
+      .orderBy(desc(runtimeCommands.requestedAt))
+      .limit(limit);
+
+    return rows.map((row) => ({
+      commandId: row.commandId,
+      commandType: row.commandType as RuntimeCommandType,
+      status: row.status as RuntimeCommandStatus,
+      requestedBy: row.requestedBy,
+      claimedBy: row.claimedBy ?? null,
+      payload: asJsonObject(row.payload),
+      result: asJsonObject(row.result),
+      errorMessage: row.errorMessage ?? null,
+      requestedAt: row.requestedAt.toISOString(),
+      startedAt: toIsoString(row.startedAt),
+      completedAt: toIsoString(row.completedAt),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  }
+
+  async listPositionsByVenue(venueId: string): Promise<PositionView[]> {
+    const rows = await this.db
+      .select()
+      .from(positions)
+      .where(eq(positions.venueId, venueId))
+      .orderBy(desc(positions.updatedAt));
+
+    return rows.map((row) => ({
+      id: row.id,
+      sleeveId: row.sleeveId,
+      venueId: row.venueId,
+      asset: row.asset,
+      side: row.side,
+      size: row.size,
+      entryPrice: row.entryPrice,
+      markPrice: row.markPrice,
+      unrealizedPnl: row.unrealizedPnl,
+      realizedPnl: row.realizedPnl,
+      fundingAccrued: row.fundingAccrued,
+      hedgeState: row.hedgeState,
+      status: row.status,
+      openedAt: row.openedAt.toISOString(),
+      closedAt: toIsoString(row.closedAt),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  }
+
   async listFillHistory(): Promise<Array<{
     venueId: string;
     venueOrderId: string;
@@ -1248,6 +1955,40 @@ export class RuntimeStore {
       .from(orders)
       .orderBy(desc(orders.createdAt))
       .limit(limit);
+
+    return rows.map((row) => ({
+      clientOrderId: row.clientOrderId,
+      runId: row.strategyRunId ?? null,
+      sleeveId: row.sleeveId,
+      opportunityId: row.opportunityId ?? null,
+      venueId: row.venueId,
+      venueOrderId: row.venueOrderId ?? null,
+      asset: row.asset,
+      side: row.side,
+      orderType: row.orderType,
+      executionMode: row.executionMode,
+      requestedSize: row.requestedSize,
+      requestedPrice: row.requestedPrice ?? null,
+      filledSize: row.filledSize,
+      averageFillPrice: row.averageFillPrice ?? null,
+      status: row.status,
+      attemptCount: row.attemptCount,
+      lastError: row.lastError ?? null,
+      reduceOnly: row.reduceOnly,
+      metadata: asRecord(row.metadata),
+      submittedAt: toIsoString(row.submittedAt),
+      completedAt: toIsoString(row.completedAt),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  }
+
+  async listOrdersByVenue(venueId: string): Promise<OrderView[]> {
+    const rows = await this.db
+      .select()
+      .from(orders)
+      .where(eq(orders.venueId, venueId))
+      .orderBy(desc(orders.createdAt));
 
     return rows.map((row) => ({
       clientOrderId: row.clientOrderId,
@@ -1418,13 +2159,17 @@ export class RuntimeStore {
     dedupeKey: string;
     category: string;
     severity: string;
+    sourceKind?: RuntimeMismatchSourceKind;
     sourceComponent: string;
     entityType?: string | null;
     entityId?: string | null;
     summary: string;
     details?: Record<string, unknown>;
     detectedAt: Date;
-  }): Promise<RuntimeMismatchView> {
+  }): Promise<{
+    mismatch: RuntimeMismatchView;
+    outcome: 'opened' | 'redetected' | 'reopened';
+  }> {
     const [existing] = await this.db
       .select()
       .from(runtimeMismatches)
@@ -1436,6 +2181,7 @@ export class RuntimeStore {
         dedupeKey: input.dedupeKey,
         category: input.category,
         severity: input.severity,
+        sourceKind: input.sourceKind ?? 'workflow',
         sourceComponent: input.sourceComponent,
         entityType: input.entityType ?? null,
         entityId: input.entityId ?? null,
@@ -1445,38 +2191,64 @@ export class RuntimeStore {
         firstDetectedAt: input.detectedAt,
         lastDetectedAt: input.detectedAt,
         occurrenceCount: 1,
+        lastStatusChangeAt: input.detectedAt,
         updatedAt: new Date(),
       });
-    } else {
-      const nextStatus: RuntimeMismatchStatus =
-        existing.status === 'resolved' ? 'open' : (existing.status as RuntimeMismatchStatus);
+      const mismatch = await this.getMismatchByDedupeKey(input.dedupeKey);
+      if (mismatch === null) {
+        throw new Error(`RuntimeStore.upsertMismatch: mismatch "${input.dedupeKey}" was not persisted`);
+      }
 
-      await this.db
-        .update(runtimeMismatches)
-        .set({
-          category: input.category,
-          severity: input.severity,
-          sourceComponent: input.sourceComponent,
-          entityType: input.entityType ?? null,
-          entityId: input.entityId ?? null,
-          summary: input.summary,
-          details: input.details ?? {},
-          status: nextStatus,
-          lastDetectedAt: input.detectedAt,
-          occurrenceCount: existing.occurrenceCount + 1,
-          resolvedAt: null,
-          resolvedBy: null,
-          resolutionSummary: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(runtimeMismatches.dedupeKey, input.dedupeKey));
+      return {
+        mismatch,
+        outcome: 'opened',
+      };
     }
 
-    const record = await this.getMismatchByDedupeKey(input.dedupeKey);
-    if (record === null) {
+    const currentStatus = existing.status as RuntimeMismatchStatus;
+    const shouldReopen = currentStatus === 'resolved' || currentStatus === 'verified';
+    const nextStatus: RuntimeMismatchStatus = shouldReopen ? 'reopened' : currentStatus;
+
+    await this.db
+      .update(runtimeMismatches)
+      .set({
+        category: input.category,
+        severity: input.severity,
+        sourceKind: input.sourceKind ?? existing.sourceKind,
+        sourceComponent: input.sourceComponent,
+        entityType: input.entityType ?? null,
+        entityId: input.entityId ?? null,
+        summary: input.summary,
+        details: input.details ?? {},
+        status: nextStatus,
+        lastDetectedAt: input.detectedAt,
+        occurrenceCount: existing.occurrenceCount + 1,
+        ...(shouldReopen
+          ? {
+            reopenedAt: input.detectedAt,
+            reopenedBy: input.sourceComponent,
+            reopenSummary: input.summary,
+            linkedCommandId: null,
+            linkedRecoveryEventId: null,
+            recoveryStartedAt: null,
+            recoveryStartedBy: null,
+            recoverySummary: null,
+            lastStatusChangeAt: input.detectedAt,
+          }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeMismatches.dedupeKey, input.dedupeKey));
+
+    const mismatch = await this.getMismatchByDedupeKey(input.dedupeKey);
+    if (mismatch === null) {
       throw new Error(`RuntimeStore.upsertMismatch: mismatch "${input.dedupeKey}" was not persisted`);
     }
-    return record;
+
+    return {
+      mismatch,
+      outcome: shouldReopen ? 'reopened' : 'redetected',
+    };
   }
 
   async getMismatchByDedupeKey(dedupeKey: string): Promise<RuntimeMismatchView | null> {
@@ -1490,65 +2262,7 @@ export class RuntimeStore {
       return null;
     }
 
-    return {
-      id: row.id,
-      dedupeKey: row.dedupeKey,
-      category: row.category,
-      severity: row.severity,
-      sourceComponent: row.sourceComponent,
-      entityType: row.entityType ?? null,
-      entityId: row.entityId ?? null,
-      summary: row.summary,
-      details: asJsonObject(row.details),
-      status: row.status as RuntimeMismatchStatus,
-      firstDetectedAt: row.firstDetectedAt.toISOString(),
-      lastDetectedAt: row.lastDetectedAt.toISOString(),
-      occurrenceCount: row.occurrenceCount,
-      acknowledgedAt: toIsoString(row.acknowledgedAt),
-      acknowledgedBy: row.acknowledgedBy ?? null,
-      resolvedAt: toIsoString(row.resolvedAt),
-      resolvedBy: row.resolvedBy ?? null,
-      resolutionSummary: row.resolutionSummary ?? null,
-      updatedAt: row.updatedAt.toISOString(),
-    };
-  }
-
-  async acknowledgeMismatch(
-    mismatchId: string,
-    actorId: string,
-    summary: string | null = null,
-  ): Promise<RuntimeMismatchView | null> {
-    await this.db
-      .update(runtimeMismatches)
-      .set({
-        status: 'acknowledged',
-        acknowledgedAt: new Date(),
-        acknowledgedBy: actorId,
-        resolutionSummary: summary,
-        updatedAt: new Date(),
-      })
-      .where(eq(runtimeMismatches.id, mismatchId));
-
-    return this.getMismatchById(mismatchId);
-  }
-
-  async resolveMismatch(
-    dedupeKey: string,
-    resolvedBy: string,
-    resolutionSummary: string,
-  ): Promise<RuntimeMismatchView | null> {
-    await this.db
-      .update(runtimeMismatches)
-      .set({
-        status: 'resolved',
-        resolvedAt: new Date(),
-        resolvedBy,
-        resolutionSummary,
-        updatedAt: new Date(),
-      })
-      .where(eq(runtimeMismatches.dedupeKey, dedupeKey));
-
-    return this.getMismatchByDedupeKey(dedupeKey);
+    return mapMismatchRow(row);
   }
 
   async getMismatchById(mismatchId: string): Promise<RuntimeMismatchView | null> {
@@ -1562,34 +2276,56 @@ export class RuntimeStore {
       return null;
     }
 
-    return {
-      id: row.id,
-      dedupeKey: row.dedupeKey,
-      category: row.category,
-      severity: row.severity,
-      sourceComponent: row.sourceComponent,
-      entityType: row.entityType ?? null,
-      entityId: row.entityId ?? null,
-      summary: row.summary,
-      details: asJsonObject(row.details),
-      status: row.status as RuntimeMismatchStatus,
-      firstDetectedAt: row.firstDetectedAt.toISOString(),
-      lastDetectedAt: row.lastDetectedAt.toISOString(),
-      occurrenceCount: row.occurrenceCount,
-      acknowledgedAt: toIsoString(row.acknowledgedAt),
-      acknowledgedBy: row.acknowledgedBy ?? null,
-      resolvedAt: toIsoString(row.resolvedAt),
-      resolvedBy: row.resolvedBy ?? null,
-      resolutionSummary: row.resolutionSummary ?? null,
-      updatedAt: row.updatedAt.toISOString(),
-    };
+    return mapMismatchRow(row);
+  }
+
+  async updateMismatchById(
+    mismatchId: string,
+    patch: Partial<typeof runtimeMismatches.$inferInsert>,
+  ): Promise<RuntimeMismatchView | null> {
+    await this.db
+      .update(runtimeMismatches)
+      .set({
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeMismatches.id, mismatchId));
+
+    return this.getMismatchById(mismatchId);
+  }
+
+  async updateMismatchByDedupeKey(
+    dedupeKey: string,
+    patch: Partial<typeof runtimeMismatches.$inferInsert>,
+  ): Promise<RuntimeMismatchView | null> {
+    await this.db
+      .update(runtimeMismatches)
+      .set({
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(eq(runtimeMismatches.dedupeKey, dedupeKey));
+
+    return this.getMismatchByDedupeKey(dedupeKey);
   }
 
   async listMismatches(
     limit: number,
-    status?: RuntimeMismatchStatus,
+    filters: {
+      status?: RuntimeMismatchStatus;
+      severity?: string;
+      sourceKind?: RuntimeMismatchSourceKind;
+      category?: string;
+    } = {},
   ): Promise<RuntimeMismatchView[]> {
-    const rows = status === undefined
+    const conditions = [
+      filters.status !== undefined ? eq(runtimeMismatches.status, filters.status) : undefined,
+      filters.severity !== undefined ? eq(runtimeMismatches.severity, filters.severity) : undefined,
+      filters.sourceKind !== undefined ? eq(runtimeMismatches.sourceKind, filters.sourceKind) : undefined,
+      filters.category !== undefined ? eq(runtimeMismatches.category, filters.category) : undefined,
+    ].filter((condition): condition is Exclude<typeof condition, undefined> => condition !== undefined);
+
+    const rows = conditions.length === 0
       ? await this.db
         .select()
         .from(runtimeMismatches)
@@ -1598,31 +2334,11 @@ export class RuntimeStore {
       : await this.db
         .select()
         .from(runtimeMismatches)
-        .where(eq(runtimeMismatches.status, status))
+        .where(and(...conditions))
         .orderBy(desc(runtimeMismatches.lastDetectedAt))
         .limit(limit);
 
-    return rows.map((row) => ({
-      id: row.id,
-      dedupeKey: row.dedupeKey,
-      category: row.category,
-      severity: row.severity,
-      sourceComponent: row.sourceComponent,
-      entityType: row.entityType ?? null,
-      entityId: row.entityId ?? null,
-      summary: row.summary,
-      details: asJsonObject(row.details),
-      status: row.status as RuntimeMismatchStatus,
-      firstDetectedAt: row.firstDetectedAt.toISOString(),
-      lastDetectedAt: row.lastDetectedAt.toISOString(),
-      occurrenceCount: row.occurrenceCount,
-      acknowledgedAt: toIsoString(row.acknowledgedAt),
-      acknowledgedBy: row.acknowledgedBy ?? null,
-      resolvedAt: toIsoString(row.resolvedAt),
-      resolvedBy: row.resolvedBy ?? null,
-      resolutionSummary: row.resolutionSummary ?? null,
-      updatedAt: row.updatedAt.toISOString(),
-    }));
+    return rows.map((row) => mapMismatchRow(row));
   }
 
   async countOpenMismatches(): Promise<number> {
@@ -1632,6 +2348,33 @@ export class RuntimeStore {
       .where(eq(runtimeMismatches.status, 'open'));
 
     return Number(rows[0]?.count ?? 0);
+  }
+
+  async summarizeMismatches(): Promise<RuntimeMismatchSummaryView> {
+    const rows = await this.db
+      .select({
+        status: runtimeMismatches.status,
+        count: sql<number>`count(*)`,
+      })
+      .from(runtimeMismatches)
+      .groupBy(runtimeMismatches.status);
+
+    const statusCounts = createMismatchStatusCounts();
+    let activeMismatchCount = 0;
+
+    for (const row of rows) {
+      const status = row.status as RuntimeMismatchStatus;
+      const count = Number(row.count);
+      statusCounts[status] = count;
+      if (status !== 'verified') {
+        activeMismatchCount += count;
+      }
+    }
+
+    return {
+      activeMismatchCount,
+      statusCounts,
+    };
   }
 
   async recordRecoveryEvent(input: {
@@ -1645,8 +2388,8 @@ export class RuntimeStore {
     message: string;
     details?: Record<string, unknown>;
     occurredAt?: Date;
-  }): Promise<void> {
-    await this.db.insert(runtimeRecoveryEvents).values({
+  }): Promise<RuntimeRecoveryEventView> {
+    const [inserted] = await this.db.insert(runtimeRecoveryEvents).values({
       mismatchId: input.mismatchId ?? null,
       commandId: input.commandId ?? null,
       runId: input.runId ?? null,
@@ -1657,7 +2400,41 @@ export class RuntimeStore {
       message: input.message,
       details: input.details ?? {},
       occurredAt: input.occurredAt ?? new Date(),
-    });
+    }).returning();
+
+    if (inserted === undefined) {
+      throw new Error(`RuntimeStore.recordRecoveryEvent: event "${input.eventType}" was not persisted`);
+    }
+
+    return mapRecoveryEventRow(inserted);
+  }
+
+  async getRecoveryEventById(recoveryEventId: string): Promise<RuntimeRecoveryEventView | null> {
+    const [row] = await this.db
+      .select()
+      .from(runtimeRecoveryEvents)
+      .where(eq(runtimeRecoveryEvents.id, recoveryEventId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return mapRecoveryEventRow(row);
+  }
+
+  async listRecoveryEventsForMismatch(
+    mismatchId: string,
+    limit: number,
+  ): Promise<RuntimeRecoveryEventView[]> {
+    const rows = await this.db
+      .select()
+      .from(runtimeRecoveryEvents)
+      .where(eq(runtimeRecoveryEvents.mismatchId, mismatchId))
+      .orderBy(desc(runtimeRecoveryEvents.occurredAt))
+      .limit(limit);
+
+    return rows.map((row) => mapRecoveryEventRow(row));
   }
 
   async listRecoveryEvents(limit: number): Promise<RuntimeRecoveryEventView[]> {
@@ -1667,19 +2444,18 @@ export class RuntimeStore {
       .orderBy(desc(runtimeRecoveryEvents.occurredAt))
       .limit(limit);
 
-    return rows.map((row) => ({
-      id: row.id,
-      mismatchId: row.mismatchId ?? null,
-      commandId: row.commandId ?? null,
-      runId: row.runId ?? null,
-      eventType: row.eventType,
-      status: row.status,
-      sourceComponent: row.sourceComponent,
-      actorId: row.actorId ?? null,
-      message: row.message,
-      details: asJsonObject(row.details),
-      occurredAt: row.occurredAt.toISOString(),
-    }));
+    return rows.map((row) => mapRecoveryEventRow(row));
+  }
+
+  async listRecoveryOutcomes(limit: number): Promise<RuntimeRecoveryEventView[]> {
+    const rows = await this.db
+      .select()
+      .from(runtimeRecoveryEvents)
+      .where(sql`${runtimeRecoveryEvents.status} in ('recovering', 'resolved', 'verified', 'reopened', 'completed', 'failed')`)
+      .orderBy(desc(runtimeRecoveryEvents.occurredAt))
+      .limit(limit);
+
+    return rows.map((row) => mapRecoveryEventRow(row));
   }
 
   async getLatestRecoveryEvent(): Promise<RuntimeRecoveryEventView | null> {
@@ -1693,18 +2469,50 @@ export class RuntimeStore {
       return null;
     }
 
+    return mapRecoveryEventRow(row);
+  }
+
+  async getMismatchDetail(
+    mismatchId: string,
+    recoveryEventLimit = 100,
+  ): Promise<RuntimeMismatchDetailView | null> {
+    const mismatch = await this.getMismatchById(mismatchId);
+    if (mismatch === null) {
+      return null;
+    }
+
+    const [linkedCommand, recoveryEvents, remediationHistory, reconciliationFindings] = await Promise.all([
+      mismatch.linkedCommandId === null
+        ? Promise.resolve<RuntimeCommandView | null>(null)
+        : this.getRuntimeCommand(mismatch.linkedCommandId),
+      this.listRecoveryEventsForMismatch(mismatchId, recoveryEventLimit),
+      this.listMismatchRemediations(mismatchId),
+      this.listReconciliationFindings({
+        limit: recoveryEventLimit,
+        mismatchId,
+      }),
+    ]);
+
+    const latestRemediation = remediationHistory[0] ?? null;
+    const latestReconciliationFinding = reconciliationFindings[0] ?? null;
+    const remediationInFlight = remediationHistory.some(
+      (remediation) => remediation.status === 'requested' || remediation.status === 'running',
+    );
+
     return {
-      id: row.id,
-      mismatchId: row.mismatchId ?? null,
-      commandId: row.commandId ?? null,
-      runId: row.runId ?? null,
-      eventType: row.eventType,
-      status: row.status,
-      sourceComponent: row.sourceComponent,
-      actorId: row.actorId ?? null,
-      message: row.message,
-      details: asJsonObject(row.details),
-      occurredAt: row.occurredAt.toISOString(),
+      mismatch,
+      linkedCommand,
+      recoveryEvents,
+      remediationHistory,
+      latestRemediation,
+      reconciliationFindings,
+      latestReconciliationFinding,
+      recommendedRemediationTypes: recommendedRemediationsForMismatch(
+        mismatch,
+        latestReconciliationFinding,
+      ),
+      isActionable: isMismatchActionable(mismatch.status, remediationInFlight),
+      remediationInFlight,
     };
   }
 
@@ -1759,5 +2567,23 @@ export class RuntimeStore {
       portfolioCurrentSourceRunId: portfolioRow?.sourceRunId ?? null,
       projectionStatus: (runtimeRow?.projectionStatus ?? 'stale') as ProjectionStatus,
     };
+  }
+
+  async getPortfolioCurrentRow(): Promise<typeof portfolioCurrent.$inferSelect | null> {
+    const [row] = await this.db
+      .select()
+      .from(portfolioCurrent)
+      .limit(1);
+
+    return row ?? null;
+  }
+
+  async getRiskCurrentRow(): Promise<typeof riskCurrent.$inferSelect | null> {
+    const [row] = await this.db
+      .select()
+      .from(riskCurrent)
+      .limit(1);
+
+    return row ?? null;
   }
 }
