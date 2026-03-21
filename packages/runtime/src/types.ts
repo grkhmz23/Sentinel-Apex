@@ -318,6 +318,10 @@ export interface TreasuryActionDetailView {
   action: TreasuryActionView;
   latestCommand: RuntimeCommandView | null;
   executions: TreasuryExecutionView[];
+  timeline: TreasuryActionTimelineEntry[];
+  venue: TreasuryVenueView | null;
+  summary: TreasurySummaryView | null;
+  policy: TreasuryPolicyView | null;
 }
 
 export interface TreasuryExecutionView {
@@ -340,6 +344,66 @@ export interface TreasuryExecutionView {
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
+}
+
+export interface TreasuryExecutionDetailView {
+  execution: TreasuryExecutionView;
+  action: TreasuryActionView | null;
+  command: RuntimeCommandView | null;
+  venue: TreasuryVenueView | null;
+  timeline: TreasuryActionTimelineEntry[];
+}
+
+export interface TreasuryActionTimelineEntry {
+  id: string;
+  eventType:
+    | 'recommended'
+    | 'approved'
+    | 'queued'
+    | 'executing'
+    | 'completed'
+    | 'failed'
+    | 'command_linked'
+    | 'execution_recorded';
+  at: string;
+  actorId: string | null;
+  status: TreasuryExecutionStatus | null;
+  summary: string;
+  linkedCommandId: string | null;
+  linkedExecutionId: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface TreasuryVenueView {
+  venueId: string;
+  venueName: string;
+  venueMode: 'simulated' | 'live';
+  liquidityTier: 'instant' | 'same_day' | 'delayed';
+  healthy: boolean;
+  aprBps: number;
+  currentAllocationUsd: string;
+  withdrawalAvailableUsd: string;
+  availableCapacityUsd: string;
+  concentrationPct: string;
+  executionSupported: boolean;
+  supportsAllocation: boolean;
+  supportsReduction: boolean;
+  readOnly: boolean;
+  approvedForLiveUse: boolean;
+  onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
+  missingPrerequisites: string[];
+  readinessLabel: string;
+  simulationState: 'simulated' | 'real';
+  lastSnapshotAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface TreasuryVenueDetailView {
+  venue: TreasuryVenueView;
+  policy: TreasuryPolicyView | null;
+  latestSummary: TreasurySummaryView | null;
+  recentActions: TreasuryActionView[];
+  recentExecutions: TreasuryExecutionView[];
 }
 
 export interface RuntimeMismatchDetailView {
@@ -509,4 +573,7 @@ export interface RuntimeReadApi {
   getTreasuryAction(actionId: string): Promise<TreasuryActionDetailView | null>;
   listTreasuryExecutions(limit?: number): Promise<TreasuryExecutionView[]>;
   getTreasuryExecution(executionId: string): Promise<TreasuryExecutionView | null>;
+  getTreasuryExecutionDetail(executionId: string): Promise<TreasuryExecutionDetailView | null>;
+  listTreasuryVenues(limit?: number): Promise<TreasuryVenueView[]>;
+  getTreasuryVenue(venueId: string): Promise<TreasuryVenueDetailView | null>;
 }

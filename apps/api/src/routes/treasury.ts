@@ -155,7 +155,7 @@ export async function treasuryRoutes(
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const execution = await controlPlane.getTreasuryExecution(request.params.executionId);
+      const execution = await controlPlane.getTreasuryExecutionDetail(request.params.executionId);
       if (execution === null) {
         return reply.status(404).send({
           error: {
@@ -168,6 +168,53 @@ export async function treasuryRoutes(
 
       return reply.status(200).send({
         data: execution,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Querystring: { limit?: string };
+  }>(
+    '/api/v1/treasury/venues',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const limit = Math.min(Number.parseInt(request.query.limit ?? '50', 10), 200);
+      const venues = await controlPlane.listTreasuryVenues(limit);
+      return reply.status(200).send({
+        data: venues,
+        meta: {
+          correlationId: request.id,
+          count: venues.length,
+          limit,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { venueId: string };
+  }>(
+    '/api/v1/treasury/venues/:venueId',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const venue = await controlPlane.getTreasuryVenue(request.params.venueId);
+      if (venue === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Treasury venue '${request.params.venueId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: venue,
         meta: { correlationId: request.id },
       });
     },

@@ -1,6 +1,7 @@
 export type {
   TreasuryActionBlockedReason,
   TreasuryActionBlockedReasonCode,
+  TreasuryBlockedReasonCategory,
   TreasuryActionReadiness,
   TreasuryActionType,
   TreasuryApprovalRequirement,

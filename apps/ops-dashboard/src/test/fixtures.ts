@@ -1,4 +1,5 @@
 import type {
+  TreasuryActionDetailView,
   RuntimeCommandView,
   RuntimeMismatchDetailView,
   RuntimeMismatchView,
@@ -7,11 +8,14 @@ import type {
   RuntimeReconciliationRunView,
   RuntimeReconciliationSummaryView,
   RuntimeRecoveryEventView,
-  TreasuryExecutionView,
   TreasuryActionView,
   TreasuryAllocationView,
+  TreasuryExecutionDetailView,
+  TreasuryExecutionView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  TreasuryVenueDetailView,
+  TreasuryVenueView,
 } from '@sentinel-apex/runtime';
 
 import type { DashboardSession } from '../lib/operator-session';
@@ -368,6 +372,39 @@ export function createTreasuryAction(
   };
 }
 
+export function createTreasuryVenue(
+  overrides: Partial<TreasuryVenueView> = {},
+): TreasuryVenueView {
+  return {
+    venueId: 'atlas-t1-sim',
+    venueName: 'Atlas Treasury T1',
+    venueMode: 'simulated',
+    liquidityTier: 'same_day',
+    healthy: true,
+    aprBps: 415,
+    currentAllocationUsd: '37500',
+    withdrawalAvailableUsd: '37500',
+    availableCapacityUsd: '125000',
+    concentrationPct: '30.00',
+    executionSupported: true,
+    supportsAllocation: true,
+    supportsReduction: true,
+    readOnly: false,
+    approvedForLiveUse: false,
+    onboardingState: 'simulated',
+    missingPrerequisites: [
+      'Real connector implementation',
+      'Read-only validation against venue',
+      'Live enable approval',
+    ],
+    readinessLabel: 'Simulated execution-capable',
+    simulationState: 'simulated',
+    lastSnapshotAt: '2026-03-20T12:01:00.000Z',
+    metadata: {},
+    ...overrides,
+  };
+}
+
 export function createTreasuryExecution(
   overrides: Partial<TreasuryExecutionView> = {},
 ): TreasuryExecutionView {
@@ -391,6 +428,83 @@ export function createTreasuryExecution(
     startedAt: '2026-03-20T12:02:01.000Z',
     completedAt: '2026-03-20T12:02:02.000Z',
     updatedAt: '2026-03-20T12:02:02.000Z',
+    ...overrides,
+  };
+}
+
+export function createTreasuryActionDetail(
+  overrides: Partial<TreasuryActionDetailView> = {},
+): TreasuryActionDetailView {
+  const action = createTreasuryAction();
+  return {
+    action,
+    latestCommand: createCommand({
+      commandId: 'command-treasury-1',
+      commandType: 'execute_treasury_action',
+      result: { treasuryActionId: action.id },
+    }),
+    executions: [createTreasuryExecution({ treasuryActionId: action.id })],
+    timeline: [
+      {
+        id: 'timeline-1',
+        eventType: 'recommended',
+        at: action.createdAt,
+        actorId: action.actorId,
+        status: action.status,
+        summary: 'Treasury recommendation persisted.',
+        linkedCommandId: null,
+        linkedExecutionId: null,
+        details: {},
+      },
+    ],
+    venue: createTreasuryVenue({ venueId: action.venueId ?? 'atlas-t1-sim' }),
+    summary: createTreasurySummary(),
+    policy: createTreasuryPolicy(),
+    ...overrides,
+  };
+}
+
+export function createTreasuryExecutionDetail(
+  overrides: Partial<TreasuryExecutionDetailView> = {},
+): TreasuryExecutionDetailView {
+  const execution = createTreasuryExecution();
+  const action = createTreasuryAction({ id: execution.treasuryActionId });
+  return {
+    execution,
+    action,
+    command: createCommand({
+      commandId: execution.commandId ?? 'command-treasury-1',
+      commandType: 'execute_treasury_action',
+      result: { executionId: execution.id },
+    }),
+    venue: createTreasuryVenue(),
+    timeline: [
+      {
+        id: 'timeline-execution-1',
+        eventType: 'completed',
+        at: execution.completedAt ?? execution.updatedAt,
+        actorId: execution.startedBy,
+        status: execution.status,
+        summary: execution.outcomeSummary ?? 'Execution completed.',
+        linkedCommandId: execution.commandId,
+        linkedExecutionId: execution.id,
+        details: execution.outcome,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function createTreasuryVenueDetail(
+  overrides: Partial<TreasuryVenueDetailView> = {},
+): TreasuryVenueDetailView {
+  const venue = createTreasuryVenue();
+  return {
+    venue,
+    policy: createTreasuryPolicy(),
+    latestSummary: createTreasurySummary(),
+    recentActions: [createTreasuryAction({ venueId: venue.venueId, venueName: venue.venueName })],
+    recentExecutions: [createTreasuryExecution()],
     ...overrides,
   };
 }

@@ -12,16 +12,24 @@ import {
   createReconciliationFinding,
   createReconciliationRun,
   createTreasuryAction,
+  createTreasuryActionDetail,
   createTreasuryAllocation,
   createTreasuryExecution,
+  createTreasuryExecutionDetail,
   createTreasuryPolicy,
   createTreasurySummary,
+  createTreasuryVenue,
+  createTreasuryVenueDetail,
 } from './test/fixtures';
 import MismatchDetailPage from '../app/mismatches/[mismatchId]/page';
 import MismatchesPage from '../app/mismatches/page';
 import OverviewPage from '../app/page';
 import ReconciliationPage from '../app/reconciliation/page';
+import TreasuryActionDetailPage from '../app/treasury/actions/[actionId]/page';
+import TreasuryExecutionDetailPage from '../app/treasury/executions/[executionId]/page';
 import TreasuryPage from '../app/treasury/page';
+import TreasuryVenueDetailPage from '../app/treasury/venues/[venueId]/page';
+import TreasuryVenuesPage from '../app/treasury/venues/page';
 
 import type { ReactNode } from 'react';
 
@@ -82,6 +90,31 @@ vi.mock('./lib/runtime-api.server', () => ({
       policy: createTreasuryPolicy(),
       actions: [createTreasuryAction()],
       executions: [createTreasuryExecution()],
+      venues: [createTreasuryVenue()],
+    },
+    error: null,
+  })),
+  loadTreasuryActionDetailPageData: vi.fn(async () => ({
+    data: {
+      detail: createTreasuryActionDetail(),
+    },
+    error: null,
+  })),
+  loadTreasuryExecutionDetailPageData: vi.fn(async () => ({
+    data: {
+      detail: createTreasuryExecutionDetail(),
+    },
+    error: null,
+  })),
+  loadTreasuryVenuesPageData: vi.fn(async () => ({
+    data: {
+      venues: [createTreasuryVenue()],
+    },
+    error: null,
+  })),
+  loadTreasuryVenueDetailPageData: vi.fn(async () => ({
+    data: {
+      detail: createTreasuryVenueDetail(),
     },
     error: null,
   })),
@@ -124,6 +157,26 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Treasury Sleeve')).toBeInTheDocument();
     expect(screen.getByText('Atlas Treasury T0')).toBeInTheDocument();
     expect(screen.getByText('Execution History')).toBeInTheDocument();
+    expect(screen.getByText('Venue Readiness')).toBeInTheDocument();
+  });
+
+  it('renders treasury action, execution, and venue detail workflows', async () => {
+    render(await TreasuryActionDetailPage({ params: { actionId: 'treasury-action-1' } }));
+    expect(screen.getByText('Treasury Action Detail')).toBeInTheDocument();
+    expect(screen.getByText('Blocked Reasons')).toBeInTheDocument();
+    expect(screen.getByText('Timeline')).toBeInTheDocument();
+
+    render(await TreasuryExecutionDetailPage({ params: { executionId: 'treasury-execution-1' } }));
+    expect(screen.getByText('Treasury Execution Detail')).toBeInTheDocument();
+    expect(screen.getByText('Outcome Controls')).toBeInTheDocument();
+
+    render(await TreasuryVenuesPage());
+    expect(screen.getByText('Connector Readiness')).toBeInTheDocument();
+    expect(screen.getByText('Venue Inventory')).toBeInTheDocument();
+
+    render(await TreasuryVenueDetailPage({ params: { venueId: 'atlas-t1-sim' } }));
+    expect(screen.getByText('Treasury Venue Detail')).toBeInTheDocument();
+    expect(screen.getByText('Onboarding Readiness')).toBeInTheDocument();
   });
 
   it('renders error and empty states when data is unavailable', async () => {

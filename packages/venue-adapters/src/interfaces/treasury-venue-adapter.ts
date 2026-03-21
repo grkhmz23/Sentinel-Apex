@@ -26,6 +26,10 @@ export interface TreasuryVenueCapabilities {
   supportsAllocation: boolean;
   supportsReduction: boolean;
   executionSupported: boolean;
+  readOnly: boolean;
+  approvedForLiveUse: boolean;
+  onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
+  missingPrerequisites: string[];
   healthy: boolean;
   metadata: Record<string, unknown>;
 }

@@ -227,7 +227,7 @@ describe('runtime-backed API routes', () => {
     const executionCommand = await waitForCommand(controlPlane, executeBody.data.commandId);
     expect(executionCommand.status).toBe('completed');
 
-    const [actionDetailResponse, executionsResponse] = await Promise.all([
+    const [actionDetailResponse, executionsResponse, executionDetailResponse, venuesResponse, venueDetailResponse] = await Promise.all([
       app.inject({
         method: 'GET',
         url: `/api/v1/treasury/actions/${actionable?.id}`,
@@ -238,21 +238,103 @@ describe('runtime-backed API routes', () => {
         url: '/api/v1/treasury/executions',
         headers: { 'x-api-key': TEST_API_KEY },
       }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/executions/00000000-0000-0000-0000-000000000000',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/venues',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/venues/atlas-t0-sim',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
     ]);
 
     expect(actionDetailResponse.statusCode).toBe(200);
     expect(executionsResponse.statusCode).toBe(200);
+    expect(executionDetailResponse.statusCode).toBe(404);
+    expect(venuesResponse.statusCode).toBe(200);
+    expect(venueDetailResponse.statusCode).toBe(200);
 
     const actionDetailBody = actionDetailResponse.json<{
-      data: { action: { status: string }; executions: Array<{ status: string; requestedBy: string }> };
+      data: {
+        action: {
+          status: string;
+          blockedReasons: Array<{ code: string; category: string; operatorAction: string }>;
+        };
+        timeline: Array<{ eventType: string }>;
+        executions: Array<{ status: string; requestedBy: string }>;
+        venue: null | { venueId: string; onboardingState: string };
+      };
     }>();
     const executionsBody = executionsResponse.json<{
       data: Array<{ id: string; status: string; requestedBy: string }>;
     }>();
+    const venuesBody = venuesResponse.json<{
+      data: Array<{
+        venueId: string;
+        simulationState: string;
+        executionSupported: boolean;
+        onboardingState: string;
+      }>;
+    }>();
+    const venueDetailBody = venueDetailResponse.json<{
+      data: {
+        venue: {
+          venueId: string;
+          simulationState: string;
+          missingPrerequisites: string[];
+        };
+        recentActions: Array<{ id: string }>;
+      };
+    }>();
 
     expect(actionDetailBody.data.action.status).toBe('completed');
     expect(actionDetailBody.data.executions[0]?.requestedBy).toBe('operator-user');
+    expect(actionDetailBody.data.timeline.length).toBeGreaterThan(0);
+    expect(actionDetailBody.data.venue?.onboardingState).toBeTruthy();
     expect(executionsBody.data.some((execution) => execution.status === 'completed')).toBe(true);
+    expect(venuesBody.data.length).toBeGreaterThan(0);
+    expect(venuesBody.data[0]?.simulationState).toBe('simulated');
+    expect(venuesBody.data[0]?.onboardingState).toBeTruthy();
+    expect(venueDetailBody.data.venue.venueId).toBe('atlas-t0-sim');
+    expect(venueDetailBody.data.venue.missingPrerequisites.length).toBeGreaterThan(0);
+    expect(venueDetailBody.data.recentActions.length).toBeGreaterThan(0);
+
+    const completedExecutionId = executionsBody.data.find((execution) => execution.status === 'completed')?.id;
+    expect(completedExecutionId).toBeTruthy();
+
+    const completedExecutionResponse = await app.inject({
+      method: 'GET',
+      url: `/api/v1/treasury/executions/${completedExecutionId}`,
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(completedExecutionResponse.statusCode).toBe(200);
+
+    const completedExecutionBody = completedExecutionResponse.json<{
+      data: {
+        execution: {
+          id: string;
+          status: string;
+        };
+        action: null | { id: string };
+        command: null | { commandId: string };
+        venue: null | { venueId: string; executionSupported: boolean };
+        timeline: Array<{ eventType: string }>;
+      };
+    }>();
+
+    expect(completedExecutionBody.data.execution.id).toBe(completedExecutionId);
+    expect(completedExecutionBody.data.execution.status).toBe('completed');
+    expect(completedExecutionBody.data.action?.id).toBe(actionable?.id);
+    expect(completedExecutionBody.data.command?.commandId).toBeTruthy();
+    expect(completedExecutionBody.data.venue?.executionSupported).toBe(true);
+    expect(completedExecutionBody.data.timeline.length).toBeGreaterThan(0);
   });
 
   it('surfaces the full mismatch recovery lifecycle through the API', async () => {

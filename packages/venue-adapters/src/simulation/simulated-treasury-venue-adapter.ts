@@ -75,6 +75,14 @@ export class SimulatedTreasuryVenueAdapter implements TreasuryVenueAdapter {
       supportsAllocation: true,
       supportsReduction: true,
       executionSupported: true,
+      readOnly: false,
+      approvedForLiveUse: false,
+      onboardingState: 'simulated',
+      missingPrerequisites: [
+        'Real connector implementation',
+        'Read-only validation against venue',
+        'Live enable approval',
+      ],
       healthy: this.config.healthy ?? true,
       metadata: {
         simulated: true,

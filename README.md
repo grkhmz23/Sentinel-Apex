@@ -71,7 +71,7 @@ Open `http://localhost:3100/sign-in` and authenticate with the bootstrapped oper
 
 Mutation endpoints are now operator-authorized in addition to API-key protected. For local manual control actions, prefer using the ops dashboard or the server-side proxy rather than unsigned `curl` requests.
 
-The API is now the control-plane and read surface. Scheduled cycle execution, command processing, recovery work, reconciliation, and treasury evaluation continue to run in the backend services. The ops dashboard is a thin internal UI over those existing API contracts. Treasury evaluation now runs as part of real runtime cycles and can also be queued explicitly from the authenticated treasury page in the ops dashboard. Atlas Treasury recommendations can now be approved and executed through the existing runtime worker flow, with explicit simulated/live boundaries, backend risk checks, and durable execution history.
+The API is now the control-plane and read surface. Scheduled cycle execution, command processing, recovery work, reconciliation, and treasury evaluation continue to run in the backend services. The ops dashboard is a thin internal UI over those existing API contracts. Treasury evaluation now runs as part of real runtime cycles and can also be queued explicitly from the authenticated treasury page in the ops dashboard. Atlas Treasury recommendations can now be approved and executed through the existing runtime worker flow, with explicit simulated/live boundaries, backend risk checks, durable execution history, action/execution drill-through, and venue readiness visibility.
 
 Stop or reset local Postgres:
 
@@ -94,7 +94,7 @@ pnpm test
 - `apps/api` is the control-plane and read API.
 - `apps/runtime-worker` is the dedicated scheduler and cycle executor.
 - `apps/ops-dashboard` is the internal operator UI for runtime, mismatch, reconciliation, recovery, and command inspection.
-- `apps/ops-dashboard` now also includes a treasury page for reserve posture, venue allocations, treasury recommendations, and treasury execution history.
+- `apps/ops-dashboard` now also includes treasury action detail, execution detail, and venue readiness views on top of the main treasury page.
 - `apps/ops-dashboard` now uses explicit operator authentication, durable sessions, and role-aware action gating.
 - Runtime lifecycle, replay, current projections, worker state, and recovery persistence are in `packages/runtime`.
 - `packages/treasury` now provides the Atlas Treasury policy engine, reserve checks, concentration checks, treasury recommendation logic, and treasury execution-intent planning.
@@ -102,8 +102,8 @@ pnpm test
 - Runtime reconciliation now persists explicit runs and findings, and can create or update mismatches from real discrepancies across projections, commands, orders, and positions.
 - Runtime mismatches also support first-class remediation attempts for `rebuild_projections` and `run_cycle`, with durable linkage to commands and recovery outcomes.
 - The API exposes reconciliation runs, findings, summary, and mismatch-linked finding history for operator workflows.
-- The API now also exposes treasury summary, allocations, policy, recommendation/action detail, execution history, treasury approval, and treasury execution queueing.
+- The API now also exposes treasury summary, allocations, policy, recommendation/action detail, execution detail, venue readiness/detail, treasury approval, and treasury execution queueing.
 - Sensitive runtime and control mutations now require authenticated operator identity and backend role authorization.
 - Dry-run remains the default and supported operating mode.
 - Live execution is still opt-in and separately gated.
-- Allocator and backtest are not implemented yet. Treasury now supports controlled execution semantics, but live treasury connectors are still not implemented and simulated execution remains explicitly labeled.
+- Allocator and backtest are not implemented yet. Treasury now supports controlled execution semantics and operator drill-through, but live treasury connectors are still not implemented and simulated execution remains explicitly labeled.

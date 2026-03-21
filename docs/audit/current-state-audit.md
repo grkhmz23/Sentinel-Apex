@@ -62,7 +62,7 @@ Repo: `/workspaces/Sentinel-Apex`
 - `packages/db` now also persists append-only treasury execution history in:
   - `treasury_action_executions`
 - `apps/api` serves portfolio, risk, orders, positions, opportunities, events, runtime status, worker status, mismatch history, and control surfaces from persisted runtime-backed state.
-- `apps/api` now also serves treasury summary, allocations, policy, recommendations, action detail, execution history, treasury approval, and explicit treasury execution queueing.
+- `apps/api` now also serves treasury summary, allocations, policy, recommendations, action detail, execution detail, venue readiness/detail, treasury approval, and explicit treasury execution queueing.
 - `apps/runtime-worker` executes scheduled cycles, processes runtime commands, and persists scheduler/recovery visibility independently of the API process.
 - `apps/ops-dashboard` now provides an internal Next.js operator UI for overview, mismatch inspection, reconciliation visibility, recovery and command inspection, and safe action dispatch through the existing runtime API.
 - `apps/ops-dashboard` now also provides:
@@ -72,10 +72,12 @@ Repo: `/workspaces/Sentinel-Apex`
   - signed operator propagation from the dashboard proxy into the API
   - Atlas Treasury overview visibility and a dedicated treasury page
   - treasury recommendation readiness, blocked reasons, approval controls, execution controls, and execution history
+  - treasury action detail, execution detail, and venue readiness drill-through views
 - `apps/api` now enforces backend operator authorization for sensitive runtime and control mutations in addition to API-key authentication.
 - `packages/db` now persists internal operators and dashboard sessions in `ops_operators` and `ops_operator_sessions`.
 - Existing runtime actor/audit fields are now populated from authenticated operator identity for dashboard-driven actions instead of client-supplied placeholders.
 - Local/dev Postgres workflow now exists through `pnpm db:start`, `pnpm db:health`, `pnpm db:migrate`, `pnpm db:reset`, and `pnpm db:stop`.
+- Treasury venue readiness now exposes explicit simulated-vs-real, read-only-vs-execution-capable, onboarding state, and missing-prerequisite metadata to operators.
 - Deterministic carry simulation is now materially more credible:
   - funding opportunities use mark price instead of placeholder price `1`
   - minimum funding-rate threshold is enforced
@@ -97,7 +99,7 @@ Repo: `/workspaces/Sentinel-Apex`
 
 ## What Is Missing
 
-- Richer operator workflows on top of the current dashboard skeleton, especially treasury action drill-through and broader command/recovery inspection.
+- Broader operator workflows beyond treasury drill-through, especially command detail and richer recovery navigation.
 - Operator management workflows beyond bootstrap and direct DB-backed setup.
 - Production-grade live venue integration.
 - Allocator and backtest foundations.
@@ -162,7 +164,7 @@ Results:
 
 - Build passes in targeted package runs and in the full monorepo run, including the new treasury package and dashboard treasury page.
 - Typecheck passes in targeted package runs and in the full monorepo run, including the updated runtime/API/dashboard treasury contracts.
-- Tests pass in targeted package runs and in the full monorepo run, including treasury policy, runtime treasury integration, API treasury endpoints, and dashboard treasury rendering.
+- Tests pass in targeted package runs and in the full monorepo run, including treasury policy, runtime treasury integration, API treasury detail/readiness endpoints, and dashboard treasury drill-through rendering.
 - The new auth/session and role-gating package-level checks pass in targeted API and ops-dashboard runs.
 - Lint passes in targeted package runs. Existing `import/no-named-as-default` warnings remain in packages that already used `decimal.js` default imports.
 - During implementation, API tests briefly failed because `@sentinel-apex/api` consumed a stale `@sentinel-apex/runtime/dist` build artifact that still generated non-UUID position IDs. Rebuilding the runtime package fixed the issue.
@@ -173,6 +175,6 @@ Results:
 2. Add stronger freshness and projection-age detectors if runtime metadata evolves to support stricter staleness policies.
 3. Decide whether some remediation actions should auto-attach operator resolution hints once a deterministic success condition is observed.
 4. Add admin-facing operator management and stronger session lifecycle tooling only if internal operational complexity justifies it.
-5. Expand the ops dashboard from the current skeleton into richer multi-entity drill-through, especially command detail and finding-to-mismatch-to-remediation navigation.
+5. Expand the ops dashboard from the current treasury drill-through foundation into richer command detail and finding-to-mismatch-to-remediation navigation.
 6. Add real treasury connectors only after venue approvals and operational runbooks are ready.
 7. Start allocator work only after treasury controlled execution semantics are stable.

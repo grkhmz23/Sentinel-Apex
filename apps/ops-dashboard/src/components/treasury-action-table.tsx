@@ -1,12 +1,15 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import type { TreasuryActionView } from '@sentinel-apex/runtime';
 
 import { useOperator } from './operator-context';
+import { StatusBadge } from './status-badge';
 import { approveTreasuryAction, executeTreasuryAction } from '../lib/runtime-api.client';
+import { treasuryModeTone, treasuryReadinessTone, treasuryStatusTone } from '../lib/treasury-display';
 
 export function TreasuryActionTable(
   { actions }: { actions: TreasuryActionView[] },
@@ -74,14 +77,25 @@ export function TreasuryActionTable(
 
             return (
               <tr key={action.id}>
-                <td>{action.actionType}</td>
-                <td>{action.status}</td>
                 <td>
-                  {action.readiness}
+                  <div className="stack stack--compact">
+                    <Link href={`/treasury/actions/${action.id}`}>{action.actionType}</Link>
+                    <span className="panel__hint">{action.id}</span>
+                  </div>
+                </td>
+                <td><StatusBadge label={action.status} tone={treasuryStatusTone(action.status)} /></td>
+                <td>
+                  <StatusBadge label={action.readiness} tone={treasuryReadinessTone(action.readiness)} />
                   {action.blockedReasons.length > 0 ? `: ${action.blockedReasons.map((reason) => reason.message).join('; ')}` : ''}
                 </td>
-                <td>{action.venueName ?? action.venueId ?? 'Reserve'}</td>
-                <td>{action.venueMode}</td>
+                <td>
+                  {action.venueId === null ? (
+                    action.venueName ?? 'Reserve'
+                  ) : (
+                    <Link href={`/treasury/venues/${action.venueId}`}>{action.venueName ?? action.venueId}</Link>
+                  )}
+                </td>
+                <td><StatusBadge label={action.venueMode} tone={treasuryModeTone(action.venueMode)} /></td>
                 <td>{action.amountUsd}</td>
                 <td>{action.reasonCode}</td>
                 <td>

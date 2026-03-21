@@ -7,11 +7,15 @@ import type {
   RuntimeReconciliationRunView,
   RuntimeReconciliationSummaryView,
   RuntimeRecoveryEventView,
+  TreasuryActionDetailView,
   TreasuryExecutionView,
+  TreasuryExecutionDetailView,
   TreasuryActionView,
   TreasuryAllocationView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  TreasuryVenueDetailView,
+  TreasuryVenueView,
 } from '@sentinel-apex/runtime';
 
 import { getDashboardApiBaseUrl, getDashboardApiKey } from './env.server';
@@ -24,7 +28,11 @@ import type {
   OverviewPageData,
   ReconciliationFilters,
   ReconciliationPageData,
+  TreasuryActionDetailPageData,
+  TreasuryExecutionDetailPageData,
   TreasuryPageData,
+  TreasuryVenueDetailPageData,
+  TreasuryVenuesPageData,
 } from './types';
 
 const API_PREFIX = '/api/v1/runtime';
@@ -159,8 +167,26 @@ export async function listTreasuryActions(limit = 20): Promise<TreasuryActionVie
   return fetchTreasuryApi<TreasuryActionView[]>(`/actions${buildSearchParams({ limit })}`);
 }
 
+export async function getTreasuryActionDetail(actionId: string): Promise<TreasuryActionDetailView> {
+  return fetchTreasuryApi<TreasuryActionDetailView>(`/actions/${actionId}`);
+}
+
 export async function listTreasuryExecutions(limit = 20): Promise<TreasuryExecutionView[]> {
   return fetchTreasuryApi<TreasuryExecutionView[]>(`/executions${buildSearchParams({ limit })}`);
+}
+
+export async function getTreasuryExecutionDetail(
+  executionId: string,
+): Promise<TreasuryExecutionDetailView> {
+  return fetchTreasuryApi<TreasuryExecutionDetailView>(`/executions/${executionId}`);
+}
+
+export async function listTreasuryVenues(limit = 20): Promise<TreasuryVenueView[]> {
+  return fetchTreasuryApi<TreasuryVenueView[]>(`/venues${buildSearchParams({ limit })}`);
+}
+
+export async function getTreasuryVenueDetail(venueId: string): Promise<TreasuryVenueDetailView> {
+  return fetchTreasuryApi<TreasuryVenueDetailView>(`/venues/${venueId}`);
 }
 
 export async function loadOverviewPageData(): Promise<DashboardPageState<OverviewPageData>> {
@@ -196,12 +222,13 @@ export async function loadOverviewPageData(): Promise<DashboardPageState<Overvie
 
 export async function loadTreasuryPageData(): Promise<DashboardPageState<TreasuryPageData>> {
   try {
-    const [summary, allocations, policy, actions, executions] = await Promise.all([
+    const [summary, allocations, policy, actions, executions, venues] = await Promise.all([
       getTreasurySummary(),
       listTreasuryAllocations(20),
       getTreasuryPolicy(),
       listTreasuryActions(20),
       listTreasuryExecutions(20),
+      listTreasuryVenues(20),
     ]);
 
     return {
@@ -211,6 +238,7 @@ export async function loadTreasuryPageData(): Promise<DashboardPageState<Treasur
         policy,
         actions,
         executions,
+        venues,
       },
       error: null,
     };
@@ -218,6 +246,72 @@ export async function loadTreasuryPageData(): Promise<DashboardPageState<Treasur
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load treasury data.',
+    };
+  }
+}
+
+export async function loadTreasuryActionDetailPageData(
+  actionId: string,
+): Promise<DashboardPageState<TreasuryActionDetailPageData>> {
+  try {
+    const detail = await getTreasuryActionDetail(actionId);
+    return {
+      data: { detail },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load treasury action detail.',
+    };
+  }
+}
+
+export async function loadTreasuryExecutionDetailPageData(
+  executionId: string,
+): Promise<DashboardPageState<TreasuryExecutionDetailPageData>> {
+  try {
+    const detail = await getTreasuryExecutionDetail(executionId);
+    return {
+      data: { detail },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load treasury execution detail.',
+    };
+  }
+}
+
+export async function loadTreasuryVenuesPageData(): Promise<DashboardPageState<TreasuryVenuesPageData>> {
+  try {
+    const venues = await listTreasuryVenues(50);
+    return {
+      data: { venues },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load treasury venues.',
+    };
+  }
+}
+
+export async function loadTreasuryVenueDetailPageData(
+  venueId: string,
+): Promise<DashboardPageState<TreasuryVenueDetailPageData>> {
+  try {
+    const detail = await getTreasuryVenueDetail(venueId);
+    return {
+      data: { detail },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load treasury venue detail.',
     };
   }
 }

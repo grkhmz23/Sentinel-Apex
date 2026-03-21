@@ -2,6 +2,7 @@ import Decimal from 'decimal.js';
 
 import type {
   TreasuryActionBlockedReason,
+  TreasuryBlockedReasonCategory,
   TreasuryActionType,
   TreasuryApprovalRequirement,
   TreasuryEvaluation,
@@ -15,11 +16,15 @@ import type {
 function buildBlockedReason(
   code: TreasuryActionBlockedReason['code'],
   message: string,
+  category: TreasuryBlockedReasonCategory,
+  operatorAction: string,
   details: Record<string, unknown> = {},
 ): TreasuryActionBlockedReason {
   return {
     code,
+    category,
     message,
+    operatorAction,
     details,
   };
 }
@@ -99,6 +104,8 @@ export class TreasuryExecutionPlanner {
       blockedReasons.push(buildBlockedReason(
         'below_minimum_action_size',
         `Action amount ${amountUsd.toFixed(2)} USD is below the minimum action size.`,
+        'action_size',
+        'Increase the action size or wait for treasury conditions that produce a larger move.',
         {
           amountUsd: amountUsd.toFixed(2),
           minimumDeployableUsd: input.policy.minimumDeployableUsd,
@@ -110,6 +117,8 @@ export class TreasuryExecutionPlanner {
       blockedReasons.push(buildBlockedReason(
         'venue_not_found',
         `Venue ${recommendation.venueId} was not present in the latest treasury snapshot.`,
+        'venue_capability',
+        'Refresh treasury evaluation and confirm the venue adapter is registered and reporting snapshots.',
         { venueId: recommendation.venueId },
       ));
     }
@@ -119,6 +128,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'venue_ineligible',
           `Venue ${venueSnapshot.venueName} is not on the treasury eligibility list.`,
+          'venue_eligibility',
+          'Use an eligible venue or update treasury policy only after formal approval.',
           { venueId: venueSnapshot.venueId },
         ));
       }
@@ -127,6 +138,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'venue_unhealthy',
           `Venue ${venueSnapshot.venueName} is unhealthy and cannot receive new capital.`,
+          'venue_health',
+          'Wait for venue health to recover before approving or executing this action.',
           { venueId: venueSnapshot.venueId },
         ));
       }
@@ -135,6 +148,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'reserve_floor_breach',
           'Action would breach the hard treasury reserve floor.',
+          'reserve',
+          'Reduce the allocation amount or redeem funds to restore reserve headroom first.',
           {
             postIdleCapitalUsd: postIdleCapitalUsd.toFixed(2),
             requiredReserveUsd: requiredReserveUsd.toFixed(2),
@@ -146,6 +161,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'minimum_remaining_liquidity_breach',
           'Action would leave treasury below the minimum remaining idle balance.',
+          'liquidity',
+          'Preserve more idle cash before executing this action.',
           {
             postIdleCapitalUsd: postIdleCapitalUsd.toFixed(2),
             minimumRemainingIdleUsd: minimumRemainingIdleUsd.toFixed(2),
@@ -157,6 +174,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'insufficient_idle_capital',
           'Action exceeds currently available idle capital.',
+          'liquidity',
+          'Reduce the action amount or wait for more idle capital to become available.',
           {
             amountUsd: amountUsd.toFixed(2),
             idleCapitalUsd: idleCapitalUsd.toFixed(2),
@@ -168,6 +187,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'venue_capacity_exceeded',
           `Action exceeds available capacity at ${venueSnapshot.venueName}.`,
+          'capacity',
+          'Reduce the action amount or choose a venue with more remaining capacity.',
           {
             amountUsd: amountUsd.toFixed(2),
             availableCapacityUsd: venueSnapshot.availableCapacityUsd,
@@ -182,6 +203,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'venue_concentration_breach',
           'Action would breach the venue concentration limit.',
+          'concentration',
+          'Reduce the action amount or rebalance capital across more venues first.',
           {
             targetVenueConcentrationPct: targetVenueConcentrationPct.toFixed(2),
             maxAllocationPctPerVenue: input.policy.maxAllocationPctPerVenue,
@@ -192,6 +215,8 @@ export class TreasuryExecutionPlanner {
       blockedReasons.push(buildBlockedReason(
         'withdrawal_capacity_exceeded',
         `Action exceeds withdrawal capacity at ${venueSnapshot.venueName}.`,
+        'capacity',
+        'Lower the reduction amount or wait until more capital becomes withdrawable.',
         {
           amountUsd: amountUsd.toFixed(2),
           withdrawalAvailableUsd: venueSnapshot.withdrawalAvailableUsd,
@@ -204,6 +229,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'venue_execution_unsupported',
           `Venue ${recommendation.venueId} does not support treasury execution yet.`,
+          'venue_capability',
+          'Keep the venue in simulated or read-only mode until execution support is implemented and approved.',
           { venueId: recommendation.venueId },
         ));
       } else if (
@@ -213,6 +240,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'venue_execution_unsupported',
           `Venue ${recommendation.venueId} does not support ${recommendation.actionType} execution.`,
+          'venue_capability',
+          'Use a venue that supports this treasury action type or limit the venue to read-only operation.',
           {
             venueId: recommendation.venueId,
             actionType: recommendation.actionType,
@@ -227,6 +256,8 @@ export class TreasuryExecutionPlanner {
         blockedReasons.push(buildBlockedReason(
           'live_execution_disabled',
           'Live treasury execution is disabled for this runtime.',
+          'execution_mode',
+          'Keep this action in dry-run or enable live mode only after connector approval and operator signoff.',
           {
             executionMode: input.executionMode,
             liveExecutionEnabled: input.liveExecutionEnabled,

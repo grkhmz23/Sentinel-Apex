@@ -14,10 +14,14 @@ import type {
   RuntimeRemediationActionType,
   RuntimeRecoveryEventView,
   TreasuryExecutionView,
+  TreasuryExecutionDetailView,
   TreasuryActionView,
+  TreasuryActionDetailView,
   TreasuryAllocationView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  TreasuryVenueDetailView,
+  TreasuryVenueView,
 } from '@sentinel-apex/runtime';
 
 export interface ApiEnvelope<T> {
@@ -78,6 +82,23 @@ export interface TreasuryPageData {
   policy: TreasuryPolicyView | null;
   actions: TreasuryActionView[];
   executions: TreasuryExecutionView[];
+  venues: TreasuryVenueView[];
+}
+
+export interface TreasuryActionDetailPageData {
+  detail: TreasuryActionDetailView;
+}
+
+export interface TreasuryExecutionDetailPageData {
+  detail: TreasuryExecutionDetailView;
+}
+
+export interface TreasuryVenuesPageData {
+  venues: TreasuryVenueView[];
+}
+
+export interface TreasuryVenueDetailPageData {
+  detail: TreasuryVenueDetailView;
 }
 
 export interface MismatchPageData {

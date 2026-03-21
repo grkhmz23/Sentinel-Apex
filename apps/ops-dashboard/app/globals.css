@@ -108,6 +108,15 @@ textarea {
   margin-bottom: 0.75rem;
 }
 
+.stack--compact {
+  gap: 0.2rem;
+  margin-bottom: 0;
+}
+
+.stack--align-end {
+  justify-items: end;
+}
+
 .grid--two-column {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -268,6 +277,59 @@ textarea {
   background: #17211f;
   color: #ecf2ef;
   font-size: 0.88rem;
+}
+
+.inline-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.inline-links a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.reason-list,
+.timeline {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.reason-card,
+.timeline__item {
+  padding: 0.85rem;
+  border: 1px solid rgba(21, 24, 23, 0.08);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.reason-card__eyebrow {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.74rem;
+}
+
+.reason-card h3,
+.timeline__item h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.reason-card p,
+.timeline__item p {
+  margin: 0;
+}
+
+.timeline__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin-bottom: 0.35rem;
 }
 
 .error-state,

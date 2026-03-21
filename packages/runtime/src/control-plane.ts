@@ -50,9 +50,12 @@ import type {
   TreasuryActionDetailView,
   TreasuryActionView,
   TreasuryAllocationView,
+  TreasuryExecutionDetailView,
   TreasuryExecutionView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  TreasuryVenueDetailView,
+  TreasuryVenueView,
   RuntimeVerificationOutcome,
   WorkerStatusView,
 } from './types.js';
@@ -289,6 +292,18 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async getTreasuryExecution(executionId: string): Promise<TreasuryExecutionView | null> {
     return this.store.getTreasuryExecution(executionId);
+  }
+
+  async getTreasuryExecutionDetail(executionId: string): Promise<TreasuryExecutionDetailView | null> {
+    return this.store.getTreasuryExecutionDetail(executionId);
+  }
+
+  async listTreasuryVenues(limit = 50): Promise<TreasuryVenueView[]> {
+    return this.store.listTreasuryVenues(limit);
+  }
+
+  async getTreasuryVenue(venueId: string): Promise<TreasuryVenueDetailView | null> {
+    return this.store.getTreasuryVenue(venueId);
   }
 
   async approveTreasuryAction(

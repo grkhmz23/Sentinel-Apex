@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 import { AppShell } from '../../src/components/app-shell';
 import { DefinitionList } from '../../src/components/definition-list';
 import { EmptyState } from '../../src/components/empty-state';
@@ -9,6 +11,7 @@ import { TreasuryActions } from '../../src/components/treasury-actions';
 import { requireDashboardSession } from '../../src/lib/auth.server';
 import { formatDateTime, formatUsd } from '../../src/lib/format';
 import { loadTreasuryPageData } from '../../src/lib/runtime-api.server';
+import { formatOnboardingState, treasuryModeTone, treasuryOnboardingTone, treasuryStatusTone } from '../../src/lib/treasury-display';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +27,7 @@ export default async function TreasuryPage(): Promise<JSX.Element> {
     );
   }
 
-  const { summary, allocations, policy, actions, executions } = state.data;
+  const { summary, allocations, policy, actions, executions, venues } = state.data;
 
   return (
     <AppShell session={session}>
@@ -34,7 +37,12 @@ export default async function TreasuryPage(): Promise<JSX.Element> {
             <p className="eyebrow">Atlas Treasury</p>
             <h1>Treasury Sleeve</h1>
           </div>
-          <TreasuryActions />
+          <div className="stack stack--compact stack--align-end">
+            <TreasuryActions />
+            <div className="inline-links">
+              <Link href="/treasury/venues">Venue readiness</Link>
+            </div>
+          </div>
         </header>
 
         <div className="grid grid--metrics">
@@ -95,8 +103,8 @@ export default async function TreasuryPage(): Promise<JSX.Element> {
                 <tbody>
                   {allocations.map((allocation) => (
                     <tr key={allocation.venueId}>
-                      <td>{allocation.venueName}</td>
-                      <td><StatusBadge label={allocation.venueMode} tone={allocation.venueMode === 'simulated' ? 'warn' : 'good'} /></td>
+                      <td><Link href={`/treasury/venues/${allocation.venueId}`}>{allocation.venueName}</Link></td>
+                      <td><StatusBadge label={allocation.venueMode} tone={treasuryModeTone(allocation.venueMode)} /></td>
                       <td>{formatUsd(allocation.currentAllocationUsd)}</td>
                       <td>{formatUsd(allocation.withdrawalAvailableUsd)}</td>
                       <td>{allocation.concentrationPct}%</td>
@@ -143,12 +151,55 @@ export default async function TreasuryPage(): Promise<JSX.Element> {
                 <tbody>
                   {executions.map((execution) => (
                     <tr key={execution.id}>
-                      <td><StatusBadge label={execution.status} tone={execution.status === 'completed' ? 'good' : execution.status === 'failed' ? 'bad' : 'accent'} /></td>
-                      <td>{execution.treasuryActionId}</td>
-                      <td>{execution.venueMode === 'live' ? 'live' : 'simulated'}</td>
+                      <td><StatusBadge label={execution.status} tone={treasuryStatusTone(execution.status)} /></td>
+                      <td><Link href={`/treasury/actions/${execution.treasuryActionId}`}>{execution.treasuryActionId}</Link></td>
+                      <td><StatusBadge label={execution.venueMode} tone={treasuryModeTone(execution.venueMode)} /></td>
                       <td>{execution.requestedBy}</td>
-                      <td>{execution.outcomeSummary ?? execution.lastError ?? 'Pending'}</td>
+                      <td>
+                        <div className="stack stack--compact">
+                          <Link href={`/treasury/executions/${execution.id}`}>{execution.outcomeSummary ?? execution.lastError ?? 'Pending'}</Link>
+                          <span className="panel__hint">{execution.id}</span>
+                        </div>
+                      </td>
                       <td>{formatDateTime(execution.completedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        </div>
+
+        <div className="grid">
+          <Panel subtitle="Simulation boundaries and live onboarding posture" title="Venue Readiness">
+            {venues.length === 0 ? (
+              <EmptyState message="No venue capability snapshots are persisted yet." title="No venues" />
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Venue</th>
+                    <th>Mode</th>
+                    <th>Onboarding</th>
+                    <th>Execution</th>
+                    <th>Live Approval</th>
+                    <th>Snapshot</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {venues.map((venue) => (
+                    <tr key={venue.venueId}>
+                      <td>
+                        <div className="stack stack--compact">
+                          <Link href={`/treasury/venues/${venue.venueId}`}>{venue.venueName}</Link>
+                          <span className="panel__hint">{venue.readinessLabel}</span>
+                        </div>
+                      </td>
+                      <td><StatusBadge label={venue.simulationState} tone={treasuryModeTone(venue.venueMode)} /></td>
+                      <td><StatusBadge label={formatOnboardingState(venue.onboardingState)} tone={treasuryOnboardingTone(venue.onboardingState)} /></td>
+                      <td>{venue.executionSupported ? 'Supported' : 'Read-only'}</td>
+                      <td>{venue.approvedForLiveUse ? 'Approved' : 'Not approved'}</td>
+                      <td>{formatDateTime(venue.lastSnapshotAt)}</td>
                     </tr>
                   ))}
                 </tbody>

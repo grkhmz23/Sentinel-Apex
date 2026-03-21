@@ -54,6 +54,8 @@ import type { FastifyInstance } from 'fastify';
  *   GET  /api/v1/treasury/actions/:actionId   — treasury action detail and execution history (auth)
  *   GET  /api/v1/treasury/executions          — treasury execution attempts (auth)
  *   GET  /api/v1/treasury/executions/:executionId — treasury execution detail (auth)
+ *   GET  /api/v1/treasury/venues              — treasury venue capability/readiness summary (auth)
+ *   GET  /api/v1/treasury/venues/:venueId     — treasury venue detail and onboarding readiness (auth)
  *   POST /api/v1/treasury/evaluate            — queue treasury evaluation (auth)
  *   POST /api/v1/treasury/actions/:actionId/approve — approve treasury action (auth)
  *   POST /api/v1/treasury/actions/:actionId/execute — queue treasury execution (auth)

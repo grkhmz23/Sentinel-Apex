@@ -780,6 +780,7 @@ export class SentinelRuntime {
       policy: this.options.treasuryPolicy,
       evaluation,
       executionIntents,
+      venueCapabilities,
       actorId: input.actorId,
     });
 

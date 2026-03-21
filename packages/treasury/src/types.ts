@@ -30,6 +30,16 @@ export type TreasuryActionBlockedReasonCode =
   | 'venue_not_found'
   | 'venue_unhealthy'
   | 'withdrawal_capacity_exceeded';
+export type TreasuryBlockedReasonCategory =
+  | 'action_size'
+  | 'liquidity'
+  | 'reserve'
+  | 'concentration'
+  | 'venue_eligibility'
+  | 'venue_health'
+  | 'venue_capability'
+  | 'capacity'
+  | 'execution_mode';
 export type TreasuryActionReadiness = 'actionable' | 'blocked';
 
 export interface TreasuryPolicy {
@@ -99,13 +109,19 @@ export interface TreasuryVenueCapabilities {
   supportsAllocation: boolean;
   supportsReduction: boolean;
   executionSupported: boolean;
+  readOnly: boolean;
+  approvedForLiveUse: boolean;
+  onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
+  missingPrerequisites: string[];
   healthy: boolean;
   metadata: Record<string, unknown>;
 }
 
 export interface TreasuryActionBlockedReason {
   code: TreasuryActionBlockedReasonCode;
+  category: TreasuryBlockedReasonCategory;
   message: string;
+  operatorAction: string;
   details: Record<string, unknown>;
 }
 

@@ -7,6 +7,7 @@
 ## Implementation Status
 
 Phase 3.1 establishes the first controlled treasury execution foundation in the repo.
+Phase 3.2 adds operator-grade workflow depth and connector readiness visibility on top of that execution foundation.
 
 Implemented now:
 
@@ -18,6 +19,10 @@ Implemented now:
 - persisted treasury runs, venue snapshots, actions, execution history, and current read models
 - treasury approval and controlled execution via runtime commands
 - treasury API and ops-dashboard visibility for recommendations and execution state
+- treasury action detail, execution detail, and venue readiness drill-through
+- structured blocked-reason categories with operator guidance
+- venue readiness metadata for simulated, read-only, and live-approval posture
+- connector onboarding and live-enable runbooks
 
 Not implemented yet:
 
@@ -36,6 +41,21 @@ Phase 3.1 makes Atlas Treasury operationally executable without overstating what
 - execution is still controlled, operator-mediated, and backend revalidated
 - simulated treasury execution is explicitly labeled simulated
 - live treasury execution still depends on future live-capable treasury connectors
+
+## Phase 3.2 Operator Boundary
+
+Phase 3.2 does not add allocator autonomy. It adds:
+
+- action, execution, and venue drill-through
+- structured policy and risk explanations for blocked actions
+- explicit connector readiness visibility
+- operator runbooks for onboarding and live-enable review
+
+It still does not claim:
+
+- allocator-driven treasury targets
+- generic connector orchestration
+- production-ready real treasury integrations in this repo today
 
 ---
 
