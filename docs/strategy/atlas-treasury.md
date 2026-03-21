@@ -2,7 +2,40 @@
 
 **Version:** 1.0.0
 **Status:** Active
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-21
+
+## Implementation Status
+
+Phase 3.1 establishes the first controlled treasury execution foundation in the repo.
+
+Implemented now:
+
+- dedicated `packages/treasury` policy engine
+- treasury reserve and concentration evaluation
+- treasury execution-intent planning and blocked-reason assessment
+- explicit simulated treasury venue adapters
+- runtime-integrated treasury evaluation during real runtime cycles
+- persisted treasury runs, venue snapshots, actions, execution history, and current read models
+- treasury approval and controlled execution via runtime commands
+- treasury API and ops-dashboard visibility for recommendations and execution state
+
+Not implemented yet:
+
+- live treasury connectors
+- allocator-driven target setting
+- autonomous treasury execution without operator approval
+- full regime-aware tiering from this strategy document
+
+The rest of this document remains the target strategic design. The current runtime implementation is a smaller production-ready foundation aligned to that target.
+
+## Phase 3.1 Runtime Boundary
+
+Phase 3.1 makes Atlas Treasury operationally executable without overstating what exists:
+
+- treasury actions can be approved and executed
+- execution is still controlled, operator-mediated, and backend revalidated
+- simulated treasury execution is explicitly labeled simulated
+- live treasury execution still depends on future live-capable treasury connectors
 
 ---
 

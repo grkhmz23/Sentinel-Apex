@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
+    "bootstrap:operator": "tsx scripts/bootstrap-operator.ts",
     "dev": "next dev",
     "start": "next start",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
@@ -11,7 +12,10 @@
     "lint": "eslint app src --ext .ts,.tsx"
   },
   "dependencies": {
+    "@sentinel-apex/db": "workspace:*",
     "@sentinel-apex/runtime": "workspace:*",
+    "@sentinel-apex/shared": "workspace:*",
+    "drizzle-orm": "^0.30.10",
     "next": "^14.2.32",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -24,6 +28,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "jsdom": "^24.1.1",
+    "tsx": "^4.11.0",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   }

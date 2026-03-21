@@ -22,12 +22,23 @@ import {
   strategyIntents,
   strategyOpportunities,
   strategyRuns,
+  treasuryActionExecutions,
+  treasuryActions,
+  treasuryCurrent,
+  treasuryRuns,
+  treasuryVenueSnapshots,
   type Database,
 } from '@sentinel-apex/db';
 import type { OrderFill, OrderIntent, OrderStatus , RiskAssessment } from '@sentinel-apex/domain';
 import type { OrderRecord, OrderStore } from '@sentinel-apex/execution';
 import type { AuditEvent, AuditWriter } from '@sentinel-apex/observability';
 import type { PortfolioState, RiskSummary } from '@sentinel-apex/risk-engine';
+import type {
+  TreasuryActionBlockedReason,
+  TreasuryEvaluation,
+  TreasuryExecutionIntent,
+  TreasuryPolicy,
+} from '@sentinel-apex/treasury';
 
 import type {
   AuditEventView,
@@ -64,6 +75,12 @@ import type {
   RuntimeVerificationOutcome,
   RiskSummaryView,
   RuntimeStatusView,
+  TreasuryActionDetailView,
+  TreasuryActionView,
+  TreasuryAllocationView,
+  TreasuryExecutionView,
+  TreasuryPolicyView,
+  TreasurySummaryView,
   WorkerLifecycleState,
   WorkerSchedulerState,
   WorkerStatusView,
@@ -89,6 +106,32 @@ function serialiseMap(map: Map<string, string>): Record<string, string> {
 
 function asJsonObject(value: unknown): Record<string, unknown> {
   return asRecord(value);
+}
+
+function asTreasuryBlockedReasons(value: unknown): TreasuryActionBlockedReason[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const code = record['code'];
+    const message = record['message'];
+
+    if (typeof code !== 'string' || typeof message !== 'string') {
+      return [];
+    }
+
+    return [{
+      code: code as TreasuryActionBlockedReason['code'],
+      message,
+      details: asJsonObject(record['details']),
+    }];
+  });
 }
 
 function extractSleeveId(intent: OrderIntent): string {
@@ -274,6 +317,119 @@ function mapRecoveryEventRow(row: typeof runtimeRecoveryEvents.$inferSelect): Ru
     message: row.message,
     details: asJsonObject(row.details),
     occurredAt: row.occurredAt.toISOString(),
+  };
+}
+
+function mapTreasurySummaryRow(
+  row: typeof treasuryRuns.$inferSelect,
+): TreasurySummaryView {
+  const summary = asJsonObject(row.summary);
+  const reserveStatus = asRecord(summary['reserveStatus']);
+  const alerts = Array.isArray(summary['alerts'])
+    ? summary['alerts'].filter((value): value is string => typeof value === 'string')
+    : [];
+
+  return {
+    treasuryRunId: row.treasuryRunId,
+    sourceRunId: row.sourceRunId ?? null,
+    sleeveId: row.sleeveId,
+    simulated: row.simulated,
+    policy: row.policy as TreasuryPolicy,
+    reserveStatus: {
+      totalCapitalUsd: String(reserveStatus['totalCapitalUsd'] ?? row.totalCapitalUsd),
+      idleCapitalUsd: String(reserveStatus['idleCapitalUsd'] ?? row.idleCapitalUsd),
+      allocatedCapitalUsd: String(reserveStatus['allocatedCapitalUsd'] ?? row.allocatedCapitalUsd),
+      requiredReserveUsd: String(reserveStatus['requiredReserveUsd'] ?? row.requiredReserveUsd),
+      currentReserveUsd: String(reserveStatus['currentReserveUsd'] ?? row.availableReserveUsd),
+      reserveCoveragePct: String(reserveStatus['reserveCoveragePct'] ?? '0'),
+      surplusCapitalUsd: String(reserveStatus['surplusCapitalUsd'] ?? row.surplusCapitalUsd),
+      reserveShortfallUsd: String(reserveStatus['reserveShortfallUsd'] ?? row.reserveShortfallUsd),
+    },
+    actionCount: row.actionCount,
+    alerts,
+    concentrationLimitBreached: row.concentrationLimitBreached,
+    evaluatedAt: row.evaluatedAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapTreasuryAllocationRow(
+  row: typeof treasuryVenueSnapshots.$inferSelect,
+): TreasuryAllocationView {
+  return {
+    treasuryRunId: row.treasuryRunId,
+    venueId: row.venueId,
+    venueName: row.venueName,
+    venueMode: row.venueMode as TreasuryAllocationView['venueMode'],
+    liquidityTier: row.liquidityTier as TreasuryAllocationView['liquidityTier'],
+    healthy: row.healthy,
+    aprBps: row.aprBps,
+    currentAllocationUsd: row.currentAllocationUsd,
+    withdrawalAvailableUsd: row.withdrawalAvailableUsd,
+    availableCapacityUsd: row.availableCapacityUsd,
+    concentrationPct: row.concentrationPct,
+    updatedAt: row.updatedAt.toISOString(),
+    metadata: asJsonObject(row.metadata),
+  };
+}
+
+function mapTreasuryActionRow(
+  row: typeof treasuryActions.$inferSelect,
+): TreasuryActionView {
+  return {
+    id: row.id,
+    treasuryRunId: row.treasuryRunId,
+    actionType: row.actionType as TreasuryActionView['actionType'],
+    status: row.status as TreasuryActionView['status'],
+    readiness: row.readiness as TreasuryActionView['readiness'],
+    executable: row.executable,
+    blockedReasons: asTreasuryBlockedReasons(row.blockedReasons),
+    approvalRequirement: row.approvalRequirement as TreasuryActionView['approvalRequirement'],
+    venueId: row.venueId ?? null,
+    venueName: row.venueName ?? null,
+    venueMode: row.venueMode as TreasuryActionView['venueMode'],
+    amountUsd: row.amountUsd,
+    reasonCode: row.reasonCode,
+    summary: row.summary,
+    details: asJsonObject(row.details),
+    actorId: row.actorId ?? null,
+    approvedBy: row.approvedBy ?? null,
+    approvedAt: toIsoString(row.approvedAt),
+    executionRequestedBy: row.executionRequestedBy ?? null,
+    executionRequestedAt: toIsoString(row.executionRequestedAt),
+    linkedCommandId: row.linkedCommandId ?? null,
+    latestExecutionId: row.latestExecutionId ?? null,
+    simulated: row.simulated,
+    executionMode: row.executionMode as TreasuryActionView['executionMode'],
+    lastError: row.lastError ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapTreasuryExecutionRow(
+  row: typeof treasuryActionExecutions.$inferSelect,
+): TreasuryExecutionView {
+  return {
+    id: row.id,
+    treasuryActionId: row.treasuryActionId,
+    treasuryRunId: row.treasuryRunId,
+    commandId: row.commandId ?? null,
+    status: row.status as TreasuryExecutionView['status'],
+    executionMode: row.executionMode as TreasuryExecutionView['executionMode'],
+    venueMode: row.venueMode as TreasuryExecutionView['venueMode'],
+    simulated: row.simulated,
+    requestedBy: row.requestedBy,
+    startedBy: row.startedBy ?? null,
+    blockedReasons: asTreasuryBlockedReasons(row.blockedReasons),
+    outcomeSummary: row.outcomeSummary ?? null,
+    outcome: asJsonObject(row.outcome),
+    venueExecutionReference: row.venueExecutionReference ?? null,
+    lastError: row.lastError ?? null,
+    createdAt: row.createdAt.toISOString(),
+    startedAt: toIsoString(row.startedAt),
+    completedAt: toIsoString(row.completedAt),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -2514,6 +2670,414 @@ export class RuntimeStore {
       isActionable: isMismatchActionable(mismatch.status, remediationInFlight),
       remediationInFlight,
     };
+  }
+
+  async persistTreasuryEvaluation(input: {
+    treasuryRunId: string;
+    sourceRunId: string | null;
+    sleeveId: string;
+    policy: TreasuryPolicy;
+    evaluation: TreasuryEvaluation;
+    executionIntents: TreasuryExecutionIntent[];
+    actorId: string | null;
+  }): Promise<void> {
+    const now = new Date();
+    await this.db.insert(treasuryRuns).values({
+      treasuryRunId: input.treasuryRunId,
+      sourceRunId: input.sourceRunId,
+      sleeveId: input.sleeveId,
+      simulated: input.evaluation.simulated,
+      policy: input.policy as unknown as Record<string, unknown>,
+      summary: input.evaluation as unknown as Record<string, unknown>,
+      totalCapitalUsd: input.evaluation.reserveStatus.totalCapitalUsd,
+      idleCapitalUsd: input.evaluation.reserveStatus.idleCapitalUsd,
+      allocatedCapitalUsd: input.evaluation.reserveStatus.allocatedCapitalUsd,
+      requiredReserveUsd: input.evaluation.reserveStatus.requiredReserveUsd,
+      availableReserveUsd: input.evaluation.reserveStatus.currentReserveUsd,
+      reserveShortfallUsd: input.evaluation.reserveStatus.reserveShortfallUsd,
+      surplusCapitalUsd: input.evaluation.reserveStatus.surplusCapitalUsd,
+      concentrationLimitBreached: input.evaluation.recommendations.some(
+        (recommendation) => recommendation.reasonCode === 'venue_concentration',
+      ),
+      actionCount: input.evaluation.recommendations.length,
+      evaluatedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    if (input.evaluation.venueSnapshots.length > 0) {
+      await this.db.insert(treasuryVenueSnapshots).values(
+        input.evaluation.venueSnapshots.map((snapshot) => ({
+          treasuryRunId: input.treasuryRunId,
+          venueId: snapshot.venueId,
+          venueName: snapshot.venueName,
+          venueMode: snapshot.mode,
+          liquidityTier: snapshot.liquidityTier,
+          healthy: snapshot.healthy,
+          aprBps: snapshot.aprBps,
+          currentAllocationUsd: snapshot.currentAllocationUsd,
+          withdrawalAvailableUsd: snapshot.withdrawalAvailableUsd,
+          availableCapacityUsd: snapshot.availableCapacityUsd,
+          concentrationPct: snapshot.concentrationPct,
+          metadata: snapshot.metadata,
+          updatedAt: new Date(snapshot.updatedAt),
+          createdAt: now,
+        })),
+      );
+    }
+
+    if (input.executionIntents.length > 0) {
+      await this.db.insert(treasuryActions).values(
+        input.executionIntents.map((intent) => ({
+          treasuryRunId: input.treasuryRunId,
+          actionType: intent.actionType,
+          status: 'recommended',
+          venueId: intent.venueId,
+          venueName: intent.venueName,
+          venueMode: intent.venueMode,
+          amountUsd: intent.amountUsd,
+          reasonCode: intent.reasonCode,
+          summary: intent.summary,
+          details: intent.details,
+          readiness: intent.readiness,
+          executable: intent.executable,
+          blockedReasons: intent.blockedReasons,
+          approvalRequirement: intent.approvalRequirement,
+          executionMode: intent.executionMode,
+          simulated: intent.simulated,
+          executionPlan: {
+            recommendationType: intent.recommendationType,
+            effects: intent.effects,
+          },
+          actorId: input.actorId,
+          createdAt: now,
+          updatedAt: now,
+        })),
+      );
+    }
+
+    await this.db
+      .insert(treasuryCurrent)
+      .values({
+        id: 'primary',
+        latestTreasuryRunId: input.treasuryRunId,
+        cashBalanceUsd: input.evaluation.reserveStatus.idleCapitalUsd,
+        policy: input.policy as unknown as Record<string, unknown>,
+        summary: input.evaluation as unknown as Record<string, unknown>,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: treasuryCurrent.id,
+        set: {
+          latestTreasuryRunId: input.treasuryRunId,
+          cashBalanceUsd: input.evaluation.reserveStatus.idleCapitalUsd,
+          policy: input.policy as unknown as Record<string, unknown>,
+          summary: input.evaluation as unknown as Record<string, unknown>,
+          updatedAt: now,
+        },
+      });
+  }
+
+  async getTreasurySummary(): Promise<TreasurySummaryView | null> {
+    const [row] = await this.db
+      .select()
+      .from(treasuryRuns)
+      .orderBy(desc(treasuryRuns.evaluatedAt))
+      .limit(1);
+
+    return row === undefined ? null : mapTreasurySummaryRow(row);
+  }
+
+  async listTreasuryAllocations(limit = 50): Promise<TreasuryAllocationView[]> {
+    const [latestRun] = await this.db
+      .select({ treasuryRunId: treasuryRuns.treasuryRunId })
+      .from(treasuryRuns)
+      .orderBy(desc(treasuryRuns.evaluatedAt))
+      .limit(1);
+
+    if (latestRun === undefined) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select()
+      .from(treasuryVenueSnapshots)
+      .where(eq(treasuryVenueSnapshots.treasuryRunId, latestRun.treasuryRunId))
+      .limit(limit);
+
+    return rows
+      .map(mapTreasuryAllocationRow)
+      .sort((left, right) => Number(right.currentAllocationUsd) - Number(left.currentAllocationUsd))
+      .slice(0, limit);
+  }
+
+  async getTreasuryPolicy(): Promise<TreasuryPolicyView | null> {
+    const [row] = await this.db
+      .select()
+      .from(treasuryCurrent)
+      .where(eq(treasuryCurrent.id, 'primary'))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      treasuryRunId: row['latestTreasuryRunId'],
+      policy: row['policy'] as TreasuryPolicy,
+      updatedAt: row['updatedAt'].toISOString(),
+    };
+  }
+
+  async getTreasuryCashBalanceUsd(): Promise<string | null> {
+    const [row] = await this.db
+      .select({ cashBalanceUsd: treasuryCurrent.cashBalanceUsd })
+      .from(treasuryCurrent)
+      .where(eq(treasuryCurrent.id, 'primary'))
+      .limit(1);
+
+    return row?.cashBalanceUsd ?? null;
+  }
+
+  async setTreasuryCashBalanceUsd(cashBalanceUsd: string): Promise<void> {
+    await this.db
+      .update(treasuryCurrent)
+      .set({
+        cashBalanceUsd,
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryCurrent.id, 'primary'));
+  }
+
+  async listTreasuryActions(limit = 50): Promise<TreasuryActionView[]> {
+    const rows = await this.db
+      .select()
+      .from(treasuryActions)
+      .orderBy(desc(treasuryActions.createdAt))
+      .limit(limit);
+
+    return rows.map(mapTreasuryActionRow);
+  }
+
+  async getTreasuryAction(actionId: string): Promise<TreasuryActionDetailView | null> {
+    const [row] = await this.db
+      .select()
+      .from(treasuryActions)
+      .where(eq(treasuryActions.id, actionId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    const [latestCommand, executionRows] = await Promise.all([
+      row.linkedCommandId === null
+        ? Promise.resolve<RuntimeCommandView | null>(null)
+        : this.getRuntimeCommand(row.linkedCommandId),
+      this.db
+        .select()
+        .from(treasuryActionExecutions)
+        .where(eq(treasuryActionExecutions.treasuryActionId, row.id))
+        .orderBy(desc(treasuryActionExecutions.createdAt)),
+    ]);
+
+    return {
+      action: mapTreasuryActionRow(row),
+      latestCommand,
+      executions: executionRows.map(mapTreasuryExecutionRow),
+    };
+  }
+
+  async listTreasuryExecutions(limit = 50): Promise<TreasuryExecutionView[]> {
+    const rows = await this.db
+      .select()
+      .from(treasuryActionExecutions)
+      .orderBy(desc(treasuryActionExecutions.createdAt))
+      .limit(limit);
+
+    return rows.map(mapTreasuryExecutionRow);
+  }
+
+  async getTreasuryExecution(executionId: string): Promise<TreasuryExecutionView | null> {
+    const [row] = await this.db
+      .select()
+      .from(treasuryActionExecutions)
+      .where(eq(treasuryActionExecutions.id, executionId))
+      .limit(1);
+
+    return row === undefined ? null : mapTreasuryExecutionRow(row);
+  }
+
+  async approveTreasuryAction(actionId: string, actorId: string): Promise<TreasuryActionView | null> {
+    await this.db
+      .update(treasuryActions)
+      .set({
+        status: 'approved',
+        approvedBy: actorId,
+        approvedAt: new Date(),
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryActions.id, actionId));
+
+    const detail = await this.getTreasuryAction(actionId);
+    return detail?.action ?? null;
+  }
+
+  async queueTreasuryActionExecution(input: {
+    actionId: string;
+    commandId: string;
+    actorId: string;
+  }): Promise<TreasuryActionView | null> {
+    await this.db
+      .update(treasuryActions)
+      .set({
+        status: 'queued',
+        executionRequestedBy: input.actorId,
+        executionRequestedAt: new Date(),
+        queuedAt: new Date(),
+        linkedCommandId: input.commandId,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryActions.id, input.actionId));
+
+    const detail = await this.getTreasuryAction(input.actionId);
+    return detail?.action ?? null;
+  }
+
+  async markTreasuryActionExecuting(actionId: string): Promise<TreasuryActionView | null> {
+    await this.db
+      .update(treasuryActions)
+      .set({
+        status: 'executing',
+        executingAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryActions.id, actionId));
+
+    const detail = await this.getTreasuryAction(actionId);
+    return detail?.action ?? null;
+  }
+
+  async completeTreasuryAction(input: {
+    actionId: string;
+    latestExecutionId: string;
+  }): Promise<TreasuryActionView | null> {
+    await this.db
+      .update(treasuryActions)
+      .set({
+        status: 'completed',
+        latestExecutionId: input.latestExecutionId,
+        completedAt: new Date(),
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryActions.id, input.actionId));
+
+    const detail = await this.getTreasuryAction(input.actionId);
+    return detail?.action ?? null;
+  }
+
+  async failTreasuryAction(input: {
+    actionId: string;
+    latestExecutionId?: string | null;
+    errorMessage: string;
+  }): Promise<TreasuryActionView | null> {
+    await this.db
+      .update(treasuryActions)
+      .set({
+        status: 'failed',
+        latestExecutionId: input.latestExecutionId ?? null,
+        failedAt: new Date(),
+        lastError: input.errorMessage,
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryActions.id, input.actionId));
+
+    const detail = await this.getTreasuryAction(input.actionId);
+    return detail?.action ?? null;
+  }
+
+  async createTreasuryExecution(input: {
+    treasuryActionId: string;
+    treasuryRunId: string;
+    commandId: string | null;
+    status: TreasuryExecutionView['status'];
+    executionMode: TreasuryExecutionView['executionMode'];
+    venueMode: TreasuryExecutionView['venueMode'];
+    simulated: boolean;
+    requestedBy: string;
+    startedBy?: string | null;
+    blockedReasons?: TreasuryActionBlockedReason[];
+    outcomeSummary?: string | null;
+    outcome?: Record<string, unknown>;
+    venueExecutionReference?: string | null;
+    lastError?: string | null;
+  }): Promise<TreasuryExecutionView> {
+    const [row] = await this.db
+      .insert(treasuryActionExecutions)
+      .values({
+        treasuryActionId: input.treasuryActionId,
+        treasuryRunId: input.treasuryRunId,
+        commandId: input.commandId,
+        status: input.status,
+        executionMode: input.executionMode,
+        venueMode: input.venueMode,
+        simulated: input.simulated,
+        requestedBy: input.requestedBy,
+        startedBy: input.startedBy ?? null,
+        blockedReasons: input.blockedReasons ?? [],
+        outcomeSummary: input.outcomeSummary ?? null,
+        outcome: input.outcome ?? {},
+        venueExecutionReference: input.venueExecutionReference ?? null,
+        lastError: input.lastError ?? null,
+        startedAt: input.status === 'executing' ? new Date() : null,
+        completedAt: input.status === 'completed' || input.status === 'failed' ? new Date() : null,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('Failed to persist treasury execution row.');
+    }
+
+    return mapTreasuryExecutionRow(row);
+  }
+
+  async updateTreasuryExecution(
+    executionId: string,
+    patch: {
+      status?: TreasuryExecutionView['status'];
+      startedBy?: string | null;
+      blockedReasons?: TreasuryActionBlockedReason[];
+      outcomeSummary?: string | null;
+      outcome?: Record<string, unknown>;
+      venueExecutionReference?: string | null;
+      lastError?: string | null;
+    },
+  ): Promise<TreasuryExecutionView | null> {
+    await this.db
+      .update(treasuryActionExecutions)
+      .set({
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.startedBy !== undefined ? { startedBy: patch.startedBy } : {}),
+        ...(patch.blockedReasons !== undefined ? { blockedReasons: patch.blockedReasons } : {}),
+        ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
+        ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
+        ...(patch.venueExecutionReference !== undefined
+          ? { venueExecutionReference: patch.venueExecutionReference }
+          : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+        ...(patch.status === 'executing' ? { startedAt: new Date() } : {}),
+        ...(patch.status === 'completed' || patch.status === 'failed'
+          ? { completedAt: new Date() }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryActionExecutions.id, executionId));
+
+    return this.getTreasuryExecution(executionId);
   }
 
   async countApprovedIntentsForRun(runId: string): Promise<number> {

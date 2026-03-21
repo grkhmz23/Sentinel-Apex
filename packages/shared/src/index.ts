@@ -49,3 +49,17 @@ export {
 
 export type { RetryOptions } from './retry.js';
 export { retry } from './retry.js';
+
+export type {
+  OpsOperatorRole,
+  SignedOperatorContext,
+  SignedOperatorHeaders,
+} from './ops-auth.js';
+export {
+  canAssumeRole,
+  createSignedOperatorHeaders,
+  isOpsOperatorRole,
+  OpsAuthError,
+  OPS_OPERATOR_ROLES,
+  verifySignedOperatorHeaders,
+} from './ops-auth.js';

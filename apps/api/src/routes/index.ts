@@ -9,6 +9,7 @@ import { portfolioRoutes } from './portfolio.js';
 import { positionRoutes } from './positions.js';
 import { riskRoutes } from './risk.js';
 import { runtimeRoutes } from './runtime.js';
+import { treasuryRoutes } from './treasury.js';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -45,6 +46,17 @@ import type { FastifyInstance } from 'fastify';
  *   GET  /api/v1/runtime/commands             — recent runtime commands (auth)
  *   GET  /api/v1/runtime/worker               — worker state (auth)
  *   GET  /api/v1/runtime/commands/:id         — single runtime command (auth)
+ *   GET  /api/v1/treasury/summary             — latest treasury summary (auth)
+ *   GET  /api/v1/treasury/allocations         — latest treasury allocation view (auth)
+ *   GET  /api/v1/treasury/policy              — latest treasury policy snapshot (auth)
+ *   GET  /api/v1/treasury/recommendations     — recent treasury recommendations with actionability (auth)
+ *   GET  /api/v1/treasury/actions             — treasury actions with lifecycle state (auth)
+ *   GET  /api/v1/treasury/actions/:actionId   — treasury action detail and execution history (auth)
+ *   GET  /api/v1/treasury/executions          — treasury execution attempts (auth)
+ *   GET  /api/v1/treasury/executions/:executionId — treasury execution detail (auth)
+ *   POST /api/v1/treasury/evaluate            — queue treasury evaluation (auth)
+ *   POST /api/v1/treasury/actions/:actionId/approve — approve treasury action (auth)
+ *   POST /api/v1/treasury/actions/:actionId/execute — queue treasury execution (auth)
  *   POST /api/v1/runtime/mismatches/:id/acknowledge — acknowledge mismatch (auth)
  *   POST /api/v1/runtime/mismatches/:id/recover     — start recovery workflow (auth)
  *   POST /api/v1/runtime/mismatches/:id/resolve     — resolve mismatch (auth)
@@ -70,5 +82,6 @@ export async function registerRoutes(
   await opportunityRoutes(app, controlPlane);
   await eventRoutes(app, controlPlane);
   await runtimeRoutes(app, controlPlane);
+  await treasuryRoutes(app, controlPlane);
   await controlRoutes(app, controlPlane);
 }

@@ -1,21 +1,28 @@
 import Link from 'next/link';
 
+import { AppShell } from '../src/components/app-shell';
 import { DefinitionList } from '../src/components/definition-list';
 import { EmptyState } from '../src/components/empty-state';
 import { ErrorState } from '../src/components/error-state';
 import { Panel } from '../src/components/panel';
 import { QuickActions } from '../src/components/quick-actions';
 import { StatusBadge } from '../src/components/status-badge';
-import { formatDateTime, isStaleTimestamp } from '../src/lib/format';
+import { requireDashboardSession } from '../src/lib/auth.server';
+import { formatDateTime, formatUsd, isStaleTimestamp } from '../src/lib/format';
 import { loadOverviewPageData } from '../src/lib/runtime-api.server';
 
 export const dynamic = 'force-dynamic';
 
 export default async function OverviewPage(): Promise<JSX.Element> {
+  const session = await requireDashboardSession('/');
   const state = await loadOverviewPageData();
 
   if (state.error !== null || state.data === null) {
-    return <ErrorState message={state.error ?? 'Overview unavailable.'} title="Overview unavailable" />;
+    return (
+      <AppShell session={session}>
+        <ErrorState message={state.error ?? 'Overview unavailable.'} title="Overview unavailable" />
+      </AppShell>
+    );
   }
 
   const { overview, mismatches, commands, recoveryOutcomes, reconciliationRuns, activeFindings } = state.data;
@@ -25,7 +32,8 @@ export default async function OverviewPage(): Promise<JSX.Element> {
   );
 
   return (
-    <div className="page">
+    <AppShell session={session}>
+      <div className="page">
       <header className="page__header">
         <div>
           <p className="eyebrow">Runtime Overview</p>
@@ -59,6 +67,23 @@ export default async function OverviewPage(): Promise<JSX.Element> {
               { label: 'Reconciliation freshness', value: staleReconciliation ? <StatusBadge label="stale" tone="warn" /> : <StatusBadge label="current" tone="good" /> },
             ]}
           />
+        </Panel>
+
+        <Panel subtitle="Idle capital and reserve posture" title="Treasury">
+          {overview.treasurySummary === null ? (
+            <EmptyState message="Treasury has not been evaluated yet." title="No treasury data" />
+          ) : (
+            <DefinitionList
+              items={[
+                { label: 'Reserve coverage', value: `${overview.treasurySummary.reserveStatus.reserveCoveragePct}%` },
+                { label: 'Idle capital', value: formatUsd(overview.treasurySummary.reserveStatus.idleCapitalUsd) },
+                { label: 'Allocated capital', value: formatUsd(overview.treasurySummary.reserveStatus.allocatedCapitalUsd) },
+                { label: 'Required reserve', value: formatUsd(overview.treasurySummary.reserveStatus.requiredReserveUsd) },
+                { label: 'Recommended actions', value: String(overview.treasurySummary.actionCount) },
+                { label: 'Evaluated at', value: formatDateTime(overview.treasurySummary.evaluatedAt) },
+              ]}
+            />
+          )}
         </Panel>
       </div>
 
@@ -176,6 +201,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
           )}
         </Panel>
       </div>
-    </div>
+      </div>
+    </AppShell>
   );
 }

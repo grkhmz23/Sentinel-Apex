@@ -210,6 +210,202 @@ export const runtimeWorkerState = pgTable('runtime_worker_state', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const opsOperators = pgTable(
+  'ops_operators',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operatorId: text('operator_id').notNull().unique(),
+    email: text('email').notNull().unique(),
+    displayName: text('display_name').notNull(),
+    role: text('role').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    active: boolean('active').notNull().default(true),
+    lastAuthenticatedAt: timestamp('last_authenticated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    operatorIdIdx: index('ops_operators_operator_id_idx').on(t.operatorId),
+    emailIdx: index('ops_operators_email_idx').on(t.email),
+    roleIdx: index('ops_operators_role_idx').on(t.role),
+    activeIdx: index('ops_operators_active_idx').on(t.active),
+  }),
+);
+
+export const opsOperatorSessions = pgTable(
+  'ops_operator_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: text('session_id').notNull().unique(),
+    operatorId: text('operator_id')
+      .notNull()
+      .references(() => opsOperators.operatorId),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    sessionIdIdx: index('ops_operator_sessions_session_id_idx').on(t.sessionId),
+    operatorIdIdx: index('ops_operator_sessions_operator_id_idx').on(t.operatorId),
+    tokenHashIdx: index('ops_operator_sessions_token_hash_idx').on(t.tokenHash),
+    expiresAtIdx: index('ops_operator_sessions_expires_at_idx').on(t.expiresAt),
+  }),
+);
+
+export const treasuryRuns = pgTable(
+  'treasury_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    treasuryRunId: text('treasury_run_id').notNull().unique(),
+    sourceRunId: text('source_run_id').references(() => strategyRuns.runId),
+    sleeveId: text('sleeve_id').notNull(),
+    simulated: boolean('simulated').notNull().default(true),
+    policy: jsonb('policy').notNull(),
+    summary: jsonb('summary').notNull(),
+    totalCapitalUsd: text('total_capital_usd').notNull(),
+    idleCapitalUsd: text('idle_capital_usd').notNull(),
+    allocatedCapitalUsd: text('allocated_capital_usd').notNull(),
+    requiredReserveUsd: text('required_reserve_usd').notNull(),
+    availableReserveUsd: text('available_reserve_usd').notNull(),
+    reserveShortfallUsd: text('reserve_shortfall_usd').notNull(),
+    surplusCapitalUsd: text('surplus_capital_usd').notNull(),
+    concentrationLimitBreached: boolean('concentration_limit_breached').notNull().default(false),
+    actionCount: integer('action_count').notNull().default(0),
+    evaluatedAt: timestamp('evaluated_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    treasuryRunIdIdx: index('treasury_runs_treasury_run_id_idx').on(t.treasuryRunId),
+    sourceRunIdIdx: index('treasury_runs_source_run_id_idx').on(t.sourceRunId),
+    evaluatedAtIdx: index('treasury_runs_evaluated_at_idx').on(t.evaluatedAt),
+  }),
+);
+
+export const treasuryVenueSnapshots = pgTable(
+  'treasury_venue_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    treasuryRunId: text('treasury_run_id')
+      .notNull()
+      .references(() => treasuryRuns.treasuryRunId),
+    venueId: text('venue_id').notNull(),
+    venueName: text('venue_name').notNull(),
+    venueMode: text('venue_mode').notNull(),
+    liquidityTier: text('liquidity_tier').notNull(),
+    healthy: boolean('healthy').notNull().default(true),
+    aprBps: integer('apr_bps').notNull(),
+    currentAllocationUsd: text('current_allocation_usd').notNull(),
+    withdrawalAvailableUsd: text('withdrawal_available_usd').notNull(),
+    availableCapacityUsd: text('available_capacity_usd').notNull(),
+    concentrationPct: text('concentration_pct').notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    treasuryRunIdIdx: index('treasury_venue_snapshots_treasury_run_id_idx').on(t.treasuryRunId),
+    venueIdIdx: index('treasury_venue_snapshots_venue_id_idx').on(t.venueId),
+  }),
+);
+
+export const treasuryActions = pgTable(
+  'treasury_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    treasuryRunId: text('treasury_run_id')
+      .notNull()
+      .references(() => treasuryRuns.treasuryRunId),
+    actionType: text('action_type').notNull(),
+    status: text('status').notNull().default('recommended'),
+    venueId: text('venue_id'),
+    venueName: text('venue_name'),
+    venueMode: text('venue_mode').notNull().default('simulated'),
+    amountUsd: text('amount_usd').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    summary: text('summary').notNull(),
+    details: jsonb('details').notNull().default({}),
+    readiness: text('readiness').notNull().default('blocked'),
+    executable: boolean('executable').notNull().default(false),
+    blockedReasons: jsonb('blocked_reasons').notNull().default([]),
+    approvalRequirement: text('approval_requirement').notNull().default('operator'),
+    executionMode: text('execution_mode').notNull().default('dry-run'),
+    simulated: boolean('simulated').notNull().default(true),
+    executionPlan: jsonb('execution_plan').notNull().default({}),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    executionRequestedBy: text('execution_requested_by'),
+    executionRequestedAt: timestamp('execution_requested_at', { withTimezone: true }),
+    queuedAt: timestamp('queued_at', { withTimezone: true }),
+    executingAt: timestamp('executing_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    linkedCommandId: text('linked_command_id'),
+    latestExecutionId: text('latest_execution_id'),
+    lastError: text('last_error'),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    treasuryRunIdIdx: index('treasury_actions_treasury_run_id_idx').on(t.treasuryRunId),
+    venueIdIdx: index('treasury_actions_venue_id_idx').on(t.venueId),
+    statusIdx: index('treasury_actions_status_idx').on(t.status),
+    createdAtIdx: index('treasury_actions_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const treasuryActionExecutions = pgTable(
+  'treasury_action_executions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    treasuryActionId: uuid('treasury_action_id')
+      .notNull()
+      .references(() => treasuryActions.id),
+    treasuryRunId: text('treasury_run_id')
+      .notNull()
+      .references(() => treasuryRuns.treasuryRunId),
+    commandId: text('command_id'),
+    status: text('status').notNull(),
+    executionMode: text('execution_mode').notNull(),
+    venueMode: text('venue_mode').notNull(),
+    simulated: boolean('simulated').notNull().default(true),
+    requestedBy: text('requested_by').notNull(),
+    startedBy: text('started_by'),
+    blockedReasons: jsonb('blocked_reasons').notNull().default([]),
+    outcomeSummary: text('outcome_summary'),
+    outcome: jsonb('outcome').notNull().default({}),
+    venueExecutionReference: text('venue_execution_reference'),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    treasuryActionIdIdx: index('treasury_action_executions_action_id_idx').on(t.treasuryActionId),
+    treasuryRunIdIdx: index('treasury_action_executions_run_id_idx').on(t.treasuryRunId),
+    commandIdIdx: index('treasury_action_executions_command_id_idx').on(t.commandId),
+    statusIdx: index('treasury_action_executions_status_idx').on(t.status),
+    createdAtIdx: index('treasury_action_executions_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const treasuryCurrent = pgTable('treasury_current', {
+  id: text('id').primaryKey(),
+  latestTreasuryRunId: text('latest_treasury_run_id')
+    .notNull()
+    .references(() => treasuryRuns.treasuryRunId),
+  cashBalanceUsd: text('cash_balance_usd').notNull().default('0'),
+  policy: jsonb('policy').notNull(),
+  summary: jsonb('summary').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const runtimeCommands = pgTable(
   'runtime_commands',
   {

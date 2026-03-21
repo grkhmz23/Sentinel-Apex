@@ -47,9 +47,26 @@ import type {
   RuntimeRemediationActionType,
   RuntimeRecoveryEventView,
   RuntimeStatusView,
+  TreasuryActionDetailView,
+  TreasuryActionView,
+  TreasuryAllocationView,
+  TreasuryExecutionView,
+  TreasuryPolicyView,
+  TreasurySummaryView,
   RuntimeVerificationOutcome,
   WorkerStatusView,
 } from './types.js';
+
+function canSatisfyTreasuryApproval(
+  actorRole: 'viewer' | 'operator' | 'admin',
+  requiredRole: 'operator' | 'admin',
+): boolean {
+  if (requiredRole === 'operator') {
+    return actorRole === 'operator' || actorRole === 'admin';
+  }
+
+  return actorRole === 'admin';
+}
 
 export class RuntimeControlPlane implements RuntimeReadApi {
   constructor(
@@ -122,7 +139,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
   }
 
   async getRuntimeOverview(): Promise<RuntimeOverviewView> {
-    const [runtime, worker, openMismatchCount, mismatchSummary, lastRecoveryEvent, latestReconciliationRun, reconciliationSummary] = await Promise.all([
+    const [runtime, worker, openMismatchCount, mismatchSummary, lastRecoveryEvent, latestReconciliationRun, reconciliationSummary, treasurySummary] = await Promise.all([
       this.store.getRuntimeStatus(),
       this.store.getWorkerStatus(),
       this.store.countOpenMismatches(),
@@ -130,6 +147,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       this.store.getLatestRecoveryEvent(),
       this.store.getLatestReconciliationRun(),
       this.store.summarizeLatestReconciliation(),
+      this.store.getTreasurySummary(),
     ]);
 
     const degradedReasons = [
@@ -148,6 +166,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       lastRecoveryEvent,
       latestReconciliationRun,
       reconciliationSummary,
+      treasurySummary,
     };
   }
 
@@ -235,6 +254,127 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     payload: Record<string, unknown> = {},
   ): Promise<RuntimeCommandView> {
     return this.enqueueCommand('run_reconciliation', requestedBy, payload);
+  }
+
+  async enqueueTreasuryEvaluation(
+    requestedBy: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<RuntimeCommandView> {
+    return this.enqueueCommand('run_treasury_evaluation', requestedBy, payload);
+  }
+
+  async getTreasurySummary(): Promise<TreasurySummaryView | null> {
+    return this.store.getTreasurySummary();
+  }
+
+  async listTreasuryAllocations(limit = 50): Promise<TreasuryAllocationView[]> {
+    return this.store.listTreasuryAllocations(limit);
+  }
+
+  async getTreasuryPolicy(): Promise<TreasuryPolicyView | null> {
+    return this.store.getTreasuryPolicy();
+  }
+
+  async listTreasuryActions(limit = 50): Promise<TreasuryActionView[]> {
+    return this.store.listTreasuryActions(limit);
+  }
+
+  async getTreasuryAction(actionId: string): Promise<TreasuryActionDetailView | null> {
+    return this.store.getTreasuryAction(actionId);
+  }
+
+  async listTreasuryExecutions(limit = 50): Promise<TreasuryExecutionView[]> {
+    return this.store.listTreasuryExecutions(limit);
+  }
+
+  async getTreasuryExecution(executionId: string): Promise<TreasuryExecutionView | null> {
+    return this.store.getTreasuryExecution(executionId);
+  }
+
+  async approveTreasuryAction(
+    actionId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+  ): Promise<TreasuryActionView | null> {
+    const detail = await this.store.getTreasuryAction(actionId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (!detail.action.executable || detail.action.readiness === 'blocked') {
+      throw new Error('Treasury action is blocked and cannot be approved.');
+    }
+
+    if (!canSatisfyTreasuryApproval(actorRole, detail.action.approvalRequirement)) {
+      throw new Error(
+        `Treasury action requires ${detail.action.approvalRequirement} approval.`,
+      );
+    }
+
+    const approved = await this.store.approveTreasuryAction(actionId, actorId);
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'treasury.action_approved',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'treasury',
+      data: {
+        treasuryActionId: actionId,
+        approvalRequirement: detail.action.approvalRequirement,
+      },
+    });
+
+    return approved;
+  }
+
+  async enqueueTreasuryActionExecution(
+    actionId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+  ): Promise<RuntimeCommandView | null> {
+    const detail = await this.store.getTreasuryAction(actionId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (detail.action.readiness === 'blocked' || !detail.action.executable) {
+      throw new Error('Treasury action is blocked and cannot be executed.');
+    }
+
+    if (detail.action.status !== 'approved') {
+      throw new Error('Treasury action must be approved before execution.');
+    }
+
+    if (!canSatisfyTreasuryApproval(actorRole, detail.action.approvalRequirement)) {
+      throw new Error(
+        `Treasury action requires ${detail.action.approvalRequirement} approval.`,
+      );
+    }
+
+    const command = await this.enqueueCommand('execute_treasury_action', actorId, {
+      treasuryActionId: actionId,
+      actorId,
+    });
+    await this.store.queueTreasuryActionExecution({
+      actionId,
+      commandId: command.commandId,
+      actorId,
+    });
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'treasury.action_execution_queued',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'treasury',
+      data: {
+        treasuryActionId: actionId,
+        commandId: command.commandId,
+      },
+    });
+
+    return command;
   }
 
   async listReconciliationRuns(limit = 50): Promise<RuntimeReconciliationRunView[]> {

@@ -7,7 +7,29 @@ import type {
   RuntimeReconciliationRunView,
   RuntimeReconciliationSummaryView,
   RuntimeRecoveryEventView,
+  TreasuryExecutionView,
+  TreasuryActionView,
+  TreasuryAllocationView,
+  TreasuryPolicyView,
+  TreasurySummaryView,
 } from '@sentinel-apex/runtime';
+
+import type { DashboardSession } from '../lib/operator-session';
+
+export function createDashboardSession(overrides: Partial<DashboardSession> = {}): DashboardSession {
+  return {
+    sessionId: 'session-1',
+    expiresAt: '2026-03-20T18:00:00.000Z',
+    operator: {
+      operatorId: 'ops-user',
+      email: 'ops@example.com',
+      displayName: 'Ops User',
+      role: 'operator',
+      active: true,
+    },
+    ...overrides,
+  };
+}
 
 export function createOverview(): RuntimeOverviewView {
   return {
@@ -66,6 +88,7 @@ export function createOverview(): RuntimeOverviewView {
     lastRecoveryEvent: createRecoveryEvent(),
     latestReconciliationRun: createReconciliationRun(),
     reconciliationSummary: createReconciliationSummary(),
+    treasurySummary: createTreasurySummary(),
   };
 }
 
@@ -238,6 +261,136 @@ export function createMismatchDetail(
     recommendedRemediationTypes: ['rebuild_projections', 'run_cycle'],
     isActionable: true,
     remediationInFlight: false,
+    ...overrides,
+  };
+}
+
+export function createTreasurySummary(
+  overrides: Partial<TreasurySummaryView> = {},
+): TreasurySummaryView {
+  return {
+    treasuryRunId: 'treasury-run-1',
+    sourceRunId: 'run-1',
+    sleeveId: 'treasury',
+    simulated: true,
+    policy: {
+      sleeveId: 'treasury',
+      reserveFloorPct: 10,
+      minReserveUsd: '10000',
+      minimumRemainingIdleUsd: '10000',
+      maxAllocationPctPerVenue: 50,
+      minimumDeployableUsd: '2500',
+      eligibleVenues: ['atlas-t0-sim', 'atlas-t1-sim'],
+    },
+    reserveStatus: {
+      totalCapitalUsd: '125000',
+      idleCapitalUsd: '25000',
+      allocatedCapitalUsd: '100000',
+      requiredReserveUsd: '12500',
+      currentReserveUsd: '25000',
+      reserveCoveragePct: '200.00',
+      surplusCapitalUsd: '12500',
+      reserveShortfallUsd: '0.00',
+    },
+    actionCount: 2,
+    alerts: [],
+    concentrationLimitBreached: false,
+    evaluatedAt: '2026-03-20T12:01:00.000Z',
+    updatedAt: '2026-03-20T12:01:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createTreasuryAllocation(
+  overrides: Partial<TreasuryAllocationView> = {},
+): TreasuryAllocationView {
+  return {
+    treasuryRunId: 'treasury-run-1',
+    venueId: 'atlas-t0-sim',
+    venueName: 'Atlas Treasury T0',
+    venueMode: 'simulated',
+    liquidityTier: 'instant',
+    healthy: true,
+    aprBps: 385,
+    currentAllocationUsd: '50000',
+    withdrawalAvailableUsd: '50000',
+    availableCapacityUsd: '250000',
+    concentrationPct: '40.00',
+    updatedAt: '2026-03-20T12:01:00.000Z',
+    metadata: {},
+    ...overrides,
+  };
+}
+
+export function createTreasuryPolicy(
+  overrides: Partial<TreasuryPolicyView> = {},
+): TreasuryPolicyView {
+  return {
+    treasuryRunId: 'treasury-run-1',
+    policy: createTreasurySummary().policy,
+    updatedAt: '2026-03-20T12:01:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createTreasuryAction(
+  overrides: Partial<TreasuryActionView> = {},
+): TreasuryActionView {
+  return {
+    id: 'treasury-action-1',
+    treasuryRunId: 'treasury-run-1',
+    actionType: 'allocate_to_venue',
+    status: 'recommended',
+    readiness: 'actionable',
+    executable: true,
+    blockedReasons: [],
+    approvalRequirement: 'operator',
+    venueId: 'atlas-t1-sim',
+    venueName: 'Atlas Treasury T1',
+    venueMode: 'simulated',
+    amountUsd: '12500',
+    reasonCode: 'surplus_deployable',
+    summary: 'Deploy surplus capital into Atlas Treasury T1.',
+    details: {},
+    actorId: 'ops-user',
+    approvedBy: null,
+    approvedAt: null,
+    executionRequestedBy: null,
+    executionRequestedAt: null,
+    linkedCommandId: null,
+    latestExecutionId: null,
+    simulated: true,
+    executionMode: 'dry-run',
+    lastError: null,
+    createdAt: '2026-03-20T12:01:00.000Z',
+    updatedAt: '2026-03-20T12:01:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createTreasuryExecution(
+  overrides: Partial<TreasuryExecutionView> = {},
+): TreasuryExecutionView {
+  return {
+    id: 'treasury-execution-1',
+    treasuryActionId: 'treasury-action-1',
+    treasuryRunId: 'treasury-run-1',
+    commandId: 'command-1',
+    status: 'completed',
+    executionMode: 'dry-run',
+    venueMode: 'simulated',
+    simulated: true,
+    requestedBy: 'ops-user',
+    startedBy: 'runtime-worker-1',
+    blockedReasons: [],
+    outcomeSummary: 'Simulated allocation completed.',
+    outcome: {},
+    venueExecutionReference: 'atlas-t1-sim-treasury-1',
+    lastError: null,
+    createdAt: '2026-03-20T12:02:00.000Z',
+    startedAt: '2026-03-20T12:02:01.000Z',
+    completedAt: '2026-03-20T12:02:02.000Z',
+    updatedAt: '2026-03-20T12:02:02.000Z',
     ...overrides,
   };
 }

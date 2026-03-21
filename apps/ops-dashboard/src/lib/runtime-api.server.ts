@@ -7,6 +7,11 @@ import type {
   RuntimeReconciliationRunView,
   RuntimeReconciliationSummaryView,
   RuntimeRecoveryEventView,
+  TreasuryExecutionView,
+  TreasuryActionView,
+  TreasuryAllocationView,
+  TreasuryPolicyView,
+  TreasurySummaryView,
 } from '@sentinel-apex/runtime';
 
 import { getDashboardApiBaseUrl, getDashboardApiKey } from './env.server';
@@ -19,15 +24,42 @@ import type {
   OverviewPageData,
   ReconciliationFilters,
   ReconciliationPageData,
+  TreasuryPageData,
 } from './types';
 
 const API_PREFIX = '/api/v1/runtime';
+const TREASURY_API_PREFIX = '/api/v1/treasury';
 
 async function fetchRuntimeApi<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
   const response = await fetch(`${getDashboardApiBaseUrl()}${API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Runtime API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+async function fetchTreasuryApi<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${TREASURY_API_PREFIX}${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
@@ -111,6 +143,26 @@ export async function getReconciliationSummary(): Promise<RuntimeReconciliationS
   return fetchRuntimeApi<RuntimeReconciliationSummaryView | null>('/reconciliation/summary');
 }
 
+export async function getTreasurySummary(): Promise<TreasurySummaryView | null> {
+  return fetchTreasuryApi<TreasurySummaryView | null>('/summary');
+}
+
+export async function listTreasuryAllocations(limit = 20): Promise<TreasuryAllocationView[]> {
+  return fetchTreasuryApi<TreasuryAllocationView[]>(`/allocations${buildSearchParams({ limit })}`);
+}
+
+export async function getTreasuryPolicy(): Promise<TreasuryPolicyView | null> {
+  return fetchTreasuryApi<TreasuryPolicyView | null>('/policy');
+}
+
+export async function listTreasuryActions(limit = 20): Promise<TreasuryActionView[]> {
+  return fetchTreasuryApi<TreasuryActionView[]>(`/actions${buildSearchParams({ limit })}`);
+}
+
+export async function listTreasuryExecutions(limit = 20): Promise<TreasuryExecutionView[]> {
+  return fetchTreasuryApi<TreasuryExecutionView[]>(`/executions${buildSearchParams({ limit })}`);
+}
+
 export async function loadOverviewPageData(): Promise<DashboardPageState<OverviewPageData>> {
   try {
     const [overview, mismatches, commands, recoveryOutcomes, reconciliationRuns, activeFindings] =
@@ -138,6 +190,34 @@ export async function loadOverviewPageData(): Promise<DashboardPageState<Overvie
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load overview data.',
+    };
+  }
+}
+
+export async function loadTreasuryPageData(): Promise<DashboardPageState<TreasuryPageData>> {
+  try {
+    const [summary, allocations, policy, actions, executions] = await Promise.all([
+      getTreasurySummary(),
+      listTreasuryAllocations(20),
+      getTreasuryPolicy(),
+      listTreasuryActions(20),
+      listTreasuryExecutions(20),
+    ]);
+
+    return {
+      data: {
+        summary,
+        allocations,
+        policy,
+        actions,
+        executions,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load treasury data.',
     };
   }
 }

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
+import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createDatabaseConnection } from '@sentinel-apex/db';
+import { createDatabaseConnection, treasuryActions } from '@sentinel-apex/db';
 
 import { RuntimeControlPlane } from '../control-plane.js';
 import { RuntimeWorker } from '../worker.js';
@@ -60,11 +61,20 @@ describe('RuntimeWorker', () => {
       (status) => status.lastRunStatus === 'completed',
     );
     const workerStatus = await controlPlane.getWorkerStatus();
+    const treasurySummary = await waitFor(
+      () => controlPlane.getTreasurySummary(),
+      (summary): summary is Exclude<typeof summary, null> => summary !== null,
+    );
+    if (treasurySummary === null) {
+      throw new Error('Expected treasury summary to be present');
+    }
 
     expect(runtimeStatus.lastRunId).toBeTruthy();
     expect(workerStatus.lifecycleState).toMatch(/ready|degraded/);
     expect(workerStatus.lastHeartbeatAt).toBeTruthy();
     expect(workerStatus.lastSuccessAt).toBeTruthy();
+    expect(treasurySummary.sleeveId).toBe('treasury');
+    expect(treasurySummary.actionCount).toBeGreaterThanOrEqual(0);
   }, 90_000);
 
   it('processes commands serially, persists failures as mismatches, and records recovery history', async () => {
@@ -311,6 +321,156 @@ describe('RuntimeWorker', () => {
     expect(detail?.remediationHistory).toHaveLength(1);
     expect(detail?.remediationHistory[0]?.command?.commandId).toBe(remediation.commandId);
     expect(detail?.recoveryEvents.some((event) => event.eventType === 'mismatch_remediation_requested')).toBe(true);
+  });
+
+  it('processes explicit treasury evaluation commands and persists treasury read models', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const command = await controlPlane.enqueueTreasuryEvaluation('vitest');
+    const completedCommand = await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+    const treasurySummary = await waitFor(
+      () => controlPlane.getTreasurySummary(),
+      (summary): summary is Exclude<typeof summary, null> => summary !== null,
+    );
+    if (completedCommand === null || treasurySummary === null) {
+      throw new Error('Expected treasury command and summary to be present');
+    }
+    const allocations = await controlPlane.listTreasuryAllocations(10);
+    const actions = await controlPlane.listTreasuryActions(10);
+
+    expect(completedCommand.result['treasuryRunId']).toBe(treasurySummary.treasuryRunId);
+    expect(allocations.length).toBeGreaterThan(0);
+    expect(actions.length).toBeGreaterThan(0);
+    expect(treasurySummary.reserveStatus.requiredReserveUsd).not.toBe('0.00');
+  });
+
+  it('approves and executes treasury actions with durable execution history', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const evaluationCommand = await controlPlane.enqueueTreasuryEvaluation('vitest');
+    await waitFor(
+      async () => controlPlane.getCommand(evaluationCommand.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const action = await waitFor(
+      async () => {
+        const actions = await controlPlane.listTreasuryActions(20);
+        return actions.find((item) => item.executable) ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (action === null) {
+      throw new Error('Expected actionable treasury action.');
+    }
+
+    const approved = await controlPlane.approveTreasuryAction(action.id, 'vitest', 'operator');
+    expect(approved?.status).toBe('approved');
+
+    const command = await controlPlane.enqueueTreasuryActionExecution(action.id, 'vitest', 'operator');
+    if (command === null) {
+      throw new Error('Expected treasury execution command to be queued.');
+    }
+
+    const completedCommand = await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+    const detail = await waitFor(
+      () => controlPlane.getTreasuryAction(action.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.action.status === 'completed',
+    );
+    const executions = await controlPlane.listTreasuryExecutions(10);
+
+    expect(completedCommand?.result['treasuryExecutionId']).toBeTruthy();
+    expect(detail?.executions[0]?.status).toBe('completed');
+    expect(detail?.executions[0]?.venueExecutionReference).toBeTruthy();
+    expect(executions.some((execution) => execution.treasuryActionId === action.id)).toBe(true);
+  });
+
+  it('persists blocked treasury execution attempts with durable reasons', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+    const connection = await createDatabaseConnection(connectionString);
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const evaluationCommand = await controlPlane.enqueueTreasuryEvaluation('vitest');
+    await waitFor(
+      async () => controlPlane.getCommand(evaluationCommand.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const action = await waitFor(
+      async () => {
+        const actions = await controlPlane.listTreasuryActions(20);
+        return actions.find((item) => item.executable) ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (action === null) {
+      throw new Error('Expected actionable treasury action.');
+    }
+
+    await controlPlane.approveTreasuryAction(action.id, 'vitest', 'operator');
+    await connection.db
+      .update(treasuryActions)
+      .set({
+        amountUsd: '999999.99',
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryActions.id, action.id));
+
+    const command = await controlPlane.enqueueTreasuryActionExecution(action.id, 'vitest', 'operator');
+    if (command === null) {
+      throw new Error('Expected treasury execution command to be queued.');
+    }
+
+    const failedCommand = await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'failed',
+    );
+    const detail = await waitFor(
+      () => controlPlane.getTreasuryAction(action.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.action.status === 'failed',
+    );
+
+    expect(failedCommand?.errorMessage).toBeTruthy();
+    expect(detail?.executions[0]?.status).toBe('failed');
+    expect(detail?.executions[0]?.blockedReasons.length).toBeGreaterThan(0);
   });
 
   it('rejects duplicate in-flight remediation and reopens the mismatch when a remediation command fails', async () => {

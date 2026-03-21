@@ -412,6 +412,95 @@ export class RuntimeWorker {
         return;
       }
 
+      if (command.commandType === 'run_treasury_evaluation') {
+        const treasurySummary = await this.runtime.runTreasuryEvaluation({
+          actorId: typeof command.payload['actorId'] === 'string'
+            ? String(command.payload['actorId'])
+            : command.requestedBy,
+          sourceRunId: typeof command.payload['sourceRunId'] === 'string'
+            ? String(command.payload['sourceRunId'])
+            : null,
+        });
+
+        await this.store.completeRuntimeCommand(command.commandId, {
+          treasuryRunId: treasurySummary.treasuryRunId,
+          actionCount: treasurySummary.actionCount,
+          simulated: treasurySummary.simulated,
+          reserveShortfallUsd: treasurySummary.reserveStatus.reserveShortfallUsd,
+          surplusCapitalUsd: treasurySummary.reserveStatus.surplusCapitalUsd,
+        });
+        await this.store.updateWorkerStatus({
+          schedulerState: 'waiting',
+          currentOperation: null,
+          currentCommandId: null,
+          lastSuccessAt: new Date(),
+          lastFailureAt: null,
+          lastFailureReason: null,
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
+          commandId: command.commandId,
+          eventType: 'runtime_command_completed',
+          status: 'completed',
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message: 'Treasury evaluation command completed.',
+          details: {
+            treasuryRunId: treasurySummary.treasuryRunId,
+            actionCount: treasurySummary.actionCount,
+          },
+        });
+        return;
+      }
+
+      if (command.commandType === 'execute_treasury_action') {
+        const treasuryActionId = typeof command.payload['treasuryActionId'] === 'string'
+          ? String(command.payload['treasuryActionId'])
+          : null;
+        if (treasuryActionId === null) {
+          throw new Error('Treasury action execution command is missing treasuryActionId.');
+        }
+
+        const outcome = await this.runtime.executeTreasuryAction({
+          actionId: treasuryActionId,
+          actorId: typeof command.payload['actorId'] === 'string'
+            ? String(command.payload['actorId'])
+            : command.requestedBy,
+          commandId: command.commandId,
+          startedBy: this.workerId,
+        });
+
+        await this.store.completeRuntimeCommand(command.commandId, {
+          treasuryActionId: outcome.actionId,
+          treasuryExecutionId: outcome.executionId,
+          treasuryRunId: outcome.treasuryRunId,
+          venueExecutionReference: outcome.venueExecutionReference,
+          simulated: outcome.simulated,
+        });
+        await this.store.updateWorkerStatus({
+          schedulerState: 'waiting',
+          currentOperation: null,
+          currentCommandId: null,
+          lastSuccessAt: new Date(),
+          lastFailureAt: null,
+          lastFailureReason: null,
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
+          commandId: command.commandId,
+          eventType: 'runtime_command_completed',
+          status: 'completed',
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message: 'Treasury action execution completed.',
+          details: {
+            treasuryActionId: outcome.actionId,
+            treasuryExecutionId: outcome.executionId,
+          },
+        });
+        return;
+      }
+
       const status = await this.runtime.rebuildProjections('runtime-worker-command');
       await this.store.completeRuntimeCommand(command.commandId, {
         projectionStatus: status.projectionStatus,

@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 
+import {
+  buildOperatorProxyHeaders,
+  getDashboardSession,
+} from '../../../../src/lib/auth.server';
 import { getDashboardApiBaseUrl, getDashboardApiKey } from '../../../../src/lib/env.server';
 
 import type { NextRequest } from 'next/server';
@@ -16,12 +20,24 @@ async function proxyRequest(
   request: NextRequest,
   path: string[],
 ): Promise<NextResponse> {
+  const session = await getDashboardSession();
+  if (session === null) {
+    return NextResponse.json({
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Operator session is required.',
+      },
+    }, { status: 401 });
+  }
+
   const body = request.method === 'GET' ? null : await request.text();
+  const apiPath = `/api/v1/runtime/${path.join('/')}`;
   const response = await fetch(buildTargetUrl(request, path), {
     method: request.method,
     headers: {
       'content-type': 'application/json',
       'x-api-key': getDashboardApiKey(),
+      ...buildOperatorProxyHeaders(session, request.method, apiPath),
     },
     ...(body !== null ? { body } : {}),
     cache: 'no-store',

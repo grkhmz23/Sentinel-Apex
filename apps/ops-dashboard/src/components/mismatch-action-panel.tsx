@@ -23,7 +23,7 @@ export function MismatchActionPanel(
   { detail }: { detail: RuntimeMismatchDetailView },
 ): JSX.Element {
   const router = useRouter();
-  const { actorId } = useOperator();
+  const { canOperate, session } = useOperator();
   const [summary, setSummary] = useState('');
   const [verificationOutcome, setVerificationOutcome] = useState<'verified' | 'failed'>('verified');
   const [remediationType, setRemediationType] = useState<RuntimeRemediationActionType>(
@@ -48,7 +48,6 @@ export function MismatchActionPanel(
 
     try {
       await postMismatchAction(detail.mismatch.id, action, {
-        actorId,
         summary,
         verificationOutcome,
         remediationType,
@@ -66,8 +65,7 @@ export function MismatchActionPanel(
   }
 
   const status = detail.mismatch.status;
-  const actorMissing = actorId.trim() === '';
-  const controlsDisabled = pendingAction !== null || actorMissing;
+  const controlsDisabled = pendingAction !== null || !canOperate;
 
   return (
     <div className="action-panel">
@@ -160,7 +158,11 @@ export function MismatchActionPanel(
 
       {feedback.error !== null ? <p className="feedback feedback--error">{feedback.error}</p> : null}
       {feedback.success !== null ? <p className="feedback feedback--success">{feedback.success}</p> : null}
-      {actorMissing ? <p className="feedback feedback--warning">Set an operator ID before running actions.</p> : null}
+      {!canOperate ? (
+        <p className="feedback feedback--warning">
+          {session.operator.displayName} does not have permission to run mismatch actions.
+        </p>
+      ) : null}
     </div>
   );
 }

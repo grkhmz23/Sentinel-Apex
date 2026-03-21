@@ -1,8 +1,5 @@
 import './globals.css';
 
-import { AppShell } from '../src/components/app-shell';
-import { getDefaultActor } from '../src/lib/env.server';
-
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -15,11 +12,7 @@ export default function RootLayout(
 ): JSX.Element {
   return (
     <html lang="en">
-      <body>
-        <AppShell defaultActorId={getDefaultActor()}>
-          {children}
-        </AppShell>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

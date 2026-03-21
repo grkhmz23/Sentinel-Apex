@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MismatchActionPanel } from './mismatch-action-panel';
 import { OperatorProvider } from './operator-context';
-import { createMismatchDetail } from '../test/fixtures';
+import { createDashboardSession, createMismatchDetail } from '../test/fixtures';
 
 const {
   refresh,
@@ -31,7 +31,7 @@ describe('MismatchActionPanel', () => {
     postMismatchAction.mockResolvedValueOnce({});
 
     render(
-      <OperatorProvider defaultActorId="ops-user">
+      <OperatorProvider session={createDashboardSession()}>
         <MismatchActionPanel detail={createMismatchDetail()} />
       </OperatorProvider>,
     );
@@ -49,7 +49,6 @@ describe('MismatchActionPanel', () => {
         'mismatch-1',
         'remediate',
         expect.objectContaining({
-          actorId: 'ops-user',
           summary: 'Projection drift confirmed by operator.',
           remediationType: 'run_cycle',
         }),
@@ -67,7 +66,7 @@ describe('MismatchActionPanel', () => {
     );
 
     render(
-      <OperatorProvider defaultActorId="ops-user">
+      <OperatorProvider session={createDashboardSession()}>
         <MismatchActionPanel detail={createMismatchDetail()} />
       </OperatorProvider>,
     );
@@ -83,5 +82,23 @@ describe('MismatchActionPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('Action "acknowledge" completed.')).toBeInTheDocument();
     });
+  });
+
+  it('renders read-only gating for viewer sessions', () => {
+    const session = createDashboardSession({
+      operator: {
+        ...createDashboardSession().operator,
+        role: 'viewer',
+      },
+    });
+
+    render(
+      <OperatorProvider session={session}>
+        <MismatchActionPanel detail={createMismatchDetail()} />
+      </OperatorProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Acknowledge' })).toBeDisabled();
+    expect(screen.getByText('Ops User does not have permission to run mismatch actions.')).toBeInTheDocument();
   });
 });

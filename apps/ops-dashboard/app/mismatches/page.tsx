@@ -5,10 +5,12 @@ import type {
   RuntimeMismatchStatus,
 } from '@sentinel-apex/runtime';
 
+import { AppShell } from '../../src/components/app-shell';
 import { EmptyState } from '../../src/components/empty-state';
 import { ErrorState } from '../../src/components/error-state';
 import { Panel } from '../../src/components/panel';
 import { StatusBadge } from '../../src/components/status-badge';
+import { requireDashboardSession } from '../../src/lib/auth.server';
 import { formatDateTime } from '../../src/lib/format';
 import { listMismatches } from '../../src/lib/runtime-api.server';
 
@@ -35,13 +37,15 @@ function readFilters(
 export default async function MismatchesPage(
   { searchParams }: { searchParams: Record<string, string | string[] | undefined> },
 ): Promise<JSX.Element> {
+  const session = await requireDashboardSession('/mismatches');
   const filters = readFilters(searchParams);
 
   try {
     const mismatches = await listMismatches({ ...filters, limit: 100 });
 
     return (
-      <div className="page">
+      <AppShell session={session}>
+        <div className="page">
         <header className="page__header">
           <div>
             <p className="eyebrow">Mismatches</p>
@@ -101,9 +105,14 @@ export default async function MismatchesPage(
             </table>
           )}
         </Panel>
-      </div>
+        </div>
+      </AppShell>
     );
   } catch (error) {
-    return <ErrorState message={error instanceof Error ? error.message : 'Failed to load mismatches.'} title="Mismatches unavailable" />;
+    return (
+      <AppShell session={session}>
+        <ErrorState message={error instanceof Error ? error.message : 'Failed to load mismatches.'} title="Mismatches unavailable" />
+      </AppShell>
+    );
   }
 }

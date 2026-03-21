@@ -17,6 +17,7 @@
     "@sentinel-apex/observability": "workspace:*",
     "@sentinel-apex/db": "workspace:*",
     "@sentinel-apex/risk-engine": "workspace:*",
+    "@sentinel-apex/shared": "workspace:*",
     "fastify": "^4.27.0",
     "@fastify/auth": "^4.6.1",
     "@fastify/cors": "^9.0.1",

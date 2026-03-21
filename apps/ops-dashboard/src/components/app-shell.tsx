@@ -3,18 +3,21 @@ import Link from 'next/link';
 import { OperatorProvider } from './operator-context';
 import { OperatorSettings } from './operator-settings';
 
+import type { DashboardSession } from '../lib/operator-session';
+
 const navigation = [
   { href: '/', label: 'Overview' },
   { href: '/mismatches', label: 'Mismatches' },
   { href: '/reconciliation', label: 'Reconciliation' },
+  { href: '/treasury', label: 'Treasury' },
   { href: '/operations', label: 'Operations' },
 ];
 
 export function AppShell(
-  { children, defaultActorId }: { children: React.ReactNode; defaultActorId: string },
+  { children, session }: { children: React.ReactNode; session: DashboardSession },
 ): JSX.Element {
   return (
-    <OperatorProvider defaultActorId={defaultActorId}>
+    <OperatorProvider session={session}>
       <div className="app-shell">
         <aside className="sidebar">
           <div className="sidebar__brand">

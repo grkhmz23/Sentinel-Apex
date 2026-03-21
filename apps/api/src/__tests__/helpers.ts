@@ -9,6 +9,7 @@ import {
   type RuntimeMismatchStatus,
   type RuntimeReconciliationRunView,
 } from '@sentinel-apex/runtime';
+import { createSignedOperatorHeaders, type OpsOperatorRole } from '@sentinel-apex/shared';
 
 export async function createApiHarness(
   runtimeOverrides: DeterministicRuntimeScenario = {},
@@ -131,4 +132,29 @@ export async function waitForReconciliationRun(
   }
 
   throw new Error(`Timed out waiting for reconciliation run ${reconciliationRunId}`);
+}
+
+export function createOperatorHeaders(input: {
+  role: OpsOperatorRole;
+  operatorId?: string;
+  sessionId?: string;
+  method: string;
+  path: string;
+  apiKey: string;
+  sharedSecret: string;
+}): Record<string, string> {
+  const signed = createSignedOperatorHeaders({
+    operatorId: input.operatorId ?? `${input.role}-user`,
+    role: input.role,
+    sessionId: input.sessionId ?? `session-${input.role}`,
+  }, input.sharedSecret, input.method, input.path);
+
+  return {
+    'x-api-key': input.apiKey,
+    'x-sentinel-operator-id': signed.operatorId,
+    'x-sentinel-operator-role': signed.role,
+    'x-sentinel-operator-session-id': signed.sessionId,
+    'x-sentinel-operator-issued-at': signed.issuedAt,
+    'x-sentinel-operator-signature': signed.signature,
+  };
 }

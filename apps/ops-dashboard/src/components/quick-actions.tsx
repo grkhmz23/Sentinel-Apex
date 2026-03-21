@@ -14,7 +14,7 @@ interface MutationState {
 
 export function QuickActions(): JSX.Element {
   const router = useRouter();
-  const { actorId } = useOperator();
+  const { canOperate } = useOperator();
   const [state, setState] = useState<MutationState>({
     name: null,
     error: null,
@@ -45,7 +45,7 @@ export function QuickActions(): JSX.Element {
     }
   }
 
-  const disabled = state.name !== null || actorId.trim() === '';
+  const disabled = state.name !== null || !canOperate;
 
   return (
     <div className="button-row">
@@ -80,7 +80,7 @@ export function QuickActions(): JSX.Element {
         disabled={disabled}
         onClick={() => void runAction(
           'run_reconciliation',
-          async () => triggerReconciliation(actorId),
+          async () => triggerReconciliation(),
           'Run reconciliation against current persisted and adapter state?',
           'Reconciliation queued.',
         )}
@@ -90,6 +90,7 @@ export function QuickActions(): JSX.Element {
       </button>
       {state.error !== null ? <p className="feedback feedback--error">{state.error}</p> : null}
       {state.success !== null ? <p className="feedback feedback--success">{state.success}</p> : null}
+      {!canOperate ? <p className="feedback feedback--warning">Your role is read-only for runtime actions.</p> : null}
     </div>
   );
 }

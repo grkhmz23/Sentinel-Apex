@@ -1,24 +1,32 @@
+import { AppShell } from '../../src/components/app-shell';
 import { EmptyState } from '../../src/components/empty-state';
 import { ErrorState } from '../../src/components/error-state';
 import { JsonBlock } from '../../src/components/json-block';
 import { Panel } from '../../src/components/panel';
 import { StatusBadge } from '../../src/components/status-badge';
+import { requireDashboardSession } from '../../src/lib/auth.server';
 import { formatDateTime } from '../../src/lib/format';
 import { loadOperationsPageData } from '../../src/lib/runtime-api.server';
 
 export const dynamic = 'force-dynamic';
 
 export default async function OperationsPage(): Promise<JSX.Element> {
+  const session = await requireDashboardSession('/operations');
   const state = await loadOperationsPageData();
 
   if (state.error !== null || state.data === null) {
-    return <ErrorState message={state.error ?? 'Failed to load operations data.'} title="Operations unavailable" />;
+    return (
+      <AppShell session={session}>
+        <ErrorState message={state.error ?? 'Failed to load operations data.'} title="Operations unavailable" />
+      </AppShell>
+    );
   }
 
   const { commands, recoveryEvents, recoveryOutcomes } = state.data;
 
   return (
-    <div className="page">
+    <AppShell session={session}>
+      <div className="page">
       <header className="page__header">
         <div>
           <p className="eyebrow">Operations</p>
@@ -113,6 +121,7 @@ export default async function OperationsPage(): Promise<JSX.Element> {
           </table>
         )}
       </Panel>
-    </div>
+      </div>
+    </AppShell>
   );
 }

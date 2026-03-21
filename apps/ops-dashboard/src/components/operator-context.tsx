@@ -1,38 +1,28 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext } from 'react';
+
+import type { DashboardSession } from '../lib/operator-session';
 
 interface OperatorContextValue {
-  actorId: string;
-  setActorId: (value: string) => void;
+  session: DashboardSession;
+  canOperate: boolean;
+  isAdmin: boolean;
 }
 
 const OperatorContext = createContext<OperatorContextValue | null>(null);
 
-const STORAGE_KEY = 'sentinel-apex.ops-dashboard.actor-id';
-
 export function OperatorProvider(
-  { children, defaultActorId }: { children: React.ReactNode; defaultActorId: string },
+  { children, session }: { children: React.ReactNode; session: DashboardSession },
 ): JSX.Element {
-  const [actorId, setActorIdState] = useState(defaultActorId);
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored !== null && stored.trim() !== '') {
-      setActorIdState(stored);
-    }
-  }, []);
-
-  const value = useMemo<OperatorContextValue>(() => ({
-    actorId,
-    setActorId: (nextValue: string) => {
-      setActorIdState(nextValue);
-      window.localStorage.setItem(STORAGE_KEY, nextValue);
-    },
-  }), [actorId]);
-
   return (
-    <OperatorContext.Provider value={value}>
+    <OperatorContext.Provider
+      value={{
+        session,
+        canOperate: session.operator.role === 'operator' || session.operator.role === 'admin',
+        isAdmin: session.operator.role === 'admin',
+      }}
+    >
       {children}
     </OperatorContext.Provider>
   );

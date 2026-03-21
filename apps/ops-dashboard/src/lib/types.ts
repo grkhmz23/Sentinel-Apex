@@ -13,6 +13,11 @@ import type {
   RuntimeReconciliationSummaryView,
   RuntimeRemediationActionType,
   RuntimeRecoveryEventView,
+  TreasuryExecutionView,
+  TreasuryActionView,
+  TreasuryAllocationView,
+  TreasuryPolicyView,
+  TreasurySummaryView,
 } from '@sentinel-apex/runtime';
 
 export interface ApiEnvelope<T> {
@@ -67,6 +72,14 @@ export interface OperationsPageData {
   recoveryOutcomes: RuntimeRecoveryEventView[];
 }
 
+export interface TreasuryPageData {
+  summary: TreasurySummaryView | null;
+  allocations: TreasuryAllocationView[];
+  policy: TreasuryPolicyView | null;
+  actions: TreasuryActionView[];
+  executions: TreasuryExecutionView[];
+}
+
 export interface MismatchPageData {
   mismatches: RuntimeMismatchView[];
   filters: MismatchListFilters;
@@ -77,7 +90,6 @@ export interface MismatchDetailPageData {
 }
 
 export interface ActionRequestBody {
-  actorId: string;
   summary?: string;
   verificationOutcome?: 'verified' | 'failed';
   remediationType?: RuntimeRemediationActionType;

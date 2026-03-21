@@ -29,14 +29,73 @@ export async function rebuildProjections(): Promise<unknown> {
   return request('/projections/rebuild', { method: 'POST' });
 }
 
-export async function triggerReconciliation(actorId: string): Promise<unknown> {
+export async function triggerReconciliation(): Promise<unknown> {
   return request('/reconciliation/run', {
     method: 'POST',
     body: JSON.stringify({
-      triggeredBy: actorId,
       trigger: 'ops_dashboard_manual_reconciliation',
     }),
   });
+}
+
+export async function triggerTreasuryEvaluation(): Promise<unknown> {
+  const response = await fetch('/api/treasury/evaluate', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function approveTreasuryAction(actionId: string): Promise<unknown> {
+  const response = await fetch(`/api/treasury/actions/${actionId}/approve`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function executeTreasuryAction(actionId: string): Promise<unknown> {
+  const response = await fetch(`/api/treasury/actions/${actionId}/execute`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
 }
 
 export async function postMismatchAction(
@@ -49,7 +108,6 @@ export async function postMismatchAction(
       return request(`/mismatches/${mismatchId}/acknowledge`, {
         method: 'POST',
         body: JSON.stringify({
-          acknowledgedBy: body.actorId,
           ...(body.summary !== undefined ? { summary: body.summary } : {}),
         }),
       });
@@ -57,7 +115,6 @@ export async function postMismatchAction(
       return request(`/mismatches/${mismatchId}/recover`, {
         method: 'POST',
         body: JSON.stringify({
-          recoveryBy: body.actorId,
           summary: body.summary ?? 'Recovery started from ops dashboard.',
         }),
       });
@@ -65,7 +122,6 @@ export async function postMismatchAction(
       return request(`/mismatches/${mismatchId}/resolve`, {
         method: 'POST',
         body: JSON.stringify({
-          resolvedBy: body.actorId,
           summary: body.summary ?? 'Resolved from ops dashboard.',
         }),
       });
@@ -73,7 +129,6 @@ export async function postMismatchAction(
       return request(`/mismatches/${mismatchId}/verify`, {
         method: 'POST',
         body: JSON.stringify({
-          verifiedBy: body.actorId,
           summary: body.summary ?? 'Verified from ops dashboard.',
           outcome: body.verificationOutcome ?? 'verified',
         }),
@@ -82,7 +137,6 @@ export async function postMismatchAction(
       return request(`/mismatches/${mismatchId}/reopen`, {
         method: 'POST',
         body: JSON.stringify({
-          reopenedBy: body.actorId,
           summary: body.summary ?? 'Reopened from ops dashboard.',
         }),
       });
@@ -90,7 +144,6 @@ export async function postMismatchAction(
       return request(`/mismatches/${mismatchId}/remediate`, {
         method: 'POST',
         body: JSON.stringify({
-          remediationBy: body.actorId,
           actionType: body.remediationType,
           summary: body.summary ?? 'Remediation requested from ops dashboard.',
         }),

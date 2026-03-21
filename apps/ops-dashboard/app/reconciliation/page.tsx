@@ -4,11 +4,13 @@ import type {
   RuntimeReconciliationFindingType,
 } from '@sentinel-apex/runtime';
 
+import { AppShell } from '../../src/components/app-shell';
 import { EmptyState } from '../../src/components/empty-state';
 import { ErrorState } from '../../src/components/error-state';
 import { JsonBlock } from '../../src/components/json-block';
 import { Panel } from '../../src/components/panel';
 import { StatusBadge } from '../../src/components/status-badge';
+import { requireDashboardSession } from '../../src/lib/auth.server';
 import { formatDateTime } from '../../src/lib/format';
 import { loadReconciliationPageData } from '../../src/lib/runtime-api.server';
 
@@ -35,16 +37,22 @@ function readFilters(
 export default async function ReconciliationPage(
   { searchParams }: { searchParams: Record<string, string | string[] | undefined> },
 ): Promise<JSX.Element> {
+  const session = await requireDashboardSession('/reconciliation');
   const state = await loadReconciliationPageData(readFilters(searchParams));
 
   if (state.error !== null || state.data === null) {
-    return <ErrorState message={state.error ?? 'Failed to load reconciliation data.'} title="Reconciliation unavailable" />;
+    return (
+      <AppShell session={session}>
+        <ErrorState message={state.error ?? 'Failed to load reconciliation data.'} title="Reconciliation unavailable" />
+      </AppShell>
+    );
   }
 
   const { summary, runs, findings } = state.data;
 
   return (
-    <div className="page">
+    <AppShell session={session}>
+      <div className="page">
       <header className="page__header">
         <div>
           <p className="eyebrow">Reconciliation</p>
@@ -149,6 +157,7 @@ export default async function ReconciliationPage(
           )}
         </Panel>
       </div>
-    </div>
+      </div>
+    </AppShell>
   );
 }

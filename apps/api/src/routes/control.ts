@@ -1,6 +1,7 @@
 import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { authenticate } from '../middleware/auth.js';
+import { getRequiredOperator, requireOperatorRole } from '../middleware/operator-auth.js';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -13,10 +14,11 @@ export async function controlRoutes(
   }>(
     '/api/v1/control/kill-switch',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('admin')],
     },
     async (request, reply) => {
-      const status = await controlPlane.activateKillSwitch(request.body.reason, 'api-control');
+      const operator = getRequiredOperator(request);
+      const status = await controlPlane.activateKillSwitch(request.body.reason, operator.operatorId);
 
       return reply.status(200).send({
         data: {
@@ -31,21 +33,22 @@ export async function controlRoutes(
   );
 
   app.post<{
-    Body: { reason: string; confirmedBy: string };
+    Body: { reason: string };
   }>(
     '/api/v1/control/resume',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('admin')],
     },
     async (request, reply) => {
-      const status = await controlPlane.resume(request.body.reason, request.body.confirmedBy);
+      const operator = getRequiredOperator(request);
+      const status = await controlPlane.resume(request.body.reason, operator.operatorId);
 
       return reply.status(200).send({
         data: {
           acknowledged: true,
           status: status.lifecycleState,
           reason: status.reason,
-          confirmedBy: request.body.confirmedBy,
+          confirmedBy: operator.operatorId,
           resumedAt: status.updatedAt,
         },
         meta: { correlationId: request.id },
@@ -81,7 +84,7 @@ export async function controlRoutes(
   }>(
     '/api/v1/control/mode',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('admin')],
     },
     async (request, reply) => {
       const status = await controlPlane.setExecutionMode(request.body.mode);

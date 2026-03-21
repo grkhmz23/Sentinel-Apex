@@ -32,9 +32,12 @@ Date: 2026-03-20
 
 ## Operator Identity
 
-- The dashboard does not invent a new auth system in this pass.
-- Operator-triggered actions use a locally persisted operator ID stored in the client and passed through to existing backend action bodies.
-- This matches the current runtime control-plane contract without duplicating backend workflow logic.
+- This document reflects the original Phase 2.0 dashboard skeleton.
+- Phase 2.1 supersedes the client-side operator identity approach with:
+  - server-side dashboard authentication
+  - durable sessions
+  - signed operator propagation to the API
+  - backend role enforcement
 
 ## Route Skeleton
 

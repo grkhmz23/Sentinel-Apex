@@ -4,6 +4,8 @@
 
 // Schema tables — re-exported so consumers don't need to drill into sub-paths
 export {
+  opsOperators,
+  opsOperatorSessions,
   auditEvents,
   orders,
   fills,
@@ -25,6 +27,11 @@ export {
   strategyIntents,
   strategyOpportunities,
   strategyRuns,
+  treasuryActionExecutions,
+  treasuryActions,
+  treasuryCurrent,
+  treasuryRuns,
+  treasuryVenueSnapshots,
 } from './schema/index.js';
 
 // Database client factory + type

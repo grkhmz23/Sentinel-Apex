@@ -22,6 +22,7 @@
     "@sentinel-apex/observability": "workspace:*",
     "@sentinel-apex/risk-engine": "workspace:*",
     "@sentinel-apex/strategy-engine": "workspace:*",
+    "@sentinel-apex/treasury": "workspace:*",
     "@sentinel-apex/venue-adapters": "workspace:*",
     "decimal.js": "^10.4.3",
     "drizzle-orm": "^0.30.10"

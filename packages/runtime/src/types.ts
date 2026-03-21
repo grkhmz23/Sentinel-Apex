@@ -1,13 +1,26 @@
 import type { RiskAssessment } from '@sentinel-apex/domain';
 import type { RiskSummary } from '@sentinel-apex/risk-engine';
+import type {
+  TreasuryActionBlockedReason,
+  TreasuryActionReadiness,
+  TreasuryActionType,
+  TreasuryApprovalRequirement,
+  TreasuryExecutionStatus,
+  TreasuryPolicy,
+} from '@sentinel-apex/treasury';
 
 export type RuntimeLifecycleState = 'starting' | 'ready' | 'paused' | 'stopped' | 'degraded';
 export type ProjectionStatus = 'fresh' | 'rebuilding' | 'stale';
 export type WorkerLifecycleState = 'starting' | 'ready' | 'stopping' | 'stopped' | 'degraded';
 export type WorkerSchedulerState = 'idle' | 'waiting' | 'running' | 'paused';
-export type RuntimeCommandType = 'run_cycle' | 'rebuild_projections' | 'run_reconciliation';
+export type RuntimeCommandType =
+  | 'run_cycle'
+  | 'rebuild_projections'
+  | 'run_reconciliation'
+  | 'run_treasury_evaluation'
+  | 'execute_treasury_action';
 export type RuntimeCommandStatus = 'pending' | 'running' | 'completed' | 'failed';
-export type RuntimeRemediationActionType = Exclude<RuntimeCommandType, 'run_reconciliation'>;
+export type RuntimeRemediationActionType = 'run_cycle' | 'rebuild_projections';
 export type RuntimeRemediationStatus = 'requested' | 'running' | 'completed' | 'failed';
 export type RuntimeMismatchSourceKind = 'workflow' | 'reconciliation';
 export type RuntimeMismatchStatus =
@@ -223,6 +236,110 @@ export interface RuntimeOverviewView {
   lastRecoveryEvent: RuntimeRecoveryEventView | null;
   latestReconciliationRun: RuntimeReconciliationRunView | null;
   reconciliationSummary: RuntimeReconciliationSummaryView | null;
+  treasurySummary: TreasurySummaryView | null;
+}
+
+export interface TreasurySummaryView {
+  treasuryRunId: string;
+  sourceRunId: string | null;
+  sleeveId: string;
+  simulated: boolean;
+  policy: TreasuryPolicy;
+  reserveStatus: {
+    totalCapitalUsd: string;
+    idleCapitalUsd: string;
+    allocatedCapitalUsd: string;
+    requiredReserveUsd: string;
+    currentReserveUsd: string;
+    reserveCoveragePct: string;
+    surplusCapitalUsd: string;
+    reserveShortfallUsd: string;
+  };
+  actionCount: number;
+  alerts: string[];
+  concentrationLimitBreached: boolean;
+  evaluatedAt: string;
+  updatedAt: string;
+}
+
+export interface TreasuryAllocationView {
+  treasuryRunId: string;
+  venueId: string;
+  venueName: string;
+  venueMode: 'simulated' | 'live';
+  liquidityTier: 'instant' | 'same_day' | 'delayed';
+  healthy: boolean;
+  aprBps: number;
+  currentAllocationUsd: string;
+  withdrawalAvailableUsd: string;
+  availableCapacityUsd: string;
+  concentrationPct: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface TreasuryActionView {
+  id: string;
+  treasuryRunId: string;
+  actionType: TreasuryActionType;
+  status: TreasuryExecutionStatus;
+  readiness: TreasuryActionReadiness;
+  executable: boolean;
+  blockedReasons: TreasuryActionBlockedReason[];
+  approvalRequirement: TreasuryApprovalRequirement;
+  venueId: string | null;
+  venueName: string | null;
+  venueMode: 'simulated' | 'live' | 'reserve';
+  amountUsd: string;
+  reasonCode: string;
+  summary: string;
+  details: Record<string, unknown>;
+  actorId: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  executionRequestedBy: string | null;
+  executionRequestedAt: string | null;
+  linkedCommandId: string | null;
+  latestExecutionId: string | null;
+  simulated: boolean;
+  executionMode: 'dry-run' | 'live';
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TreasuryPolicyView {
+  treasuryRunId: string;
+  policy: TreasuryPolicy;
+  updatedAt: string;
+}
+
+export interface TreasuryActionDetailView {
+  action: TreasuryActionView;
+  latestCommand: RuntimeCommandView | null;
+  executions: TreasuryExecutionView[];
+}
+
+export interface TreasuryExecutionView {
+  id: string;
+  treasuryActionId: string;
+  treasuryRunId: string;
+  commandId: string | null;
+  status: TreasuryExecutionStatus;
+  executionMode: 'dry-run' | 'live';
+  venueMode: 'simulated' | 'live' | 'reserve';
+  simulated: boolean;
+  requestedBy: string;
+  startedBy: string | null;
+  blockedReasons: TreasuryActionBlockedReason[];
+  outcomeSummary: string | null;
+  outcome: Record<string, unknown>;
+  venueExecutionReference: string | null;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
 }
 
 export interface RuntimeMismatchDetailView {
@@ -385,4 +502,11 @@ export interface RuntimeReadApi {
   listOpportunities(limit?: number): Promise<OpportunityView[]>;
   listRecentEvents(limit?: number): Promise<AuditEventView[]>;
   getRuntimeStatus(): Promise<RuntimeStatusView>;
+  getTreasurySummary(): Promise<TreasurySummaryView | null>;
+  listTreasuryAllocations(limit?: number): Promise<TreasuryAllocationView[]>;
+  getTreasuryPolicy(): Promise<TreasuryPolicyView | null>;
+  listTreasuryActions(limit?: number): Promise<TreasuryActionView[]>;
+  getTreasuryAction(actionId: string): Promise<TreasuryActionDetailView | null>;
+  listTreasuryExecutions(limit?: number): Promise<TreasuryExecutionView[]>;
+  getTreasuryExecution(executionId: string): Promise<TreasuryExecutionView | null>;
 }

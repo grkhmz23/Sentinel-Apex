@@ -11,6 +11,8 @@ export { positions } from './positions.js';
 export { portfolioCurrent, portfolioSnapshots, riskBreaches } from './portfolio.js';
 
 export {
+  opsOperators,
+  opsOperatorSessions,
   executionEvents,
   runtimeCommands,
   runtimeMismatchRemediations,
@@ -25,4 +27,9 @@ export {
   strategyIntents,
   strategyOpportunities,
   strategyRuns,
+  treasuryActionExecutions,
+  treasuryActions,
+  treasuryCurrent,
+  treasuryRuns,
+  treasuryVenueSnapshots,
 } from './runtime.js';

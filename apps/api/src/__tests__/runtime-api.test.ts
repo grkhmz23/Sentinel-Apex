@@ -6,6 +6,7 @@ import type { RuntimeControlPlane, RuntimeWorker } from '@sentinel-apex/runtime'
 import { createApp } from '../app.js';
 import {
   createApiHarness,
+  createOperatorHeaders,
   waitForCommand,
   waitForMismatch,
   waitForMismatchStatus,
@@ -16,6 +17,21 @@ import {
 import type { FastifyInstance } from 'fastify';
 
 const TEST_API_KEY = 'test-secret-key-for-vitest-suite-32chars!!';
+const TEST_SHARED_SECRET = 'ops-auth-shared-secret-for-tests-32chars';
+
+function operatorHeaders(
+  role: 'viewer' | 'operator' | 'admin',
+  method: string,
+  path: string,
+): Record<string, string> {
+  return createOperatorHeaders({
+    role,
+    method,
+    path,
+    apiKey: TEST_API_KEY,
+    sharedSecret: TEST_SHARED_SECRET,
+  });
+}
 
 describe('runtime-backed API routes', () => {
   let app: FastifyInstance;
@@ -26,6 +42,7 @@ describe('runtime-backed API routes', () => {
   beforeEach(async () => {
     process.env['NODE_ENV'] = 'test';
     process.env['API_SECRET_KEY'] = TEST_API_KEY;
+    process.env['OPS_AUTH_SHARED_SECRET'] = TEST_SHARED_SECRET;
 
     const harness = await createApiHarness();
     connectionString = harness.connectionString;
@@ -45,7 +62,7 @@ describe('runtime-backed API routes', () => {
     const commandResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/runtime/cycles/run',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/cycles/run'),
     });
 
     expect(commandResponse.statusCode).toBe(202);
@@ -53,6 +70,7 @@ describe('runtime-backed API routes', () => {
     const command = await waitForCommand(controlPlane, commandBody.data.commandId);
     expect(command.status).toBe('completed');
     expect(command.result['runId']).toBeTruthy();
+    expect(command.requestedBy).toBe('operator-user');
 
     const [portfolioResponse, ordersResponse, eventsResponse, runtimeStatusResponse, workerResponse] = await Promise.all([
       app.inject({
@@ -110,11 +128,138 @@ describe('runtime-backed API routes', () => {
     expect(workerBody.data.schedulerState).toMatch(/waiting|running|paused/);
   });
 
+  it('exposes treasury summary, recommendations, execution history, and controlled execution through the API', async () => {
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/treasury/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/treasury/evaluate'),
+    });
+
+    expect(evaluateResponse.statusCode).toBe(202);
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    const command = await waitForCommand(controlPlane, evaluateBody.data.commandId);
+    expect(command.status).toBe('completed');
+    expect(command.result['treasuryRunId']).toBeTruthy();
+
+    const [summaryResponse, allocationsResponse, policyResponse, actionsResponse, recommendationsResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/summary',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/allocations',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/policy',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/actions',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/recommendations',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(allocationsResponse.statusCode).toBe(200);
+    expect(policyResponse.statusCode).toBe(200);
+    expect(actionsResponse.statusCode).toBe(200);
+    expect(recommendationsResponse.statusCode).toBe(200);
+
+    const summaryBody = summaryResponse.json<{
+      data: null | {
+        sleeveId: string;
+        reserveStatus: { requiredReserveUsd: string };
+        actionCount: number;
+      };
+    }>();
+    const allocationsBody = allocationsResponse.json<{
+      data: Array<{ venueId: string; venueMode: string }>;
+    }>();
+    const policyBody = policyResponse.json<{
+      data: null | { policy: { reserveFloorPct: number; eligibleVenues: string[] } };
+    }>();
+    const actionsBody = actionsResponse.json<{
+      data: Array<{ id: string; actionType: string; reasonCode: string; status: string; executable: boolean }>;
+    }>();
+    const recommendationsBody = recommendationsResponse.json<{
+      data: Array<{ id: string; readiness: string }>;
+    }>();
+
+    expect(summaryBody.data?.sleeveId).toBe('treasury');
+    expect(summaryBody.data?.reserveStatus.requiredReserveUsd).toBeTruthy();
+    expect(summaryBody.data?.actionCount).toBeGreaterThanOrEqual(0);
+    expect(allocationsBody.data.length).toBeGreaterThan(0);
+    expect(allocationsBody.data[0]?.venueMode).toBe('simulated');
+    expect(policyBody.data?.policy.reserveFloorPct).toBeGreaterThan(0);
+    expect(policyBody.data?.policy.eligibleVenues.length).toBeGreaterThan(0);
+    expect(actionsBody.data.length).toBeGreaterThan(0);
+    expect(recommendationsBody.data.length).toBeGreaterThan(0);
+
+    const actionable = actionsBody.data.find((action) => action.executable);
+    expect(actionable?.status).toBe('recommended');
+    expect(actionable?.id).toBeTruthy();
+
+    const approveResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/treasury/actions/${actionable?.id}/approve`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/treasury/actions/${actionable?.id}/approve`),
+    });
+    expect(approveResponse.statusCode).toBe(200);
+
+    const executeResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/treasury/actions/${actionable?.id}/execute`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/treasury/actions/${actionable?.id}/execute`),
+    });
+    expect(executeResponse.statusCode).toBe(202);
+
+    const executeBody = executeResponse.json<{ data: { commandId: string } }>();
+    const executionCommand = await waitForCommand(controlPlane, executeBody.data.commandId);
+    expect(executionCommand.status).toBe('completed');
+
+    const [actionDetailResponse, executionsResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/treasury/actions/${actionable?.id}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/treasury/executions',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(actionDetailResponse.statusCode).toBe(200);
+    expect(executionsResponse.statusCode).toBe(200);
+
+    const actionDetailBody = actionDetailResponse.json<{
+      data: { action: { status: string }; executions: Array<{ status: string; requestedBy: string }> };
+    }>();
+    const executionsBody = executionsResponse.json<{
+      data: Array<{ id: string; status: string; requestedBy: string }>;
+    }>();
+
+    expect(actionDetailBody.data.action.status).toBe('completed');
+    expect(actionDetailBody.data.executions[0]?.requestedBy).toBe('operator-user');
+    expect(executionsBody.data.some((execution) => execution.status === 'completed')).toBe(true);
+  });
+
   it('surfaces the full mismatch recovery lifecycle through the API', async () => {
     const pauseResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/control/kill-switch',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('admin', 'POST', '/api/v1/control/kill-switch'),
       payload: { reason: 'maintenance-window' },
     });
 
@@ -123,7 +268,7 @@ describe('runtime-backed API routes', () => {
     const blockedCycleResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/runtime/cycles/run',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/cycles/run'),
     });
     const blockedCommandBody = blockedCycleResponse.json<{ data: { commandId: string } }>();
     const blockedCommand = await waitForCommand(controlPlane, blockedCommandBody.data.commandId);
@@ -148,8 +293,8 @@ describe('runtime-backed API routes', () => {
     const acknowledgeResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/acknowledge`,
-      headers: { 'x-api-key': TEST_API_KEY },
-      payload: { acknowledgedBy: 'vitest', summary: 'reviewed by test' },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/acknowledge`),
+      payload: { summary: 'reviewed by test' },
     });
     expect(acknowledgeResponse.statusCode).toBe(200);
     await waitForMismatchStatus(controlPlane, mismatchId as string, 'acknowledged');
@@ -157,9 +302,8 @@ describe('runtime-backed API routes', () => {
     const recoverResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/recover`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/recover`),
       payload: {
-        recoveryBy: 'vitest',
         summary: 'linking failed command to recovery workflow',
         commandId: blockedCommand.commandId,
       },
@@ -170,9 +314,8 @@ describe('runtime-backed API routes', () => {
     const resolveResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/resolve`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/resolve`),
       payload: {
-        resolvedBy: 'vitest',
         summary: 'operator applied a remediation path',
         commandId: blockedCommand.commandId,
       },
@@ -183,9 +326,8 @@ describe('runtime-backed API routes', () => {
     const verifyResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/verify`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/verify`),
       payload: {
-        verifiedBy: 'vitest',
         summary: 'operator verified the incident closure',
       },
     });
@@ -195,9 +337,8 @@ describe('runtime-backed API routes', () => {
     const reopenResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/reopen`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/reopen`),
       payload: {
-        reopenedBy: 'vitest',
         summary: 'manual reopen after additional review',
       },
     });
@@ -219,6 +360,7 @@ describe('runtime-backed API routes', () => {
     }>();
     expect(mismatchDetailBody.data.mismatch.status).toBe('reopened');
     expect(mismatchDetailBody.data.mismatch.linkedCommandId).toBe(blockedCommand.commandId);
+    expect(mismatchDetailBody.data.mismatch.reopenedBy).toBe('operator-user');
     expect(mismatchDetailBody.data.linkedCommand?.commandId).toBe(blockedCommand.commandId);
     expect(mismatchDetailBody.data.recoveryEvents.some((event) => event.eventType === 'mismatch_verified')).toBe(true);
 
@@ -240,9 +382,8 @@ describe('runtime-backed API routes', () => {
     const invalidVerifyResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/verify`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/verify`),
       payload: {
-        verifiedBy: 'vitest',
         summary: 'invalid verification from reopened state',
       },
     });
@@ -251,15 +392,15 @@ describe('runtime-backed API routes', () => {
     const resumeResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/control/resume',
-      headers: { 'x-api-key': TEST_API_KEY },
-      payload: { reason: 'maintenance-complete', confirmedBy: 'vitest' },
+      headers: operatorHeaders('admin', 'POST', '/api/v1/control/resume'),
+      payload: { reason: 'maintenance-complete' },
     });
     expect(resumeResponse.statusCode).toBe(200);
 
     const rebuildResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/runtime/projections/rebuild',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/projections/rebuild'),
     });
     expect(rebuildResponse.statusCode).toBe(202);
     const rebuildBody = rebuildResponse.json<{ data: { commandId: string } }>();
@@ -297,7 +438,7 @@ describe('runtime-backed API routes', () => {
     const pauseResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/control/kill-switch',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('admin', 'POST', '/api/v1/control/kill-switch'),
       payload: { reason: 'phase-1-8-remediation-setup' },
     });
     expect(pauseResponse.statusCode).toBe(200);
@@ -305,7 +446,7 @@ describe('runtime-backed API routes', () => {
     const blockedCycleResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/runtime/cycles/run',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/cycles/run'),
     });
     const blockedCommandBody = blockedCycleResponse.json<{ data: { commandId: string } }>();
     const blockedCommand = await waitForCommand(controlPlane, blockedCommandBody.data.commandId);
@@ -318,17 +459,16 @@ describe('runtime-backed API routes', () => {
     const resumeResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/control/resume',
-      headers: { 'x-api-key': TEST_API_KEY },
-      payload: { reason: 'phase-1-8-remediation-ready', confirmedBy: 'vitest' },
+      headers: operatorHeaders('admin', 'POST', '/api/v1/control/resume'),
+      payload: { reason: 'phase-1-8-remediation-ready' },
     });
     expect(resumeResponse.statusCode).toBe(200);
 
     const remediateResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/remediate`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/remediate`),
       payload: {
-        remediationBy: 'vitest',
         actionType: 'rebuild_projections',
         summary: 'rebuild projections for the mismatched read model',
       },
@@ -358,6 +498,7 @@ describe('runtime-backed API routes', () => {
     }>();
     expect(remediationLatestBody.data.id).toBe(completedRemediation.id);
     expect(remediationLatestBody.data.command?.status).toBe('completed');
+    expect(completedRemediation.requestedBy).toBe('operator-user');
 
     const remediationHistoryResponse = await app.inject({
       method: 'GET',
@@ -395,9 +536,8 @@ describe('runtime-backed API routes', () => {
     const resolveResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/resolve`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/resolve`),
       payload: {
-        resolvedBy: 'vitest',
         summary: 'remediation completed and operator is closing the incident',
         commandId: completedRemediation.commandId,
       },
@@ -408,9 +548,8 @@ describe('runtime-backed API routes', () => {
     const verifyResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/verify`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/verify`),
       payload: {
-        verifiedBy: 'vitest',
         summary: 'operator verified the remediation outcome',
       },
     });
@@ -420,9 +559,8 @@ describe('runtime-backed API routes', () => {
     const invalidRemediateResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/remediate`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/remediate`),
       payload: {
-        remediationBy: 'vitest',
         actionType: 'rebuild_projections',
         summary: 'verified incidents should not accept remediation',
       },
@@ -434,7 +572,7 @@ describe('runtime-backed API routes', () => {
     const runCycleResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/runtime/cycles/run',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/cycles/run'),
     });
     expect(runCycleResponse.statusCode).toBe(202);
     const seededCycle = runCycleResponse.json<{ data: { commandId: string } }>();
@@ -460,11 +598,10 @@ describe('runtime-backed API routes', () => {
     const reconciliationResponse = await app.inject({
       method: 'POST',
       url: '/api/v1/runtime/reconciliation/run',
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/reconciliation/run'),
       payload: {
         trigger: 'api-reconciliation-test',
         triggerReference: position?.id,
-        triggeredBy: 'vitest',
       },
     });
     expect(reconciliationResponse.statusCode).toBe(202);
@@ -558,9 +695,8 @@ describe('runtime-backed API routes', () => {
     const remediateResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${finding?.mismatchId}/remediate`,
-      headers: { 'x-api-key': TEST_API_KEY },
+      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${finding?.mismatchId}/remediate`),
       payload: {
-        remediationBy: 'vitest',
         actionType: 'rebuild_projections',
         summary: 'repair projected positions from persisted truth',
       },
@@ -579,5 +715,43 @@ describe('runtime-backed API routes', () => {
       data: Array<{ status: string }>;
     }>();
     expect(resolvedMismatchFindingsBody.data.some((item) => item.status === 'resolved')).toBe(true);
+  });
+
+  it('rejects viewer mutation attempts and allows admin control actions', async () => {
+    const viewerCycleResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/runtime/cycles/run',
+      headers: operatorHeaders('viewer', 'POST', '/api/v1/runtime/cycles/run'),
+    });
+    expect(viewerCycleResponse.statusCode).toBe(403);
+
+    const viewerTreasuryResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/treasury/evaluate',
+      headers: operatorHeaders('viewer', 'POST', '/api/v1/treasury/evaluate'),
+    });
+    expect(viewerTreasuryResponse.statusCode).toBe(403);
+
+    const viewerApproveTreasuryResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/treasury/actions/not-found/approve',
+      headers: operatorHeaders('viewer', 'POST', '/api/v1/treasury/actions/not-found/approve'),
+    });
+    expect(viewerApproveTreasuryResponse.statusCode).toBe(403);
+
+    const missingOperatorResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/runtime/cycles/run',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(missingOperatorResponse.statusCode).toBe(403);
+
+    const adminKillSwitchResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/control/kill-switch',
+      headers: operatorHeaders('admin', 'POST', '/api/v1/control/kill-switch'),
+      payload: { reason: 'authz-test' },
+    });
+    expect(adminKillSwitchResponse.statusCode).toBe(200);
   });
 });

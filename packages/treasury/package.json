@@ -1,0 +1,24 @@
+{
+  "name": "@sentinel-apex/treasury",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.shared.ts",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@sentinel-apex/shared": "workspace:*",
+    "@sentinel-apex/venue-adapters": "workspace:*",
+    "decimal.js": "^10.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

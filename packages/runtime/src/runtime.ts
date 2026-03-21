@@ -21,8 +21,20 @@ import {
   type PipelineConfig,
 } from '@sentinel-apex/strategy-engine';
 import {
+  DEFAULT_TREASURY_POLICY,
+  TreasuryExecutionPlanner,
+  TreasuryPolicyEngine,
+  type TreasuryPolicy,
+  type TreasuryRecommendation,
+  type TreasuryVenueSnapshot,
+} from '@sentinel-apex/treasury';
+import {
   SimulatedVenueAdapter,
+  SimulatedTreasuryVenueAdapter,
   type SimulatedVenueConfig,
+  type SimulatedTreasuryVenueConfig,
+  type TreasuryVenueAdapter,
+  type TreasuryVenueCapabilities,
   type VenueAdapter,
   type VenuePosition,
 } from '@sentinel-apex/venue-adapters';
@@ -45,6 +57,7 @@ import type {
   RiskSummaryView,
   RuntimeCycleOutcome,
   RuntimeStatusView,
+  TreasurySummaryView,
 } from './types.js';
 
 function severityForRiskStatus(status: string): string {
@@ -91,9 +104,11 @@ export interface DeterministicRuntimeScenario {
   executionMode?: 'dry-run' | 'live';
   liveExecutionEnabled?: boolean;
   carryConfig?: Partial<typeof DEFAULT_CARRY_CONFIG>;
+  treasuryPolicy?: Partial<TreasuryPolicy>;
   riskLimits?: Partial<RiskLimits>;
   pipelineConfig?: Partial<PipelineConfig>;
   venues?: SimulatedVenueConfig[];
+  treasuryVenues?: SimulatedTreasuryVenueConfig[];
 }
 
 export interface SentinelRuntimeOptions {
@@ -104,6 +119,10 @@ export interface SentinelRuntimeOptions {
   riskEngine: RiskEngine;
   riskLimits: RiskLimits;
   adapters: Map<string, VenueAdapter>;
+  treasuryAdapters: Map<string, TreasuryVenueAdapter>;
+  treasuryPolicyEngine: TreasuryPolicyEngine;
+  treasuryExecutionPlanner: TreasuryExecutionPlanner;
+  treasuryPolicy: TreasuryPolicy;
   executionMode: 'dry-run' | 'live';
   liveExecutionEnabled: boolean;
   sleeveId: string;
@@ -156,11 +175,36 @@ export class SentinelRuntime {
         deterministicFundingRates: { BTC: '-0.00002', ETH: '0.00001' },
       },
     ];
+    const defaultTreasuryVenues: SimulatedTreasuryVenueConfig[] = overrides.treasuryVenues ?? [
+      {
+        venueId: 'atlas-t0-sim',
+        venueName: 'Atlas Treasury T0',
+        liquidityTier: 'instant',
+        aprBps: 385,
+        availableCapacityUsd: '500000',
+        currentAllocationUsd: '15000',
+        withdrawalAvailableUsd: '15000',
+      },
+      {
+        venueId: 'atlas-t1-sim',
+        venueName: 'Atlas Treasury T1',
+        liquidityTier: 'same_day',
+        aprBps: 465,
+        availableCapacityUsd: '750000',
+        currentAllocationUsd: '5000',
+        withdrawalAvailableUsd: '5000',
+      },
+    ];
 
     const adapters = new Map<string, VenueAdapter>();
     for (const venue of defaultVenues) {
       const adapter = new SimulatedVenueAdapter(venue);
       adapters.set(venue.venueId, adapter);
+    }
+    const treasuryAdapters = new Map<string, TreasuryVenueAdapter>();
+    for (const venue of defaultTreasuryVenues) {
+      const adapter = new SimulatedTreasuryVenueAdapter(venue);
+      treasuryAdapters.set(venue.venueId, adapter);
     }
 
     const connection = await createDatabaseConnection(connectionString);
@@ -209,6 +253,11 @@ export class SentinelRuntime {
     );
 
     const portfolioTracker = new PortfolioStateTracker(adapters, logger, sleeveId);
+    const treasuryPolicy = {
+      ...DEFAULT_TREASURY_POLICY,
+      ...(overrides.treasuryPolicy ?? {}),
+      eligibleVenues: overrides.treasuryPolicy?.eligibleVenues ?? Array.from(treasuryAdapters.keys()),
+    } satisfies TreasuryPolicy;
 
     await store.ensureRuntimeState(
       executionMode,
@@ -224,6 +273,10 @@ export class SentinelRuntime {
       riskEngine,
       riskLimits: effectiveRiskLimits,
       adapters,
+      treasuryAdapters,
+      treasuryPolicyEngine: new TreasuryPolicyEngine(),
+      treasuryExecutionPlanner: new TreasuryExecutionPlanner(),
+      treasuryPolicy,
       executionMode,
       liveExecutionEnabled,
       sleeveId,
@@ -257,6 +310,11 @@ export class SentinelRuntime {
     });
 
     for (const adapter of this.options.adapters.values()) {
+      if (!adapter.isConnected()) {
+        await adapter.connect();
+      }
+    }
+    for (const adapter of this.options.treasuryAdapters.values()) {
       if (!adapter.isConnected()) {
         await adapter.connect();
       }
@@ -440,6 +498,11 @@ export class SentinelRuntime {
       }
 
       const refreshedPortfolio = await this.options.portfolioTracker.refresh();
+      await this.runTreasuryEvaluation({
+        actorId: 'sentinel-runtime',
+        sourceRunId: runId,
+        portfolioState: refreshedPortfolio,
+      });
       const finalRiskSummary = this.options.riskEngine.getRiskSummary(refreshedPortfolio);
       const cumulativePnl = await this.computeCumulativePnl();
       const dailyPnl = cumulativePnl;
@@ -603,6 +666,10 @@ export class SentinelRuntime {
     return this.options.store.getRuntimeStatus();
   }
 
+  async getTreasurySummary(): Promise<TreasurySummaryView | null> {
+    return this.options.store.getTreasurySummary();
+  }
+
   async rebuildProjections(
     actorId = 'runtime-rebuild',
     emitAuditEvent = true,
@@ -677,6 +744,278 @@ export class SentinelRuntime {
       triggeredBy: input.triggeredBy ?? null,
     });
     return result.run;
+  }
+
+  async runTreasuryEvaluation(input: {
+    actorId: string;
+    sourceRunId?: string | null;
+    portfolioState?: Awaited<ReturnType<PortfolioStateTracker['refresh']>>;
+    idleCapitalUsdOverride?: string | null;
+  }): Promise<TreasurySummaryView> {
+    const portfolioState = input.portfolioState ?? await this.options.portfolioTracker.refresh();
+    const venueSnapshots = await this.collectTreasuryVenueSnapshots();
+    const venueCapabilities = await this.collectTreasuryVenueCapabilities();
+    const persistedCashBalanceUsd = await this.options.store.getTreasuryCashBalanceUsd();
+    const evaluation = this.options.treasuryPolicyEngine.evaluate({
+      totalNavUsd: portfolioState.totalNav,
+      idleCapitalUsd: input.idleCapitalUsdOverride
+        ?? persistedCashBalanceUsd
+        ?? portfolioState.liquidityReserve,
+      venueSnapshots,
+      policy: this.options.treasuryPolicy,
+    });
+    const executionIntents = this.options.treasuryExecutionPlanner.createExecutionIntents({
+      evaluation,
+      policy: this.options.treasuryPolicy,
+      executionMode: this.options.executionMode,
+      liveExecutionEnabled: this.options.liveExecutionEnabled,
+      venueCapabilities,
+    });
+    const treasuryRunId = createId();
+
+    await this.options.store.persistTreasuryEvaluation({
+      treasuryRunId,
+      sourceRunId: input.sourceRunId ?? null,
+      sleeveId: 'treasury',
+      policy: this.options.treasuryPolicy,
+      evaluation,
+      executionIntents,
+      actorId: input.actorId,
+    });
+
+    await this.options.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'treasury.evaluated',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId: input.actorId,
+      sleeveId: 'treasury',
+      data: {
+        treasuryRunId,
+        sourceRunId: input.sourceRunId ?? null,
+        actionCount: evaluation.recommendations.length,
+        reserveShortfallUsd: evaluation.reserveStatus.reserveShortfallUsd,
+        surplusCapitalUsd: evaluation.reserveStatus.surplusCapitalUsd,
+      },
+    });
+
+    const summary = await this.options.store.getTreasurySummary();
+    if (summary === null) {
+      throw new Error(`SentinelRuntime.runTreasuryEvaluation: treasury run "${treasuryRunId}" was not persisted`);
+    }
+
+    return summary;
+  }
+
+  async executeTreasuryAction(input: {
+    actionId: string;
+    actorId: string;
+    commandId: string | null;
+    startedBy: string;
+  }): Promise<{
+    actionId: string;
+    executionId: string;
+    treasuryRunId: string | null;
+    venueExecutionReference: string | null;
+    simulated: boolean;
+  }> {
+    const detail = await this.options.store.getTreasuryAction(input.actionId);
+    if (detail === null) {
+      throw new Error(`Treasury action "${input.actionId}" was not found.`);
+    }
+
+    if (detail.action.status !== 'queued' && detail.action.status !== 'approved') {
+      throw new Error(
+        `Treasury action "${input.actionId}" is not executable from status "${detail.action.status}".`,
+      );
+    }
+
+    const portfolioState = await this.options.portfolioTracker.refresh();
+    const venueSnapshots = await this.collectTreasuryVenueSnapshots();
+    const venueCapabilities = await this.collectTreasuryVenueCapabilities();
+    const evaluation = this.options.treasuryPolicyEngine.evaluate({
+      totalNavUsd: portfolioState.totalNav,
+      idleCapitalUsd: portfolioState.liquidityReserve,
+      venueSnapshots,
+      policy: this.options.treasuryPolicy,
+    });
+    const recommendation: TreasuryRecommendation = {
+      actionType: detail.action.actionType === 'allocate_to_venue' ? 'deposit' : 'redeem',
+      venueId: detail.action.venueId,
+      amountUsd: detail.action.amountUsd,
+      reasonCode: detail.action.reasonCode as TreasuryRecommendation['reasonCode'],
+      summary: detail.action.summary,
+      details: detail.action.details,
+    };
+    const executionIntent = this.options.treasuryExecutionPlanner.createExecutionIntents({
+      evaluation: {
+        ...evaluation,
+        recommendations: [recommendation],
+      },
+      policy: this.options.treasuryPolicy,
+      executionMode: this.options.executionMode,
+      liveExecutionEnabled: this.options.liveExecutionEnabled,
+      venueCapabilities,
+    })[0];
+
+    if (executionIntent === undefined) {
+      throw new Error(`Treasury action "${input.actionId}" could not be planned for execution.`);
+    }
+
+    const execution = await this.options.store.createTreasuryExecution({
+      treasuryActionId: detail.action.id,
+      treasuryRunId: detail.action.treasuryRunId,
+      commandId: input.commandId,
+      status: executionIntent.executable ? 'executing' : 'failed',
+      executionMode: executionIntent.executionMode,
+      venueMode: executionIntent.venueMode,
+      simulated: executionIntent.simulated,
+      requestedBy: input.actorId,
+      startedBy: input.startedBy,
+      blockedReasons: executionIntent.blockedReasons,
+      outcome: {
+        executionPlan: executionIntent.effects,
+      },
+      lastError: executionIntent.executable
+        ? null
+        : executionIntent.blockedReasons.map((reason) => reason.message).join('; '),
+    });
+
+    if (!executionIntent.executable) {
+      await this.options.store.failTreasuryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage: executionIntent.blockedReasons.map((reason) => reason.message).join('; '),
+      });
+      await this.options.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'treasury.execution_blocked',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId: input.actorId,
+        sleeveId: 'treasury',
+        data: {
+          treasuryActionId: detail.action.id,
+          executionId: execution.id,
+          blockedReasons: executionIntent.blockedReasons,
+        },
+      });
+      throw new Error(executionIntent.blockedReasons.map((reason) => reason.message).join('; '));
+    }
+
+    await this.options.store.markTreasuryActionExecuting(detail.action.id);
+
+    if (detail.action.venueId === null) {
+      await this.options.store.updateTreasuryExecution(execution.id, {
+        status: 'failed',
+        lastError: 'Treasury action did not target a venue.',
+      });
+      await this.options.store.failTreasuryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage: 'Treasury action did not target a venue.',
+      });
+      throw new Error('Treasury action did not target a venue.');
+    }
+
+    const adapter = this.options.treasuryAdapters.get(detail.action.venueId);
+    if (adapter === undefined) {
+      await this.options.store.updateTreasuryExecution(execution.id, {
+        status: 'failed',
+        lastError: `Treasury venue "${detail.action.venueId}" is not registered.`,
+      });
+      await this.options.store.failTreasuryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage: `Treasury venue "${detail.action.venueId}" is not registered.`,
+      });
+      throw new Error(`Treasury venue "${detail.action.venueId}" is not registered.`);
+    }
+
+    try {
+      const result = await adapter.executeTreasuryAction({
+        actionType: detail.action.actionType,
+        amountUsd: detail.action.amountUsd,
+        actorId: input.actorId,
+        reasonCode: detail.action.reasonCode,
+        executionMode: detail.action.executionMode,
+      });
+
+      await this.options.store.setTreasuryCashBalanceUsd(executionIntent.effects.idleCapitalUsd);
+
+      const followUpSummary = await this.runTreasuryEvaluation({
+        actorId: input.actorId,
+        sourceRunId: null,
+        portfolioState,
+        idleCapitalUsdOverride: executionIntent.effects.idleCapitalUsd,
+      });
+
+      await this.options.store.updateTreasuryExecution(execution.id, {
+        status: 'completed',
+        outcomeSummary: result.summary,
+        outcome: {
+          balanceDeltaUsd: result.balanceDeltaUsd,
+          allocationUsd: result.allocationUsd,
+          withdrawalAvailableUsd: result.withdrawalAvailableUsd,
+          followUpTreasuryRunId: followUpSummary.treasuryRunId,
+          metadata: result.metadata,
+        },
+        venueExecutionReference: result.executionReference,
+        lastError: null,
+      });
+      await this.options.store.completeTreasuryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+      });
+      await this.options.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'treasury.executed',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId: input.actorId,
+        sleeveId: 'treasury',
+        data: {
+          treasuryActionId: detail.action.id,
+          executionId: execution.id,
+          venueExecutionReference: result.executionReference,
+          followUpTreasuryRunId: followUpSummary.treasuryRunId,
+          simulated: result.simulated,
+        },
+      });
+
+      return {
+        actionId: detail.action.id,
+        executionId: execution.id,
+        treasuryRunId: followUpSummary.treasuryRunId,
+        venueExecutionReference: result.executionReference,
+        simulated: result.simulated,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.options.store.updateTreasuryExecution(execution.id, {
+        status: 'failed',
+        lastError: message,
+      });
+      await this.options.store.failTreasuryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage: message,
+      });
+      await this.options.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'treasury.execution_failed',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId: input.actorId,
+        sleeveId: 'treasury',
+        data: {
+          treasuryActionId: detail.action.id,
+          executionId: execution.id,
+          error: message,
+        },
+      });
+      throw error;
+    }
   }
 
   async activateKillSwitch(reason: string, actorId: string): Promise<RuntimeStatusView> {
@@ -757,6 +1096,9 @@ export class SentinelRuntime {
     for (const adapter of this.options.adapters.values()) {
       await adapter.disconnect();
     }
+    for (const adapter of this.options.treasuryAdapters.values()) {
+      await adapter.disconnect();
+    }
     await this.options.connection.close();
     this.started = false;
     this.closed = true;
@@ -808,6 +1150,43 @@ export class SentinelRuntime {
         submittedAt: fill.filledAt,
       });
     }
+  }
+
+  private async collectTreasuryVenueSnapshots(): Promise<TreasuryVenueSnapshot[]> {
+    const snapshots: TreasuryVenueSnapshot[] = [];
+
+    for (const adapter of this.options.treasuryAdapters.values()) {
+      const [venueState, position] = await Promise.all([
+        adapter.getVenueState(),
+        adapter.getPosition(),
+      ]);
+      snapshots.push({
+        venueId: venueState.venueId,
+        venueName: venueState.venueName,
+        mode: venueState.mode,
+        liquidityTier: venueState.liquidityTier,
+        healthy: venueState.healthy,
+        aprBps: venueState.aprBps,
+        availableCapacityUsd: venueState.availableCapacityUsd,
+        currentAllocationUsd: position.currentAllocationUsd,
+        withdrawalAvailableUsd: position.withdrawalAvailableUsd,
+        concentrationPct: '0.00',
+        updatedAt: position.updatedAt,
+        metadata: venueState.metadata,
+      });
+    }
+
+    return snapshots;
+  }
+
+  private async collectTreasuryVenueCapabilities(): Promise<TreasuryVenueCapabilities[]> {
+    const capabilities: TreasuryVenueCapabilities[] = [];
+
+    for (const adapter of this.options.treasuryAdapters.values()) {
+      capabilities.push(await adapter.getCapabilities());
+    }
+
+    return capabilities;
   }
 
   private async persistExecutionRecord(runId: string, record: OrderRecord): Promise<void> {

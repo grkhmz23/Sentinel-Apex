@@ -4,17 +4,24 @@ import { describe, expect, it, vi } from 'vitest';
 import * as runtimeApiServer from './lib/runtime-api.server';
 import {
   createCommand,
+  createDashboardSession,
   createMismatch,
   createMismatchDetail,
   createOverview,
   createRecoveryEvent,
   createReconciliationFinding,
   createReconciliationRun,
+  createTreasuryAction,
+  createTreasuryAllocation,
+  createTreasuryExecution,
+  createTreasuryPolicy,
+  createTreasurySummary,
 } from './test/fixtures';
 import MismatchDetailPage from '../app/mismatches/[mismatchId]/page';
 import MismatchesPage from '../app/mismatches/page';
 import OverviewPage from '../app/page';
 import ReconciliationPage from '../app/reconciliation/page';
+import TreasuryPage from '../app/treasury/page';
 
 import type { ReactNode } from 'react';
 
@@ -26,8 +33,24 @@ vi.mock('./components/quick-actions', () => ({
   QuickActions: () => <div>Quick actions</div>,
 }));
 
+vi.mock('./components/treasury-actions', () => ({
+  TreasuryActions: () => <div>Treasury actions</div>,
+}));
+
+vi.mock('./components/treasury-action-table', () => ({
+  TreasuryActionTable: () => <div>Treasury action table</div>,
+}));
+
 vi.mock('./components/mismatch-action-panel', () => ({
   MismatchActionPanel: () => <div>Mismatch actions</div>,
+}));
+
+vi.mock('./components/app-shell', () => ({
+  AppShell: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('./lib/auth.server', () => ({
+  requireDashboardSession: vi.fn(async () => createDashboardSession()),
 }));
 
 vi.mock('./lib/runtime-api.server', () => ({
@@ -49,6 +72,16 @@ vi.mock('./lib/runtime-api.server', () => ({
       summary: createOverview().reconciliationSummary,
       runs: [createReconciliationRun()],
       findings: [createReconciliationFinding()],
+    },
+    error: null,
+  })),
+  loadTreasuryPageData: vi.fn(async () => ({
+    data: {
+      summary: createTreasurySummary(),
+      allocations: [createTreasuryAllocation()],
+      policy: createTreasuryPolicy(),
+      actions: [createTreasuryAction()],
+      executions: [createTreasuryExecution()],
     },
     error: null,
   })),
@@ -85,6 +118,14 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Recent reconciliation findings')).toBeInTheDocument();
   });
 
+  it('renders treasury summary, allocations, and actions from server data', async () => {
+    render(await TreasuryPage());
+
+    expect(screen.getByText('Treasury Sleeve')).toBeInTheDocument();
+    expect(screen.getByText('Atlas Treasury T0')).toBeInTheDocument();
+    expect(screen.getByText('Execution History')).toBeInTheDocument();
+  });
+
   it('renders error and empty states when data is unavailable', async () => {
     vi.mocked(runtimeApiServer.loadOverviewPageData).mockResolvedValueOnce({
       data: null,
@@ -97,5 +138,13 @@ describe('ops dashboard pages', () => {
 
     render(await MismatchesPage({ searchParams: {} }));
     expect(screen.getByText('No results')).toBeInTheDocument();
+  });
+
+  it('redirects when no dashboard session is available', async () => {
+    const redirectError = new Error('NEXT_REDIRECT');
+    const authModule = await import('./lib/auth.server');
+    vi.mocked(authModule.requireDashboardSession).mockRejectedValueOnce(redirectError);
+
+    await expect(OverviewPage()).rejects.toThrow('NEXT_REDIRECT');
   });
 });

@@ -1,3 +1,4 @@
+import { AppShell } from '../../../src/components/app-shell';
 import { DefinitionList } from '../../../src/components/definition-list';
 import { EmptyState } from '../../../src/components/empty-state';
 import { ErrorState } from '../../../src/components/error-state';
@@ -5,6 +6,7 @@ import { JsonBlock } from '../../../src/components/json-block';
 import { MismatchActionPanel } from '../../../src/components/mismatch-action-panel';
 import { Panel } from '../../../src/components/panel';
 import { StatusBadge } from '../../../src/components/status-badge';
+import { requireDashboardSession } from '../../../src/lib/auth.server';
 import { formatDateTime } from '../../../src/lib/format';
 import { getMismatchDetail } from '../../../src/lib/runtime-api.server';
 
@@ -13,11 +15,13 @@ export const dynamic = 'force-dynamic';
 export default async function MismatchDetailPage(
   { params }: { params: { mismatchId: string } },
 ): Promise<JSX.Element> {
+  const session = await requireDashboardSession(`/mismatches/${params.mismatchId}`);
   try {
     const detail = await getMismatchDetail(params.mismatchId);
 
     return (
-      <div className="page">
+      <AppShell session={session}>
+        <div className="page">
         <header className="page__header">
           <div>
             <p className="eyebrow">Mismatch Detail</p>
@@ -145,9 +149,14 @@ export default async function MismatchDetailPage(
         <Panel subtitle="Raw mismatch details as persisted" title="Details">
           <JsonBlock value={detail.mismatch.details} />
         </Panel>
-      </div>
+        </div>
+      </AppShell>
     );
   } catch (error) {
-    return <ErrorState message={error instanceof Error ? error.message : 'Failed to load mismatch detail.'} title="Mismatch detail unavailable" />;
+    return (
+      <AppShell session={session}>
+        <ErrorState message={error instanceof Error ? error.message : 'Failed to load mismatch detail.'} title="Mismatch detail unavailable" />
+      </AppShell>
+    );
   }
 }

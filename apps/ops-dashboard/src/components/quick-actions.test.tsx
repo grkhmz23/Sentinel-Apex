@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OperatorProvider } from './operator-context';
 import { QuickActions } from './quick-actions';
+import { createDashboardSession } from '../test/fixtures';
 
 const {
   refresh,
@@ -36,7 +37,7 @@ describe('QuickActions', () => {
     triggerCycle.mockResolvedValueOnce({});
 
     render(
-      <OperatorProvider defaultActorId="ops-user">
+      <OperatorProvider session={createDashboardSession()}>
         <QuickActions />
       </OperatorProvider>,
     );
@@ -58,7 +59,7 @@ describe('QuickActions', () => {
     );
 
     render(
-      <OperatorProvider defaultActorId="ops-user">
+      <OperatorProvider session={createDashboardSession()}>
         <QuickActions />
       </OperatorProvider>,
     );
@@ -74,5 +75,23 @@ describe('QuickActions', () => {
     await waitFor(() => {
       expect(screen.getByText('Reconciliation queued.')).toBeInTheDocument();
     });
+  });
+
+  it('shows read-only gating for viewer sessions', () => {
+    render(
+      <OperatorProvider
+        session={createDashboardSession({
+          operator: {
+            ...createDashboardSession().operator,
+            role: 'viewer',
+          },
+        })}
+      >
+        <QuickActions />
+      </OperatorProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Run Cycle' })).toBeDisabled();
+    expect(screen.getByText('Your role is read-only for runtime actions.')).toBeInTheDocument();
   });
 });

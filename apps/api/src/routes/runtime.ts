@@ -1,6 +1,7 @@
 import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { authenticate } from '../middleware/auth.js';
+import { getRequiredOperator, requireOperatorRole } from '../middleware/operator-auth.js';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -23,21 +24,20 @@ export async function runtimeRoutes(
   );
 
   app.post<{
-    Body: { trigger?: string; triggerReference?: string; triggeredBy?: string };
+    Body: { trigger?: string; triggerReference?: string };
   }>(
     '/api/v1/runtime/reconciliation/run',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
-      const command = await controlPlane.enqueueReconciliationRun('api-runtime-reconciliation', {
+      const operator = getRequiredOperator(request);
+      const command = await controlPlane.enqueueReconciliationRun(operator.operatorId, {
         trigger: request.body.trigger ?? 'api_manual_reconciliation',
         ...(request.body.triggerReference !== undefined
           ? { triggerReference: request.body.triggerReference }
           : {}),
-        ...(request.body.triggeredBy !== undefined
-          ? { triggeredBy: request.body.triggeredBy }
-          : {}),
+        triggeredBy: operator.operatorId,
       });
       return reply.status(202).send({
         data: command,
@@ -49,10 +49,11 @@ export async function runtimeRoutes(
   app.post(
     '/api/v1/runtime/cycles/run',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
-      const command = await controlPlane.enqueueCommand('run_cycle', 'api-runtime-trigger', {
+      const operator = getRequiredOperator(request);
+      const command = await controlPlane.enqueueCommand('run_cycle', operator.operatorId, {
         triggerSource: 'api-runtime-trigger',
       });
       return reply.status(202).send({
@@ -65,12 +66,13 @@ export async function runtimeRoutes(
   app.post(
     '/api/v1/runtime/projections/rebuild',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
+      const operator = getRequiredOperator(request);
       const command = await controlPlane.enqueueCommand(
         'rebuild_projections',
-        'api-runtime-rebuild',
+        operator.operatorId,
       );
       return reply.status(202).send({
         data: command,
@@ -154,16 +156,17 @@ export async function runtimeRoutes(
 
   app.post<{
     Params: { mismatchId: string };
-    Body: { acknowledgedBy: string; summary?: string };
+    Body: { summary?: string };
   }>(
     '/api/v1/runtime/mismatches/:mismatchId/acknowledge',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
+      const operator = getRequiredOperator(request);
       const mismatch = await controlPlane.acknowledgeMismatch(
         request.params.mismatchId,
-        request.body.acknowledgedBy,
+        operator.operatorId,
         request.body.summary ?? null,
       );
 
@@ -186,16 +189,17 @@ export async function runtimeRoutes(
 
   app.post<{
     Params: { mismatchId: string };
-    Body: { recoveryBy: string; summary?: string; commandId?: string; linkedRecoveryEventId?: string };
+    Body: { summary?: string; commandId?: string; linkedRecoveryEventId?: string };
   }>(
     '/api/v1/runtime/mismatches/:mismatchId/recover',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
+      const operator = getRequiredOperator(request);
       const mismatch = await controlPlane.startMismatchRecovery({
         mismatchId: request.params.mismatchId,
-        actorId: request.body.recoveryBy,
+        actorId: operator.operatorId,
         summary: request.body.summary ?? null,
         commandId: request.body.commandId ?? null,
         linkedRecoveryEventId: request.body.linkedRecoveryEventId ?? null,
@@ -210,16 +214,17 @@ export async function runtimeRoutes(
 
   app.post<{
     Params: { mismatchId: string };
-    Body: { remediationBy: string; actionType: 'run_cycle' | 'rebuild_projections'; summary?: string };
+    Body: { actionType: 'run_cycle' | 'rebuild_projections'; summary?: string };
   }>(
     '/api/v1/runtime/mismatches/:mismatchId/remediate',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
+      const operator = getRequiredOperator(request);
       const remediation = await controlPlane.remediateMismatch({
         mismatchId: request.params.mismatchId,
-        actorId: request.body.remediationBy,
+        actorId: operator.operatorId,
         remediationType: request.body.actionType,
         summary: request.body.summary ?? null,
       });
@@ -271,16 +276,17 @@ export async function runtimeRoutes(
 
   app.post<{
     Params: { mismatchId: string };
-    Body: { resolvedBy: string; summary: string; commandId?: string; linkedRecoveryEventId?: string };
+    Body: { summary: string; commandId?: string; linkedRecoveryEventId?: string };
   }>(
     '/api/v1/runtime/mismatches/:mismatchId/resolve',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
+      const operator = getRequiredOperator(request);
       const mismatch = await controlPlane.resolveMismatch({
         mismatchId: request.params.mismatchId,
-        actorId: request.body.resolvedBy,
+        actorId: operator.operatorId,
         summary: request.body.summary,
         commandId: request.body.commandId ?? null,
         linkedRecoveryEventId: request.body.linkedRecoveryEventId ?? null,
@@ -295,16 +301,17 @@ export async function runtimeRoutes(
 
   app.post<{
     Params: { mismatchId: string };
-    Body: { verifiedBy: string; summary: string; outcome?: 'verified' | 'failed' };
+    Body: { summary: string; outcome?: 'verified' | 'failed' };
   }>(
     '/api/v1/runtime/mismatches/:mismatchId/verify',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
+      const operator = getRequiredOperator(request);
       const mismatch = await controlPlane.verifyMismatch({
         mismatchId: request.params.mismatchId,
-        actorId: request.body.verifiedBy,
+        actorId: operator.operatorId,
         summary: request.body.summary,
         ...(request.body.outcome !== undefined ? { outcome: request.body.outcome } : {}),
       });
@@ -318,16 +325,17 @@ export async function runtimeRoutes(
 
   app.post<{
     Params: { mismatchId: string };
-    Body: { reopenedBy: string; summary: string };
+    Body: { summary: string };
   }>(
     '/api/v1/runtime/mismatches/:mismatchId/reopen',
     {
-      preHandler: authenticate,
+      preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
+      const operator = getRequiredOperator(request);
       const mismatch = await controlPlane.reopenMismatch(
         request.params.mismatchId,
-        request.body.reopenedBy,
+        operator.operatorId,
         request.body.summary,
       );
 
