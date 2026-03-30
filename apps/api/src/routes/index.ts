@@ -1,5 +1,6 @@
 import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
+import { allocatorRoutes } from './allocator.js';
 import { controlRoutes } from './control.js';
 import { eventRoutes } from './events.js';
 import { healthRoutes } from './health.js';
@@ -32,6 +33,12 @@ import type { FastifyInstance } from 'fastify';
  *   GET  /api/v1/positions/:id                 — single position (auth)
  *   GET  /api/v1/opportunities                 — list opportunities (auth)
  *   POST /api/v1/runtime/reconciliation/run    — queue explicit reconciliation run (auth)
+ *   GET  /api/v1/allocator/summary            — latest allocator summary (auth)
+ *   GET  /api/v1/allocator/targets            — latest allocator current-vs-target sleeve allocations (auth)
+ *   GET  /api/v1/allocator/decisions          — allocator decision history (auth)
+ *   GET  /api/v1/allocator/decisions/:allocatorRunId — allocator decision detail (auth)
+ *   GET  /api/v1/allocator/runs               — allocator run history (auth)
+ *   POST /api/v1/allocator/evaluate           — queue explicit allocator evaluation (auth)
  *   GET  /api/v1/runtime/reconciliation/runs   — reconciliation runs (auth)
  *   GET  /api/v1/runtime/reconciliation/runs/:id — reconciliation run detail (auth)
  *   GET  /api/v1/runtime/reconciliation/findings — reconciliation findings (auth)
@@ -77,6 +84,7 @@ export async function registerRoutes(
   await app.register(healthRoutes);
 
   // Authenticated API routes
+  await allocatorRoutes(app, controlPlane);
   await portfolioRoutes(app, controlPlane);
   await riskRoutes(app, controlPlane);
   await orderRoutes(app, controlPlane);

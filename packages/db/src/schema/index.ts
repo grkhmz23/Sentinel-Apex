@@ -4,6 +4,17 @@
 
 export { auditEvents } from './audit.js';
 
+export {
+  allocatorCurrent,
+  allocatorRebalanceCurrent,
+  allocatorRebalanceExecutions,
+  allocatorRebalanceProposalIntents,
+  allocatorRebalanceProposals,
+  allocatorRecommendations,
+  allocatorRuns,
+  allocatorSleeveTargets,
+} from './allocator.js';
+
 export { orders, fills } from './orders.js';
 
 export { positions } from './positions.js';

@@ -18,6 +18,10 @@ import {
 import { DatabaseAuditWriter, RuntimeStore } from './store.js';
 
 import type {
+  AllocatorDecisionDetailView,
+  AllocatorRunView,
+  AllocatorSleeveTargetView,
+  AllocatorSummaryView,
   AuditEventView,
   OpportunityView,
   OrderView,
@@ -25,6 +29,9 @@ import type {
   PortfolioSnapshotView,
   PortfolioSummaryView,
   PositionView,
+  RebalanceCurrentView,
+  RebalanceProposalDetailView,
+  RebalanceProposalView,
   RiskBreachView,
   RiskSummaryView,
   RuntimeCommandType,
@@ -60,7 +67,7 @@ import type {
   WorkerStatusView,
 } from './types.js';
 
-function canSatisfyTreasuryApproval(
+function canSatisfyApprovalRequirement(
   actorRole: 'viewer' | 'operator' | 'admin',
   requiredRole: 'operator' | 'admin',
 ): boolean {
@@ -142,7 +149,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
   }
 
   async getRuntimeOverview(): Promise<RuntimeOverviewView> {
-    const [runtime, worker, openMismatchCount, mismatchSummary, lastRecoveryEvent, latestReconciliationRun, reconciliationSummary, treasurySummary] = await Promise.all([
+    const [runtime, worker, openMismatchCount, mismatchSummary, lastRecoveryEvent, latestReconciliationRun, reconciliationSummary, treasurySummary, allocatorSummary] = await Promise.all([
       this.store.getRuntimeStatus(),
       this.store.getWorkerStatus(),
       this.store.countOpenMismatches(),
@@ -151,6 +158,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       this.store.getLatestReconciliationRun(),
       this.store.summarizeLatestReconciliation(),
       this.store.getTreasurySummary(),
+      this.store.getAllocatorSummary(),
     ]);
 
     const degradedReasons = [
@@ -170,6 +178,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       latestReconciliationRun,
       reconciliationSummary,
       treasurySummary,
+      allocatorSummary,
     };
   }
 
@@ -266,6 +275,49 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.enqueueCommand('run_treasury_evaluation', requestedBy, payload);
   }
 
+  async enqueueAllocatorEvaluation(
+    requestedBy: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<RuntimeCommandView> {
+    return this.enqueueCommand('run_allocator_evaluation', requestedBy, payload);
+  }
+
+  async getAllocatorSummary(): Promise<AllocatorSummaryView | null> {
+    return this.store.getAllocatorSummary();
+  }
+
+  async listAllocatorTargets(limit = 20): Promise<AllocatorSleeveTargetView[]> {
+    return this.store.listAllocatorTargets(limit);
+  }
+
+  async listAllocatorRuns(limit = 20): Promise<AllocatorRunView[]> {
+    return this.store.listAllocatorRuns(limit);
+  }
+
+  async getAllocatorDecision(
+    allocatorRunId: string,
+  ): Promise<AllocatorDecisionDetailView | null> {
+    return this.store.getAllocatorDecision(allocatorRunId);
+  }
+
+  async listRebalanceProposals(limit = 50): Promise<RebalanceProposalView[]> {
+    return this.store.listRebalanceProposals(limit);
+  }
+
+  async listRebalanceProposalsForDecision(
+    allocatorRunId: string,
+  ): Promise<RebalanceProposalView[]> {
+    return this.store.listRebalanceProposalsForDecision(allocatorRunId);
+  }
+
+  async getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null> {
+    return this.store.getRebalanceProposal(proposalId);
+  }
+
+  async getRebalanceCurrent(): Promise<RebalanceCurrentView | null> {
+    return this.store.getRebalanceCurrent();
+  }
+
   async getTreasurySummary(): Promise<TreasurySummaryView | null> {
     return this.store.getTreasurySummary();
   }
@@ -320,7 +372,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       throw new Error('Treasury action is blocked and cannot be approved.');
     }
 
-    if (!canSatisfyTreasuryApproval(actorRole, detail.action.approvalRequirement)) {
+    if (!canSatisfyApprovalRequirement(actorRole, detail.action.approvalRequirement)) {
       throw new Error(
         `Treasury action requires ${detail.action.approvalRequirement} approval.`,
       );
@@ -361,7 +413,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       throw new Error('Treasury action must be approved before execution.');
     }
 
-    if (!canSatisfyTreasuryApproval(actorRole, detail.action.approvalRequirement)) {
+    if (!canSatisfyApprovalRequirement(actorRole, detail.action.approvalRequirement)) {
       throw new Error(
         `Treasury action requires ${detail.action.approvalRequirement} approval.`,
       );
@@ -390,6 +442,95 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     });
 
     return command;
+  }
+
+  async approveRebalanceProposal(
+    proposalId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+  ): Promise<RuntimeCommandView | null> {
+    const detail = await this.store.getRebalanceProposal(proposalId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (!detail.proposal.executable || detail.proposal.blockedReasons.length > 0) {
+      throw new Error('Rebalance proposal is blocked and cannot be approved.');
+    }
+
+    if (!canSatisfyApprovalRequirement(actorRole, detail.proposal.approvalRequirement)) {
+      throw new Error(
+        `Rebalance proposal requires ${detail.proposal.approvalRequirement} approval.`,
+      );
+    }
+
+    if (detail.proposal.status !== 'proposed') {
+      throw new Error(`Rebalance proposal cannot be approved from status "${detail.proposal.status}".`);
+    }
+
+    await this.store.approveRebalanceProposal(proposalId, actorId);
+    const command = await this.enqueueCommand('execute_rebalance_proposal', actorId, {
+      proposalId,
+      actorId,
+    });
+    await this.store.queueRebalanceProposalExecution({
+      proposalId,
+      commandId: command.commandId,
+    });
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'allocator.rebalance_approved',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'allocator',
+      data: {
+        proposalId,
+        allocatorRunId: detail.proposal.allocatorRunId,
+        commandId: command.commandId,
+      },
+    });
+
+    return command;
+  }
+
+  async rejectRebalanceProposal(
+    proposalId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+    reason: string,
+  ): Promise<RebalanceProposalView | null> {
+    const detail = await this.store.getRebalanceProposal(proposalId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (!canSatisfyApprovalRequirement(actorRole, detail.proposal.approvalRequirement)) {
+      throw new Error(
+        `Rebalance proposal requires ${detail.proposal.approvalRequirement} approval.`,
+      );
+    }
+
+    if (detail.proposal.status !== 'proposed') {
+      throw new Error(`Rebalance proposal cannot be rejected from status "${detail.proposal.status}".`);
+    }
+
+    const rejected = await this.store.rejectRebalanceProposal(proposalId, actorId, reason);
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'allocator.rebalance_rejected',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'allocator',
+      data: {
+        proposalId,
+        allocatorRunId: detail.proposal.allocatorRunId,
+        reason,
+      },
+    });
+
+    return rejected;
   }
 
   async listReconciliationRuns(limit = 50): Promise<RuntimeReconciliationRunView[]> {

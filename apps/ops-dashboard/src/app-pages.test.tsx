@@ -3,11 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import * as runtimeApiServer from './lib/runtime-api.server';
 import {
+  createAllocatorDecisionDetail,
+  createAllocatorRun,
+  createAllocatorSummary,
+  createAllocatorTarget,
   createCommand,
   createDashboardSession,
   createMismatch,
   createMismatchDetail,
   createOverview,
+  createRebalanceProposal,
+  createRebalanceProposalDetail,
   createRecoveryEvent,
   createReconciliationFinding,
   createReconciliationRun,
@@ -21,6 +27,9 @@ import {
   createTreasuryVenue,
   createTreasuryVenueDetail,
 } from './test/fixtures';
+import AllocatorDecisionPage from '../app/allocator/decisions/[allocatorRunId]/page';
+import AllocatorPage from '../app/allocator/page';
+import RebalanceProposalPage from '../app/allocator/rebalance-proposals/[proposalId]/page';
 import MismatchDetailPage from '../app/mismatches/[mismatchId]/page';
 import MismatchesPage from '../app/mismatches/page';
 import OverviewPage from '../app/page';
@@ -49,6 +58,10 @@ vi.mock('./components/treasury-action-table', () => ({
   TreasuryActionTable: () => <div>Treasury action table</div>,
 }));
 
+vi.mock('./components/rebalance-proposal-actions', () => ({
+  RebalanceProposalActions: () => <div>Rebalance proposal actions</div>,
+}));
+
 vi.mock('./components/mismatch-action-panel', () => ({
   MismatchActionPanel: () => <div>Mismatch actions</div>,
 }));
@@ -70,6 +83,28 @@ vi.mock('./lib/runtime-api.server', () => ({
       recoveryOutcomes: [createRecoveryEvent()],
       reconciliationRuns: [createReconciliationRun()],
       activeFindings: [createReconciliationFinding()],
+    },
+    error: null,
+  })),
+  loadAllocatorPageData: vi.fn(async () => ({
+    data: {
+      summary: createAllocatorSummary(),
+      targets: [createAllocatorTarget()],
+      decisions: [createAllocatorRun()],
+      rebalanceProposals: [createRebalanceProposal()],
+    },
+    error: null,
+  })),
+  loadAllocatorDecisionPageData: vi.fn(async () => ({
+    data: {
+      detail: createAllocatorDecisionDetail(),
+      rebalanceProposals: [createRebalanceProposal()],
+    },
+    error: null,
+  })),
+  loadRebalanceProposalPageData: vi.fn(async () => ({
+    data: {
+      detail: createRebalanceProposalDetail(),
     },
     error: null,
   })),
@@ -141,6 +176,27 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Mismatch Detail')).toBeInTheDocument();
     expect(screen.getByText('Safe operator controls')).toBeInTheDocument();
     expect(screen.getByText('Remediation History')).toBeInTheDocument();
+  });
+
+  it('renders allocator overview and decision detail views', async () => {
+    render(await AllocatorPage());
+
+    expect(screen.getByText('Allocator')).toBeInTheDocument();
+    expect(screen.getByText('Current versus target budget per sleeve')).toBeInTheDocument();
+    expect(screen.getByText('Decision History')).toBeInTheDocument();
+    expect(screen.getByText('Rebalance Proposals')).toBeInTheDocument();
+
+    render(await AllocatorDecisionPage({ params: { allocatorRunId: 'allocator-run-1' } }));
+
+    expect(screen.getByText('Allocator Decision Detail')).toBeInTheDocument();
+    expect(screen.getByText('Per-sleeve budget targets')).toBeInTheDocument();
+    expect(screen.getByText('Persisted rebalance and budget recommendations')).toBeInTheDocument();
+
+    render(await RebalanceProposalPage({ params: { proposalId: 'rebalance-proposal-1' } }));
+
+    expect(screen.getByText('Rebalance Proposal Detail')).toBeInTheDocument();
+    expect(screen.getByText('Sleeve Intents')).toBeInTheDocument();
+    expect(screen.getByText('Execution outcomes linked to the proposal command rail')).toBeInTheDocument();
   });
 
   it('renders reconciliation runs and findings from server data', async () => {

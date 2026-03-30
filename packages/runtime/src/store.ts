@@ -1,6 +1,21 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 
+import type {
+  AllocatorDecision,
+  AllocatorPolicy,
+  AllocatorRationale,
+  RebalanceBlockedReason,
+  RebalanceProposal,
+} from '@sentinel-apex/allocator';
 import {
+  allocatorCurrent,
+  allocatorRebalanceCurrent,
+  allocatorRebalanceExecutions,
+  allocatorRebalanceProposalIntents,
+  allocatorRebalanceProposals,
+  allocatorRecommendations,
+  allocatorRuns,
+  allocatorSleeveTargets,
   auditEvents,
   executionEvents,
   fills,
@@ -41,6 +56,11 @@ import type {
 } from '@sentinel-apex/treasury';
 
 import type {
+  AllocatorDecisionDetailView,
+  AllocatorRecommendationView,
+  AllocatorRunView,
+  AllocatorSleeveTargetView,
+  AllocatorSummaryView,
   AuditEventView,
   OpportunityView,
   OrderView,
@@ -49,6 +69,11 @@ import type {
   PortfolioSnapshotView,
   PortfolioSummaryView,
   PositionView,
+  RebalanceCurrentView,
+  RebalanceExecutionView,
+  RebalanceProposalDetailView,
+  RebalanceProposalIntentView,
+  RebalanceProposalView,
   RiskBreachView,
   RuntimeCommandStatus,
   RuntimeCommandType,
@@ -153,6 +178,64 @@ function asStringArray(value: unknown): string[] {
   }
 
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function asAllocatorRationales(value: unknown): AllocatorRationale[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const code = record['code'];
+    const severity = record['severity'];
+    const summary = record['summary'];
+    if (typeof code !== 'string' || typeof severity !== 'string' || typeof summary !== 'string') {
+      return [];
+    }
+
+    return [{
+      code,
+      severity: severity as AllocatorRationale['severity'],
+      summary,
+      details: asJsonObject(record['details']),
+    }];
+  });
+}
+
+function asRebalanceBlockedReasons(value: unknown): RebalanceBlockedReason[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const code = record['code'];
+    const message = record['message'];
+    const operatorAction = record['operatorAction'];
+    if (
+      typeof code !== 'string'
+      || typeof message !== 'string'
+      || typeof operatorAction !== 'string'
+    ) {
+      return [];
+    }
+
+    return [{
+      code: code as RebalanceBlockedReason['code'],
+      message,
+      operatorAction,
+      details: asJsonObject(record['details']),
+    }];
+  });
 }
 
 function buildTreasuryVenueReadinessLabel(input: {
@@ -528,6 +611,179 @@ function mapTreasuryExecutionRow(
     createdAt: row.createdAt.toISOString(),
     startedAt: toIsoString(row.startedAt),
     completedAt: toIsoString(row.completedAt),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapAllocatorSummaryRow(row: typeof allocatorRuns.$inferSelect): AllocatorSummaryView {
+  const summary = asJsonObject(row.summary);
+  return {
+    allocatorRunId: row.allocatorRunId,
+    sourceRunId: row.sourceRunId ?? null,
+    trigger: row.trigger,
+    triggeredBy: row.triggeredBy ?? null,
+    regimeState: row.regimeState as AllocatorSummaryView['regimeState'],
+    pressureLevel: row.pressureLevel as AllocatorSummaryView['pressureLevel'],
+    totalCapitalUsd: row.totalCapitalUsd,
+    reserveConstrainedCapitalUsd: row.reserveConstrainedCapitalUsd,
+    allocatableCapitalUsd: row.allocatableCapitalUsd,
+    carryTargetPct: Number(summary['carryTargetPct'] ?? 0),
+    treasuryTargetPct: Number(summary['treasuryTargetPct'] ?? 0),
+    recommendationCount: row.recommendationCount,
+    evaluatedAt: row.evaluatedAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapAllocatorRunRow(row: typeof allocatorRuns.$inferSelect): AllocatorRunView {
+  return {
+    allocatorRunId: row.allocatorRunId,
+    sourceRunId: row.sourceRunId ?? null,
+    trigger: row.trigger,
+    triggeredBy: row.triggeredBy ?? null,
+    regimeState: row.regimeState as AllocatorRunView['regimeState'],
+    pressureLevel: row.pressureLevel as AllocatorRunView['pressureLevel'],
+    totalCapitalUsd: row.totalCapitalUsd,
+    reserveConstrainedCapitalUsd: row.reserveConstrainedCapitalUsd,
+    allocatableCapitalUsd: row.allocatableCapitalUsd,
+    recommendationCount: row.recommendationCount,
+    rationale: asAllocatorRationales(row.rationale),
+    constraints: Array.isArray(row.constraints) ? row.constraints as AllocatorRunView['constraints'] : [],
+    inputSnapshot: asJsonObject(row.inputSnapshot),
+    policySnapshot: asJsonObject(row.policySnapshot),
+    evaluatedAt: row.evaluatedAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapAllocatorTargetRow(
+  row: typeof allocatorSleeveTargets.$inferSelect,
+): AllocatorSleeveTargetView {
+  return {
+    allocatorRunId: row.allocatorRunId,
+    sleeveId: row.sleeveId as AllocatorSleeveTargetView['sleeveId'],
+    sleeveKind: row.sleeveKind as AllocatorSleeveTargetView['sleeveKind'],
+    sleeveName: row.sleeveName,
+    status: row.status,
+    throttleState: row.throttleState,
+    currentAllocationUsd: row.currentAllocationUsd,
+    currentAllocationPct: Number(row.currentAllocationPct),
+    targetAllocationUsd: row.targetAllocationUsd,
+    targetAllocationPct: Number(row.targetAllocationPct),
+    minAllocationPct: Number(row.minAllocationPct),
+    maxAllocationPct: Number(row.maxAllocationPct),
+    deltaUsd: row.deltaUsd,
+    opportunityScore: row.opportunityScore === null ? null : Number(row.opportunityScore),
+    capacityUsd: row.capacityUsd ?? null,
+    rationale: asAllocatorRationales(row.rationale),
+    metadata: asJsonObject(row.metadata),
+  };
+}
+
+function mapAllocatorRecommendationRow(
+  row: typeof allocatorRecommendations.$inferSelect,
+): AllocatorRecommendationView {
+  return {
+    id: row.id,
+    allocatorRunId: row.allocatorRunId,
+    sleeveId: row.sleeveId as AllocatorRecommendationView['sleeveId'],
+    recommendationType: row.recommendationType,
+    priority: row.priority as AllocatorRecommendationView['priority'],
+    summary: row.summary,
+    details: asJsonObject(row.details),
+    rationale: asAllocatorRationales(row.rationale),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapRebalanceProposalRow(
+  row: typeof allocatorRebalanceProposals.$inferSelect,
+): RebalanceProposalView {
+  return {
+    id: row.id,
+    allocatorRunId: row.allocatorRunId,
+    actionType: row.actionType as RebalanceProposalView['actionType'],
+    status: row.status as RebalanceProposalView['status'],
+    summary: row.summary,
+    executionMode: row.executionMode as RebalanceProposalView['executionMode'],
+    simulated: row.simulated,
+    executable: row.executable,
+    approvalRequirement: row.approvalRequirement as RebalanceProposalView['approvalRequirement'],
+    rationale: asAllocatorRationales(row.rationale),
+    blockedReasons: asRebalanceBlockedReasons(row.blockedReasons),
+    details: asJsonObject(row.details),
+    approvedBy: row.approvedBy ?? null,
+    approvedAt: toIsoString(row.approvedAt),
+    rejectedBy: row.rejectedBy ?? null,
+    rejectedAt: toIsoString(row.rejectedAt),
+    rejectionReason: row.rejectionReason ?? null,
+    linkedCommandId: row.linkedCommandId ?? null,
+    latestExecutionId: row.latestExecutionId ?? null,
+    lastError: row.lastError ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapRebalanceIntentRow(
+  row: typeof allocatorRebalanceProposalIntents.$inferSelect,
+): RebalanceProposalIntentView {
+  return {
+    id: row.id,
+    proposalId: row.proposalId,
+    sleeveId: row.sleeveId as RebalanceProposalIntentView['sleeveId'],
+    sourceSleeveId: row.sourceSleeveId as RebalanceProposalIntentView['sourceSleeveId'],
+    targetSleeveId: row.targetSleeveId as RebalanceProposalIntentView['targetSleeveId'],
+    actionType: row.actionType as RebalanceProposalIntentView['actionType'],
+    status: row.status as RebalanceProposalIntentView['status'],
+    readiness: row.readiness as RebalanceProposalIntentView['readiness'],
+    executable: row.executable,
+    currentAllocationUsd: row.currentAllocationUsd,
+    currentAllocationPct: Number(row.currentAllocationPct),
+    targetAllocationUsd: row.targetAllocationUsd,
+    targetAllocationPct: Number(row.targetAllocationPct),
+    deltaUsd: row.deltaUsd,
+    rationale: asAllocatorRationales(row.rationale),
+    blockedReasons: asRebalanceBlockedReasons(row.blockedReasons),
+    details: asJsonObject(row.details),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapRebalanceExecutionRow(
+  row: typeof allocatorRebalanceExecutions.$inferSelect,
+): RebalanceExecutionView {
+  return {
+    id: row.id,
+    proposalId: row.proposalId,
+    commandId: row.commandId ?? null,
+    status: row.status as RebalanceExecutionView['status'],
+    executionMode: row.executionMode as RebalanceExecutionView['executionMode'],
+    simulated: row.simulated,
+    requestedBy: row.requestedBy,
+    startedBy: row.startedBy ?? null,
+    outcomeSummary: row.outcomeSummary ?? null,
+    outcome: asJsonObject(row.outcome),
+    lastError: row.lastError ?? null,
+    createdAt: row.createdAt.toISOString(),
+    startedAt: toIsoString(row.startedAt),
+    completedAt: toIsoString(row.completedAt),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapRebalanceCurrentRow(
+  row: typeof allocatorRebalanceCurrent.$inferSelect,
+): RebalanceCurrentView {
+  return {
+    allocatorRunId: row.allocatorRunId,
+    latestProposalId: row.latestProposalId ?? null,
+    carryTargetAllocationUsd: row.carryTargetAllocationUsd,
+    carryTargetAllocationPct: Number(row.carryTargetAllocationPct),
+    treasuryTargetAllocationUsd: row.treasuryTargetAllocationUsd,
+    treasuryTargetAllocationPct: Number(row.treasuryTargetAllocationPct),
+    appliedAt: row.appliedAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -2880,6 +3136,538 @@ export class RuntimeStore {
       isActionable: isMismatchActionable(mismatch.status, remediationInFlight),
       remediationInFlight,
     };
+  }
+
+  async persistAllocatorEvaluation(input: {
+    allocatorRunId: string;
+    sourceRunId?: string | null;
+    trigger: string;
+    triggeredBy?: string | null;
+    policy: AllocatorPolicy;
+    evaluationInput: Record<string, unknown>;
+    decision: AllocatorDecision;
+    evaluatedAt: Date;
+  }): Promise<void> {
+    const carryTarget = input.decision.targets.find((target) => target.sleeveId === 'carry');
+    const treasuryTarget = input.decision.targets.find((target) => target.sleeveId === 'treasury');
+
+    await this.db.insert(allocatorRuns).values({
+      allocatorRunId: input.allocatorRunId,
+      sourceRunId: input.sourceRunId ?? null,
+      trigger: input.trigger,
+      triggeredBy: input.triggeredBy ?? null,
+      regimeState: input.decision.regimeState,
+      pressureLevel: input.decision.pressureLevel,
+      totalCapitalUsd: input.decision.totalCapitalUsd,
+      reserveConstrainedCapitalUsd: input.decision.reserveConstrainedCapitalUsd,
+      allocatableCapitalUsd: input.decision.allocatableCapitalUsd,
+      inputSnapshot: input.evaluationInput,
+      policySnapshot: input.policy as unknown as Record<string, unknown>,
+      rationale: input.decision.rationale as unknown as Record<string, unknown>[],
+      constraints: input.decision.constraints as unknown as Record<string, unknown>[],
+      summary: {
+        carryTargetPct: carryTarget?.targetAllocationPct ?? 0,
+        treasuryTargetPct: treasuryTarget?.targetAllocationPct ?? 0,
+        targetCount: input.decision.targets.length,
+      },
+      recommendationCount: input.decision.recommendations.length,
+      evaluatedAt: input.evaluatedAt,
+      updatedAt: input.evaluatedAt,
+    });
+
+    if (input.decision.targets.length > 0) {
+      await this.db.insert(allocatorSleeveTargets).values(
+        input.decision.targets.map((target) => ({
+          allocatorRunId: input.allocatorRunId,
+          sleeveId: target.sleeveId,
+          sleeveKind: target.sleeveKind,
+          sleeveName: target.sleeveName,
+          status: target.status,
+          throttleState: target.throttleState,
+          currentAllocationUsd: target.currentAllocationUsd,
+          currentAllocationPct: target.currentAllocationPct.toFixed(4),
+          targetAllocationUsd: target.targetAllocationUsd,
+          targetAllocationPct: target.targetAllocationPct.toFixed(4),
+          minAllocationPct: target.minAllocationPct.toFixed(4),
+          maxAllocationPct: target.maxAllocationPct.toFixed(4),
+          deltaUsd: target.deltaUsd,
+          opportunityScore: target.opportunityScore === null ? null : target.opportunityScore.toFixed(4),
+          capacityUsd: target.capacityUsd,
+          rationale: target.rationale as unknown as Record<string, unknown>[],
+          metadata: target.metadata,
+          updatedAt: input.evaluatedAt,
+        })),
+      );
+    }
+
+    if (input.decision.recommendations.length > 0) {
+      await this.db.insert(allocatorRecommendations).values(
+        input.decision.recommendations.map((recommendation) => ({
+          allocatorRunId: input.allocatorRunId,
+          sleeveId: recommendation.sleeveId,
+          recommendationType: recommendation.recommendationType,
+          priority: recommendation.priority,
+          summary: recommendation.summary,
+          details: recommendation.details,
+          rationale: recommendation.rationale as unknown as Record<string, unknown>[],
+        })),
+      );
+    }
+
+    const currentSummary = {
+      allocatorRunId: input.allocatorRunId,
+      sourceRunId: input.sourceRunId ?? null,
+      trigger: input.trigger,
+      triggeredBy: input.triggeredBy ?? null,
+      regimeState: input.decision.regimeState,
+      pressureLevel: input.decision.pressureLevel,
+      totalCapitalUsd: input.decision.totalCapitalUsd,
+      reserveConstrainedCapitalUsd: input.decision.reserveConstrainedCapitalUsd,
+      allocatableCapitalUsd: input.decision.allocatableCapitalUsd,
+      carryTargetPct: carryTarget?.targetAllocationPct ?? 0,
+      treasuryTargetPct: treasuryTarget?.targetAllocationPct ?? 0,
+      recommendationCount: input.decision.recommendations.length,
+      evaluatedAt: input.evaluatedAt.toISOString(),
+    };
+
+    await this.db
+      .insert(allocatorCurrent)
+      .values({
+        id: 'primary',
+        latestAllocatorRunId: input.allocatorRunId,
+        summary: currentSummary,
+        updatedAt: input.evaluatedAt,
+      })
+      .onConflictDoUpdate({
+        target: allocatorCurrent.id,
+        set: {
+          latestAllocatorRunId: input.allocatorRunId,
+          summary: currentSummary,
+          updatedAt: input.evaluatedAt,
+        },
+      });
+  }
+
+  async getAllocatorSummary(): Promise<AllocatorSummaryView | null> {
+    const [current] = await this.db
+      .select()
+      .from(allocatorCurrent)
+      .where(eq(allocatorCurrent.id, 'primary'))
+      .limit(1);
+
+    if (current === undefined) {
+      return null;
+    }
+
+    const [runRow] = await this.db
+      .select()
+      .from(allocatorRuns)
+      .where(eq(allocatorRuns.allocatorRunId, current.latestAllocatorRunId))
+      .limit(1);
+
+    return runRow === undefined ? null : mapAllocatorSummaryRow(runRow);
+  }
+
+  async listAllocatorTargets(limit = 20): Promise<AllocatorSleeveTargetView[]> {
+    const runs = await this.listAllocatorRuns(limit);
+    const latestRunId = runs[0]?.allocatorRunId;
+    if (latestRunId === undefined) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select()
+      .from(allocatorSleeveTargets)
+      .where(eq(allocatorSleeveTargets.allocatorRunId, latestRunId));
+
+    return rows.map(mapAllocatorTargetRow);
+  }
+
+  async listAllocatorRuns(limit = 20): Promise<AllocatorRunView[]> {
+    const rows = await this.db
+      .select()
+      .from(allocatorRuns)
+      .orderBy(desc(allocatorRuns.evaluatedAt))
+      .limit(limit);
+
+    return rows.map(mapAllocatorRunRow);
+  }
+
+  async getAllocatorDecision(
+    allocatorRunId: string,
+  ): Promise<AllocatorDecisionDetailView | null> {
+    const [runRow] = await this.db
+      .select()
+      .from(allocatorRuns)
+      .where(eq(allocatorRuns.allocatorRunId, allocatorRunId))
+      .limit(1);
+
+    if (runRow === undefined) {
+      return null;
+    }
+
+    const [summary, targetRows, recommendationRows] = await Promise.all([
+      this.getAllocatorSummary(),
+      this.db
+        .select()
+        .from(allocatorSleeveTargets)
+        .where(eq(allocatorSleeveTargets.allocatorRunId, allocatorRunId)),
+      this.db
+        .select()
+        .from(allocatorRecommendations)
+        .where(eq(allocatorRecommendations.allocatorRunId, allocatorRunId))
+        .orderBy(desc(allocatorRecommendations.createdAt)),
+    ]);
+
+    return {
+      run: mapAllocatorRunRow(runRow),
+      summary,
+      targets: targetRows.map(mapAllocatorTargetRow),
+      recommendations: recommendationRows.map(mapAllocatorRecommendationRow),
+      rationale: asAllocatorRationales(runRow.rationale),
+      constraints: Array.isArray(runRow.constraints)
+        ? runRow.constraints as AllocatorDecisionDetailView['constraints']
+        : [],
+    };
+  }
+
+  async createRebalanceProposal(input: {
+    proposal: RebalanceProposal;
+    createdAt: Date;
+  }): Promise<RebalanceProposalView> {
+    const [row] = await this.db
+      .insert(allocatorRebalanceProposals)
+      .values({
+        allocatorRunId: input.proposal.allocatorRunId,
+        actionType: input.proposal.actionType,
+        status: input.proposal.status,
+        summary: input.proposal.summary,
+        executionMode: input.proposal.executionMode,
+        simulated: input.proposal.simulated,
+        executable: input.proposal.executable,
+        approvalRequirement: input.proposal.approvalRequirement,
+        rationale: input.proposal.rationale as unknown as Record<string, unknown>[],
+        blockedReasons: input.proposal.blockedReasons as unknown as Record<string, unknown>[],
+        details: input.proposal.details,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createRebalanceProposal: proposal was not persisted');
+    }
+
+    if (input.proposal.intents.length > 0) {
+      await this.db.insert(allocatorRebalanceProposalIntents).values(
+        input.proposal.intents.map((intent: RebalanceProposal['intents'][number]) => ({
+          proposalId: row['id'],
+          sleeveId: intent.sleeveId,
+          sourceSleeveId: intent.sourceSleeveId,
+          targetSleeveId: intent.targetSleeveId,
+          actionType: intent.actionType,
+          status: intent.status,
+          readiness: intent.readiness,
+          executable: intent.executable,
+          currentAllocationUsd: intent.currentAllocationUsd,
+          currentAllocationPct: intent.currentAllocationPct.toFixed(4),
+          targetAllocationUsd: intent.targetAllocationUsd,
+          targetAllocationPct: intent.targetAllocationPct.toFixed(4),
+          deltaUsd: intent.deltaUsd,
+          rationale: intent.rationale as unknown as Record<string, unknown>[],
+          blockedReasons: intent.blockedReasons as unknown as Record<string, unknown>[],
+          details: intent.details,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        })),
+      );
+    }
+
+    return mapRebalanceProposalRow(row);
+  }
+
+  async listRebalanceProposals(limit = 50): Promise<RebalanceProposalView[]> {
+    const rows = await this.db
+      .select()
+      .from(allocatorRebalanceProposals)
+      .orderBy(desc(allocatorRebalanceProposals.createdAt))
+      .limit(limit);
+
+    return rows.map(mapRebalanceProposalRow);
+  }
+
+  async listRebalanceProposalsForDecision(
+    allocatorRunId: string,
+  ): Promise<RebalanceProposalView[]> {
+    const rows = await this.db
+      .select()
+      .from(allocatorRebalanceProposals)
+      .where(eq(allocatorRebalanceProposals.allocatorRunId, allocatorRunId))
+      .orderBy(desc(allocatorRebalanceProposals.createdAt));
+
+    return rows.map(mapRebalanceProposalRow);
+  }
+
+  async getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null> {
+    const [proposalRow] = await this.db
+      .select()
+      .from(allocatorRebalanceProposals)
+      .where(eq(allocatorRebalanceProposals.id, proposalId))
+      .limit(1);
+
+    if (proposalRow === undefined) {
+      return null;
+    }
+
+    const [intentRows, executionRows, latestCommand, currentState] = await Promise.all([
+      this.db
+        .select()
+        .from(allocatorRebalanceProposalIntents)
+        .where(eq(allocatorRebalanceProposalIntents.proposalId, proposalRow['id']))
+        .orderBy(desc(allocatorRebalanceProposalIntents.createdAt)),
+      this.db
+        .select()
+        .from(allocatorRebalanceExecutions)
+        .where(eq(allocatorRebalanceExecutions.proposalId, proposalRow['id']))
+        .orderBy(desc(allocatorRebalanceExecutions.createdAt)),
+      proposalRow['linkedCommandId'] === null
+        ? Promise.resolve<RuntimeCommandView | null>(null)
+        : this.getRuntimeCommand(proposalRow['linkedCommandId']),
+      this.getRebalanceCurrent(),
+    ]);
+
+    return {
+      proposal: mapRebalanceProposalRow(proposalRow),
+      intents: intentRows.map(mapRebalanceIntentRow),
+      latestCommand,
+      executions: executionRows.map(mapRebalanceExecutionRow),
+      currentState,
+    };
+  }
+
+  async getRebalanceCurrent(): Promise<RebalanceCurrentView | null> {
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceCurrent)
+      .where(eq(allocatorRebalanceCurrent.id, 'primary'))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceCurrentRow(row);
+  }
+
+  async approveRebalanceProposal(
+    proposalId: string,
+    actorId: string,
+  ): Promise<RebalanceProposalView | null> {
+    await this.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'approved',
+        approvedBy: actorId,
+        approvedAt: new Date(),
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceProposals.id, proposalId));
+
+    const detail = await this.getRebalanceProposal(proposalId);
+    return detail?.proposal ?? null;
+  }
+
+  async rejectRebalanceProposal(
+    proposalId: string,
+    actorId: string,
+    reason: string,
+  ): Promise<RebalanceProposalView | null> {
+    await this.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'rejected',
+        rejectedBy: actorId,
+        rejectedAt: new Date(),
+        rejectionReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceProposals.id, proposalId));
+
+    const detail = await this.getRebalanceProposal(proposalId);
+    return detail?.proposal ?? null;
+  }
+
+  async queueRebalanceProposalExecution(input: {
+    proposalId: string;
+    commandId: string;
+  }): Promise<RebalanceProposalView | null> {
+    await this.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'queued',
+        linkedCommandId: input.commandId,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceProposals.id, input.proposalId));
+
+    const detail = await this.getRebalanceProposal(input.proposalId);
+    return detail?.proposal ?? null;
+  }
+
+  async markRebalanceProposalExecuting(proposalId: string): Promise<RebalanceProposalView | null> {
+    await this.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'executing',
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceProposals.id, proposalId));
+
+    const detail = await this.getRebalanceProposal(proposalId);
+    return detail?.proposal ?? null;
+  }
+
+  async completeRebalanceProposal(input: {
+    proposalId: string;
+    latestExecutionId: string;
+  }): Promise<RebalanceProposalView | null> {
+    await this.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: input.latestExecutionId,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceProposals.id, input.proposalId));
+
+    const detail = await this.getRebalanceProposal(input.proposalId);
+    return detail?.proposal ?? null;
+  }
+
+  async failRebalanceProposal(input: {
+    proposalId: string;
+    latestExecutionId?: string | null;
+    errorMessage: string;
+  }): Promise<RebalanceProposalView | null> {
+    await this.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'failed',
+        latestExecutionId: input.latestExecutionId ?? null,
+        lastError: input.errorMessage,
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceProposals.id, input.proposalId));
+
+    const detail = await this.getRebalanceProposal(input.proposalId);
+    return detail?.proposal ?? null;
+  }
+
+  async createRebalanceExecution(input: {
+    proposalId: string;
+    commandId: string | null;
+    status: RebalanceExecutionView['status'];
+    executionMode: RebalanceExecutionView['executionMode'];
+    simulated: boolean;
+    requestedBy: string;
+    startedBy?: string | null;
+    outcomeSummary?: string | null;
+    outcome?: Record<string, unknown>;
+    lastError?: string | null;
+  }): Promise<RebalanceExecutionView> {
+    const [row] = await this.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: input.proposalId,
+        commandId: input.commandId,
+        status: input.status,
+        executionMode: input.executionMode,
+        simulated: input.simulated,
+        requestedBy: input.requestedBy,
+        startedBy: input.startedBy ?? null,
+        outcomeSummary: input.outcomeSummary ?? null,
+        outcome: input.outcome ?? {},
+        lastError: input.lastError ?? null,
+        startedAt: input.status === 'executing' ? new Date() : null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createRebalanceExecution: execution was not persisted');
+    }
+
+    return mapRebalanceExecutionRow(row);
+  }
+
+  async updateRebalanceExecution(
+    executionId: string,
+    patch: Partial<{
+      status: RebalanceExecutionView['status'];
+      outcomeSummary: string | null;
+      outcome: Record<string, unknown>;
+      lastError: string | null;
+      startedAt: Date | null;
+      completedAt: Date | null;
+    }>,
+  ): Promise<RebalanceExecutionView | null> {
+    await this.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
+        ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+        ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
+        ...(patch.completedAt !== undefined ? { completedAt: patch.completedAt } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceExecutions.id, executionId));
+
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceExecutions)
+      .where(eq(allocatorRebalanceExecutions.id, executionId))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceExecutionRow(row);
+  }
+
+  async applyRebalanceCurrent(input: {
+    proposalId: string;
+    allocatorRunId: string;
+    carryTargetAllocationUsd: string;
+    carryTargetAllocationPct: number;
+    treasuryTargetAllocationUsd: string;
+    treasuryTargetAllocationPct: number;
+    appliedAt: Date;
+  }): Promise<void> {
+    await this.db
+      .insert(allocatorRebalanceCurrent)
+      .values({
+        id: 'primary',
+        latestProposalId: input.proposalId,
+        allocatorRunId: input.allocatorRunId,
+        carryTargetAllocationUsd: input.carryTargetAllocationUsd,
+        carryTargetAllocationPct: input.carryTargetAllocationPct.toFixed(4),
+        treasuryTargetAllocationUsd: input.treasuryTargetAllocationUsd,
+        treasuryTargetAllocationPct: input.treasuryTargetAllocationPct.toFixed(4),
+        appliedAt: input.appliedAt,
+        updatedAt: input.appliedAt,
+      })
+      .onConflictDoUpdate({
+        target: allocatorRebalanceCurrent.id,
+        set: {
+          latestProposalId: input.proposalId,
+          allocatorRunId: input.allocatorRunId,
+          carryTargetAllocationUsd: input.carryTargetAllocationUsd,
+          carryTargetAllocationPct: input.carryTargetAllocationPct.toFixed(4),
+          treasuryTargetAllocationUsd: input.treasuryTargetAllocationUsd,
+          treasuryTargetAllocationPct: input.treasuryTargetAllocationPct.toFixed(4),
+          appliedAt: input.appliedAt,
+          updatedAt: input.appliedAt,
+        },
+      });
   }
 
   async persistTreasuryEvaluation(input: {

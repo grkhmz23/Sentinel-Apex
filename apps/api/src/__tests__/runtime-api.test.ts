@@ -670,6 +670,8 @@ describe('runtime-backed API routes', () => {
     const position = positionsBody.data[0];
     expect(position?.id).toBeTruthy();
 
+    await controlPlane.activateKillSwitch('api-reconciliation-test-pause', 'vitest');
+
     const connection = await createDatabaseConnection(connectionString);
     await connection.execute(`
       UPDATE positions
@@ -835,5 +837,203 @@ describe('runtime-backed API routes', () => {
       payload: { reason: 'authz-test' },
     });
     expect(adminKillSwitchResponse.statusCode).toBe(200);
+  });
+
+  it('exposes allocator summary, targets, history, and manual evaluation through the API', async () => {
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/allocator/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/allocator/evaluate'),
+    });
+
+    expect(evaluateResponse.statusCode).toBe(202);
+
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    const command = await waitForCommand(controlPlane, evaluateBody.data.commandId);
+    expect(command.status).toBe('completed');
+    expect(command.result['allocatorRunId']).toBeTruthy();
+
+    const [summaryResponse, targetsResponse, decisionsResponse, detailResponse, runsResponse, proposalsResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/summary',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/targets',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/decisions',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/decisions/${String(command.result['allocatorRunId'])}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/runs',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/rebalance-proposals',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(targetsResponse.statusCode).toBe(200);
+    expect(decisionsResponse.statusCode).toBe(200);
+    expect(detailResponse.statusCode).toBe(200);
+    expect(runsResponse.statusCode).toBe(200);
+    expect(proposalsResponse.statusCode).toBe(200);
+
+    const summaryBody = summaryResponse.json<{
+      data: null | {
+        allocatorRunId: string;
+        regimeState: string;
+        carryTargetPct: number;
+      };
+    }>();
+    const targetsBody = targetsResponse.json<{
+      data: Array<{ sleeveId: string; targetAllocationPct: number }>;
+    }>();
+    const decisionsBody = decisionsResponse.json<{
+      data: Array<{ allocatorRunId: string; recommendationCount: number }>;
+    }>();
+    const detailBody = detailResponse.json<{
+      data: {
+        run: { allocatorRunId: string };
+        targets: Array<{ sleeveId: string }>;
+      };
+    }>();
+    const proposalsBody = proposalsResponse.json<{
+      data: Array<{ id: string; allocatorRunId: string; status: string }>;
+    }>();
+
+    expect(summaryBody.data?.allocatorRunId).toBe(String(command.result['allocatorRunId']));
+    expect(summaryBody.data?.regimeState).toBeTruthy();
+    expect(summaryBody.data?.carryTargetPct).toBeGreaterThanOrEqual(0);
+    expect(targetsBody.data.length).toBeGreaterThanOrEqual(2);
+    expect(targetsBody.data.some((target) => target.sleeveId === 'carry')).toBe(true);
+    expect(targetsBody.data.some((target) => target.sleeveId === 'treasury')).toBe(true);
+    expect(decisionsBody.data[0]?.allocatorRunId).toBe(String(command.result['allocatorRunId']));
+    expect(detailBody.data.run.allocatorRunId).toBe(String(command.result['allocatorRunId']));
+    expect(detailBody.data.targets.length).toBeGreaterThanOrEqual(2);
+    expect(Array.isArray(proposalsBody.data)).toBe(true);
+  });
+
+  it('approves allocator rebalance proposals through the API and exposes linked outcome state', async () => {
+    const cycleResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/runtime/cycles/run',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/cycles/run'),
+    });
+    const cycleBody = cycleResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, cycleBody.data.commandId);
+
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/allocator/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/allocator/evaluate'),
+    });
+    expect(evaluateResponse.statusCode).toBe(202);
+
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, evaluateBody.data.commandId);
+
+    const proposalsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocator/rebalance-proposals',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    const proposalsBody = proposalsResponse.json<{
+      data: Array<{ id: string; executable: boolean; allocatorRunId: string }>;
+    }>();
+    const actionable = proposalsBody.data.find((proposal) => proposal.executable);
+    expect(actionable?.id).toBeTruthy();
+
+    const approveResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}/approve`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-proposals/${actionable?.id}/approve`),
+    });
+    expect(approveResponse.statusCode).toBe(202);
+
+    const approveBody = approveResponse.json<{ data: { commandId: string } }>();
+    const command = await waitForCommand(controlPlane, approveBody.data.commandId);
+    expect(command.status).toBe('completed');
+
+    const [detailResponse, byDecisionResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/decisions/${actionable?.allocatorRunId}/rebalance-proposals`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(detailResponse.statusCode).toBe(200);
+    expect(byDecisionResponse.statusCode).toBe(200);
+
+    const detailBody = detailResponse.json<{
+      data: {
+        proposal: { status: string; linkedCommandId: string | null };
+        executions: Array<{ status: string }>;
+      };
+    }>();
+
+    expect(detailBody.data.proposal.status).toBe('completed');
+    expect(detailBody.data.proposal.linkedCommandId).toBe(approveBody.data.commandId);
+    expect(detailBody.data.executions[0]?.status).toBe('completed');
+  });
+
+  it('requires operator authorization for allocator evaluation', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/allocator/evaluate',
+      headers: operatorHeaders('viewer', 'POST', '/api/v1/allocator/evaluate'),
+    });
+
+    expect(response.statusCode).toBe(403);
+  });
+
+  it('requires operator authorization for rebalance approval', async () => {
+    const cycleResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/runtime/cycles/run',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/cycles/run'),
+    });
+    const cycleBody = cycleResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, cycleBody.data.commandId);
+
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/allocator/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/allocator/evaluate'),
+    });
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, evaluateBody.data.commandId);
+
+    const proposals = await controlPlane.listRebalanceProposals(10);
+    const proposal = proposals[0];
+    expect(proposal?.id).toBeTruthy();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-proposals/${proposal?.id}/approve`,
+      headers: operatorHeaders('viewer', 'POST', `/api/v1/allocator/rebalance-proposals/${proposal?.id}/approve`),
+    });
+
+    expect(response.statusCode).toBe(403);
   });
 });

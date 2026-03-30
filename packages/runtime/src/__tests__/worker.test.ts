@@ -358,6 +358,55 @@ describe('RuntimeWorker', () => {
     expect(treasurySummary.reserveStatus.requiredReserveUsd).not.toBe('0.00');
   });
 
+  it('approves rebalance proposals and executes them through the runtime command rail', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const command = await controlPlane.enqueueAllocatorEvaluation('vitest', {
+      actorId: 'vitest',
+      trigger: 'worker_rebalance_test',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const proposals = await waitFor(
+      async () => controlPlane.listRebalanceProposals(10),
+      (value): value is Exclude<typeof value, null> => value.length > 0,
+    );
+    const actionable = proposals.find((proposal) => proposal.executable);
+    if (actionable === undefined) {
+      throw new Error('Expected actionable rebalance proposal.');
+    }
+
+    const executionCommand = await controlPlane.approveRebalanceProposal(actionable.id, 'vitest', 'operator');
+    expect(executionCommand?.commandType).toBe('execute_rebalance_proposal');
+
+    const completedCommand = await waitFor(
+      async () => controlPlane.getCommand(String(executionCommand?.commandId)),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+    const detail = await waitFor(
+      async () => controlPlane.getRebalanceProposal(actionable.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.proposal.status === 'completed',
+    );
+
+    expect(completedCommand?.result['proposalId']).toBe(actionable.id);
+    expect(detail?.executions.length).toBeGreaterThan(0);
+    expect(detail?.proposal.linkedCommandId).toBe(executionCommand?.commandId ?? null);
+  });
+
   it('approves and executes treasury actions with durable execution history', async () => {
     const connectionString = await createConnectionString();
     const controlPlane = await RuntimeControlPlane.connect(connectionString);

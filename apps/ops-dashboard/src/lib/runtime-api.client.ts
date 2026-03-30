@@ -38,6 +38,67 @@ export async function triggerReconciliation(): Promise<unknown> {
   });
 }
 
+export async function triggerAllocatorEvaluation(): Promise<unknown> {
+  const response = await fetch('/api/allocator/evaluate', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function approveRebalanceProposal(proposalId: string): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-proposals/${proposalId}/approve`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function rejectRebalanceProposal(proposalId: string, reason: string): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-proposals/${proposalId}/reject`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ reason }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
 export async function triggerTreasuryEvaluation(): Promise<unknown> {
   const response = await fetch('/api/treasury/evaluate', {
     method: 'POST',

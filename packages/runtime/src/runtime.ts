@@ -1,5 +1,14 @@
 import Decimal from 'decimal.js';
 
+import {
+  DEFAULT_ALLOCATOR_POLICY,
+  DEFAULT_REBALANCE_POLICY,
+  SentinelAllocatorPolicyEngine,
+  SentinelRebalancePlanner,
+  SentinelSleeveRegistry,
+  type AllocatorPolicyInput,
+  type AllocatorSleeveSnapshot,
+} from '@sentinel-apex/allocator';
 import { DEFAULT_CARRY_CONFIG, type CarryOpportunityCandidate } from '@sentinel-apex/carry';
 import {
   applyMigrations,
@@ -44,6 +53,7 @@ import { RuntimeReconciliationEngine } from './reconciliation-engine.js';
 import { DatabaseAuditWriter, RuntimeOrderStore, RuntimeStore } from './store.js';
 
 import type {
+  AllocatorSummaryView,
   AuditEventView,
   OpportunityView,
   OrderView,
@@ -99,6 +109,27 @@ function buildPositionViews(
   }));
 }
 
+function normaliseCarryOpportunityScore(opportunities: OpportunityView[]): number {
+  if (opportunities.length === 0) {
+    return 0;
+  }
+
+  const scored = opportunities.map((opportunity) => {
+    const confidence = Number(opportunity.confidenceScore);
+    const netYield = Number(opportunity.netYieldPct);
+    const yieldScore = Number.isFinite(netYield)
+      ? Math.max(0, Math.min(netYield / 10, 1))
+      : 0;
+    const confidenceScore = Number.isFinite(confidence)
+      ? Math.max(0, Math.min(confidence, 1))
+      : 0;
+
+    return yieldScore * 0.6 + confidenceScore * 0.4;
+  });
+
+  return Number((scored.reduce((sum, value) => sum + value, 0) / scored.length).toFixed(4));
+}
+
 export interface DeterministicRuntimeScenario {
   sleeveId?: string;
   executionMode?: 'dry-run' | 'live';
@@ -134,6 +165,9 @@ export class SentinelRuntime {
   private closed = false;
   private readonly healthMonitor: RuntimeHealthMonitor;
   private readonly reconciliationEngine: RuntimeReconciliationEngine;
+  private readonly allocatorRegistry = new SentinelSleeveRegistry();
+  private readonly allocatorPolicyEngine = new SentinelAllocatorPolicyEngine();
+  private readonly rebalancePlanner = new SentinelRebalancePlanner();
 
   constructor(private readonly options: SentinelRuntimeOptions) {
     this.healthMonitor = new RuntimeHealthMonitor(this.options.store);
@@ -498,10 +532,43 @@ export class SentinelRuntime {
       }
 
       const refreshedPortfolio = await this.options.portfolioTracker.refresh();
-      await this.runTreasuryEvaluation({
+      const treasurySummary = await this.runTreasuryEvaluation({
         actorId: 'sentinel-runtime',
         sourceRunId: runId,
         portfolioState: refreshedPortfolio,
+      });
+      await this.runAllocatorEvaluation({
+        trigger: 'post_cycle',
+        actorId: 'sentinel-runtime',
+        sourceRunId: runId,
+        carryOpportunities: planned.opportunitiesApproved.map((opportunity) => ({
+          opportunityId: buildOpportunityId(opportunity),
+          runId,
+          sleeveId: this.options.sleeveId,
+          asset: opportunity.asset,
+          opportunityType: opportunity.type,
+          expectedAnnualYieldPct: opportunity.expectedAnnualYieldPct,
+          netYieldPct: opportunity.netYieldPct,
+          confidenceScore: String(opportunity.confidenceScore),
+          detectedAt: opportunity.detectedAt.toISOString(),
+          expiresAt: opportunity.expiresAt.toISOString(),
+          approved: true,
+          payload: opportunity as unknown as Record<string, unknown>,
+        })),
+        treasurySummary,
+        portfolioSummaryOverride: {
+          totalNav: refreshedPortfolio.totalNav,
+          grossExposure: refreshedPortfolio.grossExposure,
+          netExposure: refreshedPortfolio.netExposure,
+          liquidityReserve: refreshedPortfolio.liquidityReserve,
+          openPositionCount: refreshedPortfolio.openPositionCount,
+          dailyPnl: '0',
+          cumulativePnl: '0',
+          sleeves: [],
+          venueExposures: Object.fromEntries(refreshedPortfolio.venueExposures.entries()),
+          assetExposures: Object.fromEntries(refreshedPortfolio.assetExposures.entries()),
+          updatedAt: new Date().toISOString(),
+        },
       });
       const finalRiskSummary = this.options.riskEngine.getRiskSummary(refreshedPortfolio);
       const cumulativePnl = await this.computeCumulativePnl();
@@ -666,8 +733,243 @@ export class SentinelRuntime {
     return this.options.store.getRuntimeStatus();
   }
 
+  async getAllocatorSummary(): Promise<AllocatorSummaryView | null> {
+    return this.options.store.getAllocatorSummary();
+  }
+
   async getTreasurySummary(): Promise<TreasurySummaryView | null> {
     return this.options.store.getTreasurySummary();
+  }
+
+  async runAllocatorEvaluation(input: {
+    trigger: string;
+    actorId: string;
+    sourceRunId?: string | null;
+    carryOpportunities?: OpportunityView[];
+    treasurySummary?: TreasurySummaryView | null;
+    portfolioSummaryOverride?: Pick<PortfolioSummaryView, 'totalNav' | 'sleeves'>
+      | {
+        totalNav: string;
+        grossExposure: string;
+        netExposure: string;
+        liquidityReserve: string;
+        openPositionCount: number;
+        dailyPnl: string;
+        cumulativePnl: string;
+        sleeves: Array<{ sleeveId: string; nav: string; allocationPct: number }>;
+        venueExposures: Record<string, string>;
+        assetExposures: Record<string, string>;
+        updatedAt: string;
+      }
+      | null;
+  }): Promise<AllocatorSummaryView> {
+    const [
+      runtimeStatus,
+      mismatchSummary,
+      criticalMismatches,
+      reconciliationSummary,
+      persistedPortfolioSummary,
+      persistedTreasurySummary,
+      persistedOpportunities,
+    ] = await Promise.all([
+      this.options.store.getRuntimeStatus(),
+      this.options.store.summarizeMismatches(),
+      this.options.store.listMismatches(20, { severity: 'critical' }),
+      this.options.store.summarizeLatestReconciliation(),
+      this.options.store.getPortfolioSummary(),
+      this.options.store.getTreasurySummary(),
+      input.carryOpportunities === undefined
+        ? this.options.store.listOpportunities(20)
+        : Promise.resolve(input.carryOpportunities),
+    ]);
+
+    const treasurySummary = input.treasurySummary ?? persistedTreasurySummary;
+    const portfolioSummary = input.portfolioSummaryOverride ?? persistedPortfolioSummary;
+    const opportunities = persistedOpportunities.filter((opportunity) => opportunity.approved);
+
+    const totalCapitalUsd = treasurySummary?.reserveStatus.totalCapitalUsd
+      ?? portfolioSummary?.totalNav
+      ?? '0';
+    const totalCapital = new Decimal(totalCapitalUsd);
+    const carryCurrentUsd = portfolioSummary?.sleeves.find((sleeve) => sleeve.sleeveId === this.options.sleeveId)?.nav
+      ?? '0';
+    const treasuryCurrentUsd = Decimal.max(totalCapital.minus(new Decimal(carryCurrentUsd)), 0).toFixed(2);
+    const carryCurrentPct = totalCapital.equals(0)
+      ? 0
+      : Number(new Decimal(carryCurrentUsd).div(totalCapital).times(100).toFixed(4));
+    const treasuryCurrentPct = totalCapital.equals(0)
+      ? 0
+      : Number(new Decimal(treasuryCurrentUsd).div(totalCapital).times(100).toFixed(4));
+    const carryOpportunityScore = normaliseCarryOpportunityScore(opportunities);
+    const reserveConstrainedCapitalUsd = treasurySummary?.reserveStatus.requiredReserveUsd ?? '0';
+    const allocatableCapitalUsd = Decimal.max(
+      totalCapital.minus(new Decimal(reserveConstrainedCapitalUsd)),
+      0,
+    ).toFixed(2);
+    const criticalMismatchCount = criticalMismatches.filter(
+      (mismatch) => mismatch.status !== 'verified',
+    ).length;
+    const carryThrottleState: AllocatorSleeveSnapshot['throttleState'] = runtimeStatus.halted
+      ? 'blocked'
+      : runtimeStatus.lifecycleState === 'degraded' || criticalMismatchCount > 0
+        ? 'de_risk'
+        : carryOpportunityScore < DEFAULT_ALLOCATOR_POLICY.carryOpportunityScoreFloor
+          ? 'throttled'
+          : 'normal';
+    const carryStatus: AllocatorSleeveSnapshot['status'] = carryThrottleState === 'blocked'
+      ? 'blocked'
+      : carryThrottleState === 'de_risk'
+        ? 'degraded'
+        : carryThrottleState === 'throttled'
+          ? 'throttled'
+          : 'active';
+    const treasuryStatus: AllocatorSleeveSnapshot['status'] = treasurySummary === null
+      ? 'degraded'
+      : new Decimal(treasurySummary.reserveStatus.reserveShortfallUsd).greaterThan(0)
+        ? 'degraded'
+        : 'active';
+
+    const sleeves: AllocatorSleeveSnapshot[] = [
+      {
+        sleeveId: 'carry',
+        kind: 'carry',
+        name: this.allocatorRegistry.get('carry').name,
+        currentAllocationUsd: new Decimal(carryCurrentUsd).toFixed(2),
+        currentAllocationPct: carryCurrentPct,
+        minAllocationPct: 0,
+        maxAllocationPct: DEFAULT_ALLOCATOR_POLICY.maximumCarryPct,
+        capacityUsd: totalCapital.toFixed(2),
+        status: carryStatus,
+        throttleState: carryThrottleState,
+        healthy: carryStatus === 'active',
+        actionability: runtimeStatus.halted ? 'blocked' : 'actionable',
+        opportunityScore: carryOpportunityScore,
+        metadata: {
+          approvedOpportunityCount: opportunities.length,
+          runtimeLifecycleState: runtimeStatus.lifecycleState,
+        },
+      },
+      {
+        sleeveId: 'treasury',
+        kind: 'treasury',
+        name: this.allocatorRegistry.get('treasury').name,
+        currentAllocationUsd: treasuryCurrentUsd,
+        currentAllocationPct: treasuryCurrentPct,
+        minAllocationPct: DEFAULT_ALLOCATOR_POLICY.minimumTreasuryPct,
+        maxAllocationPct: 100,
+        capacityUsd: totalCapital.toFixed(2),
+        status: treasuryStatus,
+        throttleState: 'normal',
+        healthy: treasurySummary !== null,
+        actionability: treasurySummary === null ? 'observe_only' : 'actionable',
+        opportunityScore: null,
+        metadata: {
+          reserveCoveragePct: treasurySummary?.reserveStatus.reserveCoveragePct ?? null,
+          reserveShortfallUsd: treasurySummary?.reserveStatus.reserveShortfallUsd ?? null,
+        },
+      },
+    ];
+
+    const policyInput: AllocatorPolicyInput = {
+      policy: DEFAULT_ALLOCATOR_POLICY,
+      sleeves,
+      system: {
+        totalCapitalUsd: totalCapital.toFixed(2),
+        reserveConstrainedCapitalUsd,
+        allocatableCapitalUsd,
+        runtimeLifecycleState: runtimeStatus.lifecycleState,
+        runtimeHalted: runtimeStatus.halted,
+        openMismatchCount: mismatchSummary.activeMismatchCount,
+        criticalMismatchCount,
+        degradedReasonCount: runtimeStatus.reason === null ? 0 : 1,
+        treasuryReserveCoveragePct: Number(treasurySummary?.reserveStatus.reserveCoveragePct ?? 0),
+        treasuryReserveShortfallUsd: treasurySummary?.reserveStatus.reserveShortfallUsd ?? '0',
+        carryOpportunityCount: opportunities.length,
+        carryApprovedOpportunityCount: opportunities.length,
+        carryOpportunityScore,
+        recentReconciliationIssues: reconciliationSummary?.latestStatusCounts.active ?? 0,
+      },
+      evaluatedAt: new Date().toISOString(),
+      sourceReference: input.sourceRunId ?? null,
+    };
+
+    const decision = this.allocatorPolicyEngine.evaluate(policyInput);
+    const allocatorRunId = createId();
+    const evaluatedAt = new Date();
+
+    await this.options.store.persistAllocatorEvaluation({
+      allocatorRunId,
+      sourceRunId: input.sourceRunId ?? null,
+      trigger: input.trigger,
+      triggeredBy: input.actorId,
+      policy: DEFAULT_ALLOCATOR_POLICY,
+      evaluationInput: policyInput as unknown as Record<string, unknown>,
+      decision,
+      evaluatedAt,
+    });
+
+    const rebalanceProposal = this.rebalancePlanner.createProposal({
+      allocatorRunId,
+      decision,
+      system: {
+        runtimeLifecycleState: runtimeStatus.lifecycleState,
+        runtimeHalted: runtimeStatus.halted,
+        criticalMismatchCount,
+        executionMode: this.options.executionMode,
+        liveExecutionEnabled: this.options.liveExecutionEnabled,
+      },
+      treasury: {
+        idleCapitalUsd: treasurySummary?.reserveStatus.idleCapitalUsd ?? '0',
+        reserveShortfallUsd: treasurySummary?.reserveStatus.reserveShortfallUsd ?? '0',
+      },
+      policy: DEFAULT_REBALANCE_POLICY,
+    });
+
+    if (rebalanceProposal !== null) {
+      const proposal = await this.options.store.createRebalanceProposal({
+        proposal: rebalanceProposal,
+        createdAt: evaluatedAt,
+      });
+      await this.options.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'allocator.rebalance_proposed',
+        occurredAt: evaluatedAt.toISOString(),
+        actorType: 'operator',
+        actorId: input.actorId,
+        sleeveId: 'allocator',
+        data: {
+          proposalId: proposal.id,
+          allocatorRunId,
+          executable: proposal.executable,
+          blockedReasonCount: proposal.blockedReasons.length,
+          executionMode: proposal.executionMode,
+        },
+      });
+    }
+
+    await this.options.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'allocator.evaluated',
+      occurredAt: evaluatedAt.toISOString(),
+      actorType: 'operator',
+      actorId: input.actorId,
+      sleeveId: 'allocator',
+      data: {
+        allocatorRunId,
+        sourceRunId: input.sourceRunId ?? null,
+        trigger: input.trigger,
+        regimeState: decision.regimeState,
+        pressureLevel: decision.pressureLevel,
+        recommendationCount: decision.recommendations.length,
+      },
+    });
+
+    const summary = await this.options.store.getAllocatorSummary();
+    if (summary === null) {
+      throw new Error(`SentinelRuntime.runAllocatorEvaluation: allocator run "${allocatorRunId}" was not persisted`);
+    }
+
+    return summary;
   }
 
   async rebuildProjections(
@@ -806,6 +1108,130 @@ export class SentinelRuntime {
     }
 
     return summary;
+  }
+
+  async executeRebalanceProposal(input: {
+    proposalId: string;
+    actorId: string;
+    commandId: string | null;
+    startedBy: string;
+  }): Promise<{
+    proposalId: string;
+    executionId: string;
+    applied: boolean;
+    allocatorRunId: string;
+  }> {
+    const detail = await this.options.store.getRebalanceProposal(input.proposalId);
+    if (detail === null) {
+      throw new Error(`Rebalance proposal "${input.proposalId}" was not found.`);
+    }
+
+    if (detail.proposal.status !== 'queued' && detail.proposal.status !== 'approved') {
+      throw new Error(
+        `Rebalance proposal "${input.proposalId}" is not executable from status "${detail.proposal.status}".`,
+      );
+    }
+
+    const execution = await this.options.store.createRebalanceExecution({
+      proposalId: detail.proposal.id,
+      commandId: input.commandId,
+      status: detail.proposal.executable ? 'executing' : 'failed',
+      executionMode: detail.proposal.executionMode,
+      simulated: detail.proposal.simulated,
+      requestedBy: input.actorId,
+      startedBy: input.startedBy,
+      outcome: {
+        blockedReasons: detail.proposal.blockedReasons,
+      },
+      lastError: detail.proposal.executable
+        ? null
+        : detail.proposal.blockedReasons.map((reason) => reason.message).join('; '),
+    });
+
+    if (!detail.proposal.executable) {
+      const errorMessage = detail.proposal.blockedReasons.map((reason) => reason.message).join('; ');
+      await this.options.store.failRebalanceProposal({
+        proposalId: detail.proposal.id,
+        latestExecutionId: execution.id,
+        errorMessage,
+      });
+      throw new Error(errorMessage);
+    }
+
+    await this.options.store.markRebalanceProposalExecuting(detail.proposal.id);
+
+    const carryIntent = detail.intents.find((intent) => intent.sleeveId === 'carry');
+    const treasuryIntent = detail.intents.find((intent) => intent.sleeveId === 'treasury');
+    if (carryIntent === undefined || treasuryIntent === undefined) {
+      await this.options.store.updateRebalanceExecution(execution.id, {
+        status: 'failed',
+        lastError: 'Rebalance proposal is missing carry or treasury intent.',
+        completedAt: new Date(),
+      });
+      await this.options.store.failRebalanceProposal({
+        proposalId: detail.proposal.id,
+        latestExecutionId: execution.id,
+        errorMessage: 'Rebalance proposal is missing carry or treasury intent.',
+      });
+      throw new Error('Rebalance proposal is missing carry or treasury intent.');
+    }
+
+    const appliedAt = new Date();
+    const applied = detail.proposal.executionMode === 'live';
+    if (applied) {
+      await this.options.store.applyRebalanceCurrent({
+        proposalId: detail.proposal.id,
+        allocatorRunId: detail.proposal.allocatorRunId,
+        carryTargetAllocationUsd: carryIntent.targetAllocationUsd,
+        carryTargetAllocationPct: carryIntent.targetAllocationPct,
+        treasuryTargetAllocationUsd: treasuryIntent.targetAllocationUsd,
+        treasuryTargetAllocationPct: treasuryIntent.targetAllocationPct,
+        appliedAt,
+      });
+    }
+
+    await this.options.store.updateRebalanceExecution(execution.id, {
+      status: 'completed',
+      outcomeSummary: applied
+        ? 'Rebalance proposal was applied to the approved sleeve budget state.'
+        : 'Rebalance proposal completed in dry-run mode; no sleeve budget state was changed.',
+      outcome: {
+        applied,
+        carryTargetAllocationUsd: carryIntent.targetAllocationUsd,
+        carryTargetAllocationPct: carryIntent.targetAllocationPct,
+        treasuryTargetAllocationUsd: treasuryIntent.targetAllocationUsd,
+        treasuryTargetAllocationPct: treasuryIntent.targetAllocationPct,
+      },
+      lastError: null,
+      completedAt: appliedAt,
+    });
+    await this.options.store.completeRebalanceProposal({
+      proposalId: detail.proposal.id,
+      latestExecutionId: execution.id,
+    });
+    await this.options.store.auditWriter.write({
+      eventId: createId(),
+      eventType: applied
+        ? 'allocator.rebalance_applied'
+        : 'allocator.rebalance_dry_run_completed',
+      occurredAt: appliedAt.toISOString(),
+      actorType: 'operator',
+      actorId: input.actorId,
+      sleeveId: 'allocator',
+      data: {
+        proposalId: detail.proposal.id,
+        executionId: execution.id,
+        allocatorRunId: detail.proposal.allocatorRunId,
+        applied,
+      },
+    });
+
+    return {
+      proposalId: detail.proposal.id,
+      executionId: execution.id,
+      applied,
+      allocatorRunId: detail.proposal.allocatorRunId,
+    };
   }
 
   async executeTreasuryAction(input: {

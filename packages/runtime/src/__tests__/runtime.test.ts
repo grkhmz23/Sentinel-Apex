@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { applyMigrations, createDatabaseConnection } from '@sentinel-apex/db';
 import { createId } from '@sentinel-apex/domain';
 
+import { RuntimeControlPlane } from '../control-plane.js';
 import { SentinelRuntime } from '../runtime.js';
 import { DatabaseAuditWriter } from '../store.js';
 
@@ -148,6 +149,40 @@ describe('SentinelRuntime', () => {
 
     const cycle = await runtime.runCycle('post-resume-runtime-test');
     expect(cycle.runId).toBeTruthy();
+
+    await runtime.close();
+  });
+
+  it('persists allocator evaluations with target allocations and recommendations', async () => {
+    const runtime = await createRuntime();
+
+    await runtime.runCycle('runtime-allocator-test');
+
+    const summary = await runtime.getAllocatorSummary();
+
+    expect(summary?.allocatorRunId).toBeTruthy();
+    expect(summary?.carryTargetPct).toBeGreaterThanOrEqual(0);
+    expect(summary?.treasuryTargetPct).toBeGreaterThan(0);
+    expect(summary?.recommendationCount).toBeGreaterThanOrEqual(1);
+
+    await runtime.close();
+  });
+
+  it('persists rebalance proposals derived from allocator targets', async () => {
+    const connectionString = await createRuntimeConnectionString();
+    const runtime = await SentinelRuntime.createDeterministic(connectionString);
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+
+    await runtime.runCycle('runtime-rebalance-proposal-test');
+    const proposals = await controlPlane.listRebalanceProposals(10);
+
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(proposals[0]?.allocatorRunId).toBeTruthy();
+    expect(proposals[0]?.actionType).toBe('rebalance_between_sleeves');
+
+    const detail = await controlPlane.getRebalanceProposal(String(proposals[0]?.id));
+    expect(detail?.intents.length).toBeGreaterThan(0);
+    expect(detail?.proposal.summary).toContain('Rebalance');
 
     await runtime.close();
   });

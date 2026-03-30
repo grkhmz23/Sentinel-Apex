@@ -4,10 +4,15 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { useOperator } from './operator-context';
-import { rebuildProjections, triggerCycle, triggerReconciliation } from '../lib/runtime-api.client';
+import {
+  rebuildProjections,
+  triggerAllocatorEvaluation,
+  triggerCycle,
+  triggerReconciliation,
+} from '../lib/runtime-api.client';
 
 interface MutationState {
-  name: 'run_cycle' | 'rebuild_projections' | 'run_reconciliation' | null;
+  name: 'run_cycle' | 'rebuild_projections' | 'run_reconciliation' | 'run_allocator_evaluation' | null;
   error: string | null;
   success: string | null;
 }
@@ -74,6 +79,19 @@ export function QuickActions(): JSX.Element {
         type="button"
       >
         {state.name === 'rebuild_projections' ? 'Queueing rebuild...' : 'Rebuild Projections'}
+      </button>
+      <button
+        className="button button--secondary"
+        disabled={disabled}
+        onClick={() => void runAction(
+          'run_allocator_evaluation',
+          async () => triggerAllocatorEvaluation(),
+          'Run a Sentinel allocator evaluation?',
+          'Allocator evaluation queued.',
+        )}
+        type="button"
+      >
+        {state.name === 'run_allocator_evaluation' ? 'Queueing allocator...' : 'Evaluate Allocator'}
       </button>
       <button
         className="button button--secondary"

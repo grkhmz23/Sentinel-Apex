@@ -1,4 +1,10 @@
 import type {
+  AllocatorDecisionDetailView,
+  AllocatorRunView,
+  AllocatorSleeveTargetView,
+  AllocatorSummaryView,
+  RebalanceProposalDetailView,
+  RebalanceProposalView,
   TreasuryActionDetailView,
   RuntimeCommandView,
   RuntimeMismatchDetailView,
@@ -93,6 +99,196 @@ export function createOverview(): RuntimeOverviewView {
     latestReconciliationRun: createReconciliationRun(),
     reconciliationSummary: createReconciliationSummary(),
     treasurySummary: createTreasurySummary(),
+    allocatorSummary: createAllocatorSummary(),
+  };
+}
+
+export function createAllocatorSummary(
+  overrides: Partial<AllocatorSummaryView> = {},
+): AllocatorSummaryView {
+  return {
+    allocatorRunId: 'allocator-run-1',
+    sourceRunId: 'run-1',
+    trigger: 'post_cycle',
+    triggeredBy: 'sentinel-runtime',
+    regimeState: 'normal',
+    pressureLevel: 'normal',
+    totalCapitalUsd: '1000000',
+    reserveConstrainedCapitalUsd: '100000',
+    allocatableCapitalUsd: '900000',
+    carryTargetPct: 60,
+    treasuryTargetPct: 40,
+    recommendationCount: 2,
+    evaluatedAt: '2026-03-20T12:01:02.000Z',
+    updatedAt: '2026-03-20T12:01:02.000Z',
+    ...overrides,
+  };
+}
+
+export function createAllocatorTarget(
+  overrides: Partial<AllocatorSleeveTargetView> = {},
+): AllocatorSleeveTargetView {
+  return {
+    allocatorRunId: 'allocator-run-1',
+    sleeveId: 'carry',
+    sleeveKind: 'carry',
+    sleeveName: 'Apex Carry',
+    status: 'active',
+    throttleState: 'normal',
+    currentAllocationUsd: '450000',
+    currentAllocationPct: 45,
+    targetAllocationUsd: '600000',
+    targetAllocationPct: 60,
+    minAllocationPct: 0,
+    maxAllocationPct: 65,
+    deltaUsd: '150000',
+    opportunityScore: 0.82,
+    capacityUsd: '1000000',
+    rationale: [
+      {
+        code: 'carry_opportunity_strong',
+        severity: 'info',
+        summary: 'Carry opportunity quality is strong.',
+        details: {},
+      },
+    ],
+    metadata: {},
+    ...overrides,
+  };
+}
+
+export function createAllocatorRun(
+  overrides: Partial<AllocatorRunView> = {},
+): AllocatorRunView {
+  return {
+    allocatorRunId: 'allocator-run-1',
+    sourceRunId: 'run-1',
+    trigger: 'post_cycle',
+    triggeredBy: 'sentinel-runtime',
+    regimeState: 'normal',
+    pressureLevel: 'normal',
+    totalCapitalUsd: '1000000',
+    reserveConstrainedCapitalUsd: '100000',
+    allocatableCapitalUsd: '900000',
+    recommendationCount: 2,
+    rationale: [],
+    constraints: [],
+    inputSnapshot: {},
+    policySnapshot: {},
+    evaluatedAt: '2026-03-20T12:01:02.000Z',
+    updatedAt: '2026-03-20T12:01:02.000Z',
+    ...overrides,
+  };
+}
+
+export function createAllocatorDecisionDetail(
+  overrides: Partial<AllocatorDecisionDetailView> = {},
+): AllocatorDecisionDetailView {
+  return {
+    run: createAllocatorRun(),
+    summary: createAllocatorSummary(),
+    targets: [
+      createAllocatorTarget(),
+      createAllocatorTarget({
+        sleeveId: 'treasury',
+        sleeveKind: 'treasury',
+        sleeveName: 'Atlas Treasury',
+        currentAllocationUsd: '550000',
+        currentAllocationPct: 55,
+        targetAllocationUsd: '400000',
+        targetAllocationPct: 40,
+        minAllocationPct: 35,
+        maxAllocationPct: 100,
+        deltaUsd: '-150000',
+        opportunityScore: null,
+        rationale: [
+          {
+            code: 'treasury_residual_allocator',
+            severity: 'info',
+            summary: 'Treasury receives residual capital.',
+            details: {},
+          },
+        ],
+      }),
+    ],
+    recommendations: [],
+    rationale: [
+      {
+        code: 'baseline_policy_applied',
+        severity: 'info',
+        summary: 'Baseline policy applied.',
+        details: {},
+      },
+    ],
+    constraints: [],
+    ...overrides,
+  };
+}
+
+export function createRebalanceProposal(
+  overrides: Partial<RebalanceProposalView> = {},
+): RebalanceProposalView {
+  return {
+    id: 'rebalance-proposal-1',
+    allocatorRunId: 'allocator-run-1',
+    actionType: 'rebalance_between_sleeves',
+    status: 'proposed',
+    summary: 'Rebalance 150000.00 USD from Treasury to Carry budget.',
+    executionMode: 'dry-run',
+    simulated: true,
+    executable: true,
+    approvalRequirement: 'operator',
+    rationale: [],
+    blockedReasons: [],
+    details: {
+      rebalanceAmountUsd: '150000.00',
+    },
+    approvedBy: null,
+    approvedAt: null,
+    rejectedBy: null,
+    rejectedAt: null,
+    rejectionReason: null,
+    linkedCommandId: null,
+    latestExecutionId: null,
+    lastError: null,
+    createdAt: '2026-03-20T12:02:00.000Z',
+    updatedAt: '2026-03-20T12:02:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceProposalDetail(
+  overrides: Partial<RebalanceProposalDetailView> = {},
+): RebalanceProposalDetailView {
+  return {
+    proposal: createRebalanceProposal(),
+    intents: [
+      {
+        id: 'rebalance-intent-1',
+        proposalId: 'rebalance-proposal-1',
+        sleeveId: 'carry',
+        sourceSleeveId: 'treasury',
+        targetSleeveId: 'carry',
+        actionType: 'increase_carry_budget',
+        status: 'proposed',
+        readiness: 'actionable',
+        executable: true,
+        currentAllocationUsd: '450000',
+        currentAllocationPct: 45,
+        targetAllocationUsd: '600000',
+        targetAllocationPct: 60,
+        deltaUsd: '150000',
+        rationale: [],
+        blockedReasons: [],
+        details: {},
+        createdAt: '2026-03-20T12:02:00.000Z',
+        updatedAt: '2026-03-20T12:02:00.000Z',
+      },
+    ],
+    latestCommand: null,
+    executions: [],
+    currentState: null,
+    ...overrides,
   };
 }
 

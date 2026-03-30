@@ -453,6 +453,51 @@ export class RuntimeWorker {
         return;
       }
 
+      if (command.commandType === 'run_allocator_evaluation') {
+        const allocatorSummary = await this.runtime.runAllocatorEvaluation({
+          trigger: typeof command.payload['trigger'] === 'string'
+            ? String(command.payload['trigger'])
+            : 'manual_allocator_evaluation',
+          actorId: typeof command.payload['actorId'] === 'string'
+            ? String(command.payload['actorId'])
+            : command.requestedBy,
+          sourceRunId: typeof command.payload['sourceRunId'] === 'string'
+            ? String(command.payload['sourceRunId'])
+            : null,
+        });
+
+        await this.store.completeRuntimeCommand(command.commandId, {
+          allocatorRunId: allocatorSummary.allocatorRunId,
+          regimeState: allocatorSummary.regimeState,
+          pressureLevel: allocatorSummary.pressureLevel,
+          carryTargetPct: allocatorSummary.carryTargetPct,
+          treasuryTargetPct: allocatorSummary.treasuryTargetPct,
+          recommendationCount: allocatorSummary.recommendationCount,
+        });
+        await this.store.updateWorkerStatus({
+          schedulerState: 'waiting',
+          currentOperation: null,
+          currentCommandId: null,
+          lastSuccessAt: new Date(),
+          lastFailureAt: null,
+          lastFailureReason: null,
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
+          commandId: command.commandId,
+          eventType: 'runtime_command_completed',
+          status: 'completed',
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message: 'Allocator evaluation command completed.',
+          details: {
+            allocatorRunId: allocatorSummary.allocatorRunId,
+            regimeState: allocatorSummary.regimeState,
+          },
+        });
+        return;
+      }
+
       if (command.commandType === 'execute_treasury_action') {
         const treasuryActionId = typeof command.payload['treasuryActionId'] === 'string'
           ? String(command.payload['treasuryActionId'])
@@ -496,6 +541,54 @@ export class RuntimeWorker {
           details: {
             treasuryActionId: outcome.actionId,
             treasuryExecutionId: outcome.executionId,
+          },
+        });
+        return;
+      }
+
+      if (command.commandType === 'execute_rebalance_proposal') {
+        const proposalId = typeof command.payload['proposalId'] === 'string'
+          ? String(command.payload['proposalId'])
+          : null;
+        if (proposalId === null) {
+          throw new Error('Rebalance proposal execution command is missing proposalId.');
+        }
+
+        const outcome = await this.runtime.executeRebalanceProposal({
+          proposalId,
+          actorId: typeof command.payload['actorId'] === 'string'
+            ? String(command.payload['actorId'])
+            : command.requestedBy,
+          commandId: command.commandId,
+          startedBy: this.workerId,
+        });
+
+        await this.store.completeRuntimeCommand(command.commandId, {
+          proposalId: outcome.proposalId,
+          rebalanceExecutionId: outcome.executionId,
+          allocatorRunId: outcome.allocatorRunId,
+          applied: outcome.applied,
+        });
+        await this.store.updateWorkerStatus({
+          schedulerState: 'waiting',
+          currentOperation: null,
+          currentCommandId: null,
+          lastSuccessAt: new Date(),
+          lastFailureAt: null,
+          lastFailureReason: null,
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
+          commandId: command.commandId,
+          eventType: 'runtime_command_completed',
+          status: 'completed',
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message: 'Rebalance proposal execution completed.',
+          details: {
+            proposalId: outcome.proposalId,
+            rebalanceExecutionId: outcome.executionId,
+            applied: outcome.applied,
           },
         });
         return;

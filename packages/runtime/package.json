@@ -14,6 +14,7 @@
     "dev:rebuild-projections": "tsx src/scripts/rebuild-projections.ts"
   },
   "dependencies": {
+    "@sentinel-apex/allocator": "workspace:*",
     "@sentinel-apex/carry": "workspace:*",
     "@sentinel-apex/config": "workspace:*",
     "@sentinel-apex/db": "workspace:*",

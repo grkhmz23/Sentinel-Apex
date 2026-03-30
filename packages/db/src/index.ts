@@ -4,6 +4,14 @@
 
 // Schema tables — re-exported so consumers don't need to drill into sub-paths
 export {
+  allocatorCurrent,
+  allocatorRebalanceCurrent,
+  allocatorRebalanceExecutions,
+  allocatorRebalanceProposalIntents,
+  allocatorRebalanceProposals,
+  allocatorRecommendations,
+  allocatorRuns,
+  allocatorSleeveTargets,
   opsOperators,
   opsOperatorSessions,
   auditEvents,

@@ -1,4 +1,10 @@
 import type {
+  AllocatorDecisionDetailView,
+  AllocatorRunView,
+  AllocatorSleeveTargetView,
+  AllocatorSummaryView,
+  RebalanceProposalDetailView,
+  RebalanceProposalView,
   RuntimeCommandView,
   RuntimeMismatchDetailView,
   RuntimeMismatchSourceKind,
@@ -62,6 +68,22 @@ export interface OverviewPageData {
   recoveryOutcomes: RuntimeRecoveryEventView[];
   reconciliationRuns: RuntimeReconciliationRunView[];
   activeFindings: RuntimeReconciliationFindingView[];
+}
+
+export interface AllocatorPageData {
+  summary: AllocatorSummaryView | null;
+  targets: AllocatorSleeveTargetView[];
+  decisions: AllocatorRunView[];
+  rebalanceProposals: RebalanceProposalView[];
+}
+
+export interface AllocatorDecisionPageData {
+  detail: AllocatorDecisionDetailView;
+  rebalanceProposals: RebalanceProposalView[];
+}
+
+export interface RebalanceProposalPageData {
+  detail: RebalanceProposalDetailView;
 }
 
 export interface ReconciliationPageData {

@@ -1,13 +1,13 @@
 # Current State Audit
 
-Date: 2026-03-21
+Date: 2026-03-30
 Repo: `/workspaces/Sentinel-Apex`
 
 ## What Exists
 
 - Monorepo tooling: `pnpm`, Turborepo, TypeScript, ESLint, Prettier, Vitest.
 - Apps: `apps/api`, `apps/runtime-worker`, `apps/ops-dashboard`.
-- Packages: `carry`, `config`, `db`, `domain`, `execution`, `observability`, `risk-engine`, `runtime`, `shared`, `strategy-engine`, `treasury`, `venue-adapters`.
+- Packages: `allocator`, `carry`, `config`, `db`, `domain`, `execution`, `observability`, `risk-engine`, `runtime`, `shared`, `strategy-engine`, `treasury`, `venue-adapters`.
 - Docs: `docs/prd`, `docs/architecture`, `docs/adr`, `docs/risk`, `docs/strategy`, `docs/audit`.
 - Infra: `docker-compose.yml`, `infra/docker/Dockerfile.api`, `infra/docker/docker-compose.local-db.yml`.
 
@@ -45,6 +45,13 @@ Repo: `/workspaces/Sentinel-Apex`
   - startup restoration of adapter state from persisted fills
   - operator-safe pause, resume, cycle-run, projection-rebuild, and reconciliation-run command controls
   - runtime-integrated treasury evaluation with explicit `run_treasury_evaluation` command support
+  - runtime-integrated allocator evaluation with explicit `run_allocator_evaluation` command support
+- `packages/allocator` now provides:
+  - Sentinel sleeve registry for Carry and Treasury
+  - deterministic portfolio-level budgeting policy
+  - explicit regime/pressure interpretation
+  - allocator rationale, constraints, and rebalance recommendation generation
+  - deterministic rebalance proposal planning from allocator targets
 - `packages/treasury` now provides:
   - explicit treasury policy models
   - reserve floor enforcement
@@ -61,8 +68,20 @@ Repo: `/workspaces/Sentinel-Apex`
   - `treasury_current`
 - `packages/db` now also persists append-only treasury execution history in:
   - `treasury_action_executions`
+- `packages/db` now also persists allocator state in:
+  - `allocator_runs`
+  - `allocator_sleeve_targets`
+  - `allocator_recommendations`
+  - `allocator_current`
+- `packages/db` now also persists allocator rebalance workflow state in:
+  - `allocator_rebalance_proposals`
+  - `allocator_rebalance_proposal_intents`
+  - `allocator_rebalance_executions`
+  - `allocator_rebalance_current`
 - `apps/api` serves portfolio, risk, orders, positions, opportunities, events, runtime status, worker status, mismatch history, and control surfaces from persisted runtime-backed state.
 - `apps/api` now also serves treasury summary, allocations, policy, recommendations, action detail, execution detail, venue readiness/detail, treasury approval, and explicit treasury execution queueing.
+- `apps/api` now also serves allocator summary, latest sleeve targets, decision history/detail, run history, and explicit allocator evaluation queueing.
+- `apps/api` now also serves rebalance proposal list/detail, decision-linked proposals, and rebalance approval/rejection actions.
 - `apps/runtime-worker` executes scheduled cycles, processes runtime commands, and persists scheduler/recovery visibility independently of the API process.
 - `apps/ops-dashboard` now provides an internal Next.js operator UI for overview, mismatch inspection, reconciliation visibility, recovery and command inspection, and safe action dispatch through the existing runtime API.
 - `apps/ops-dashboard` now also provides:
@@ -73,6 +92,8 @@ Repo: `/workspaces/Sentinel-Apex`
   - Atlas Treasury overview visibility and a dedicated treasury page
   - treasury recommendation readiness, blocked reasons, approval controls, execution controls, and execution history
   - treasury action detail, execution detail, and venue readiness drill-through views
+  - a first Sentinel allocator page with current-vs-target sleeve budgets, rationale visibility, decision history, and decision detail
+  - rebalance proposal visibility and proposal detail with approval controls and execution outcome state
 - `apps/api` now enforces backend operator authorization for sensitive runtime and control mutations in addition to API-key authentication.
 - `packages/db` now persists internal operators and dashboard sessions in `ops_operators` and `ops_operator_sessions`.
 - Existing runtime actor/audit fields are now populated from authenticated operator identity for dashboard-driven actions instead of client-supplied placeholders.
@@ -93,7 +114,6 @@ Repo: `/workspaces/Sentinel-Apex`
 
 ## What Is Broken
 
-- Allocator and backtest packages still do not exist.
 - Reconciliation currently compares persisted internal state against durable projections, runtime command outcomes, and venue state available through the existing adapters. It is real and auditable, but still bounded to the state the current repo can reconcile with confidence.
 - API startup in this sandbox still cannot bind to `0.0.0.0` because of environment `listen EPERM` restrictions rather than an application defect.
 
@@ -102,7 +122,8 @@ Repo: `/workspaces/Sentinel-Apex`
 - Broader operator workflows beyond treasury drill-through, especially command detail and richer recovery navigation.
 - Operator management workflows beyond bootstrap and direct DB-backed setup.
 - Production-grade live venue integration.
-- Allocator and backtest foundations.
+- Backtest foundations.
+- Autonomous allocator-to-sleeve routing beyond explicit operator-approved budget-state workflows.
 
 ## Validation Results
 
@@ -175,6 +196,6 @@ Results:
 2. Add stronger freshness and projection-age detectors if runtime metadata evolves to support stricter staleness policies.
 3. Decide whether some remediation actions should auto-attach operator resolution hints once a deterministic success condition is observed.
 4. Add admin-facing operator management and stronger session lifecycle tooling only if internal operational complexity justifies it.
-5. Expand the ops dashboard from the current treasury drill-through foundation into richer command detail and finding-to-mismatch-to-remediation navigation.
+5. Expand the ops dashboard from the current treasury and allocator foundations into richer command detail and finding-to-mismatch-to-remediation navigation.
 6. Add real treasury connectors only after venue approvals and operational runbooks are ready.
-7. Start allocator work only after treasury controlled execution semantics are stable.
+7. Decide whether approved rebalance budget state should later translate into treasury venue actions and carry deployment workflows under separate operator controls.

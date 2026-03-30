@@ -12,6 +12,11 @@ export type { DeterministicRuntimeScenario } from './runtime.js';
 export type { RuntimeWorkerOptions } from './worker.js';
 
 export type {
+  AllocatorDecisionDetailView,
+  AllocatorRecommendationView,
+  AllocatorRunView,
+  AllocatorSleeveTargetView,
+  AllocatorSummaryView,
   AuditEventView,
   OpportunityView,
   OrderView,
@@ -21,6 +26,11 @@ export type {
   PortfolioSummaryView,
   PositionView,
   RiskBreachView,
+  RebalanceCurrentView,
+  RebalanceExecutionView,
+  RebalanceProposalDetailView,
+  RebalanceProposalIntentView,
+  RebalanceProposalView,
   RuntimeCommandStatus,
   RuntimeCommandType,
   RuntimeCommandView,

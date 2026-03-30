@@ -1,4 +1,10 @@
 import type {
+  AllocatorDecisionDetailView,
+  AllocatorRunView,
+  AllocatorSleeveTargetView,
+  AllocatorSummaryView,
+  RebalanceProposalDetailView,
+  RebalanceProposalView,
   RuntimeCommandView,
   RuntimeMismatchDetailView,
   RuntimeMismatchView,
@@ -22,6 +28,8 @@ import { getDashboardApiBaseUrl, getDashboardApiKey } from './env.server';
 
 import type {
   ApiEnvelope,
+  AllocatorDecisionPageData,
+  AllocatorPageData,
   DashboardPageState,
   MismatchListFilters,
   OperationsPageData,
@@ -33,8 +41,10 @@ import type {
   TreasuryPageData,
   TreasuryVenueDetailPageData,
   TreasuryVenuesPageData,
+  RebalanceProposalPageData,
 } from './types';
 
+const ALLOCATOR_API_PREFIX = '/api/v1/allocator';
 const API_PREFIX = '/api/v1/runtime';
 const TREASURY_API_PREFIX = '/api/v1/treasury';
 
@@ -58,6 +68,31 @@ async function fetchRuntimeApi<T>(
 
   if (!response.ok) {
     throw new Error(payload.error?.message ?? `Runtime API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+async function fetchAllocatorApi<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${ALLOCATOR_API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Allocator API request failed: ${response.status}`);
   }
 
   return payload.data;
@@ -102,6 +137,40 @@ function buildSearchParams(params: Record<string, string | number | undefined>):
 
 export async function getRuntimeOverview(): Promise<RuntimeOverviewView> {
   return fetchRuntimeApi<RuntimeOverviewView>('/status');
+}
+
+export async function getAllocatorSummary(): Promise<AllocatorSummaryView | null> {
+  return fetchAllocatorApi<AllocatorSummaryView | null>('/summary');
+}
+
+export async function listAllocatorTargets(limit = 20): Promise<AllocatorSleeveTargetView[]> {
+  return fetchAllocatorApi<AllocatorSleeveTargetView[]>(`/targets${buildSearchParams({ limit })}`);
+}
+
+export async function listAllocatorDecisions(limit = 20): Promise<AllocatorRunView[]> {
+  return fetchAllocatorApi<AllocatorRunView[]>(`/decisions${buildSearchParams({ limit })}`);
+}
+
+export async function getAllocatorDecisionDetail(
+  allocatorRunId: string,
+): Promise<AllocatorDecisionDetailView> {
+  return fetchAllocatorApi<AllocatorDecisionDetailView>(`/decisions/${allocatorRunId}`);
+}
+
+export async function listRebalanceProposals(limit = 20): Promise<RebalanceProposalView[]> {
+  return fetchAllocatorApi<RebalanceProposalView[]>(`/rebalance-proposals${buildSearchParams({ limit })}`);
+}
+
+export async function listDecisionRebalanceProposals(
+  allocatorRunId: string,
+): Promise<RebalanceProposalView[]> {
+  return fetchAllocatorApi<RebalanceProposalView[]>(`/decisions/${allocatorRunId}/rebalance-proposals`);
+}
+
+export async function getRebalanceProposalDetail(
+  proposalId: string,
+): Promise<RebalanceProposalDetailView> {
+  return fetchAllocatorApi<RebalanceProposalDetailView>(`/rebalance-proposals/${proposalId}`);
 }
 
 export async function listRuntimeCommands(limit = 20): Promise<RuntimeCommandView[]> {
@@ -216,6 +285,68 @@ export async function loadOverviewPageData(): Promise<DashboardPageState<Overvie
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load overview data.',
+    };
+  }
+}
+
+export async function loadAllocatorPageData(): Promise<DashboardPageState<AllocatorPageData>> {
+  try {
+    const [summary, targets, decisions] = await Promise.all([
+      getAllocatorSummary(),
+      listAllocatorTargets(20),
+      listAllocatorDecisions(20),
+    ]);
+
+    return {
+      data: {
+        summary,
+        targets,
+        decisions,
+        rebalanceProposals: await listRebalanceProposals(10),
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load allocator data.',
+    };
+  }
+}
+
+export async function loadAllocatorDecisionPageData(
+  allocatorRunId: string,
+): Promise<DashboardPageState<AllocatorDecisionPageData>> {
+  try {
+    const [detail, rebalanceProposals] = await Promise.all([
+      getAllocatorDecisionDetail(allocatorRunId),
+      listDecisionRebalanceProposals(allocatorRunId),
+    ]);
+    return {
+      data: { detail, rebalanceProposals },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load allocator decision detail.',
+    };
+  }
+}
+
+export async function loadRebalanceProposalPageData(
+  proposalId: string,
+): Promise<DashboardPageState<RebalanceProposalPageData>> {
+  try {
+    const detail = await getRebalanceProposalDetail(proposalId);
+    return {
+      data: { detail },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load rebalance proposal.',
     };
   }
 }

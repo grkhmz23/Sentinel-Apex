@@ -1,3 +1,16 @@
+import type {
+  AllocatorBudgetConstraint,
+  AllocatorPressureLevel,
+  AllocatorRegimeState,
+  AllocatorRationale,
+  AllocatorSleeveId,
+  RebalanceActionType,
+  RebalanceApprovalRequirement,
+  RebalanceBlockedReason,
+  RebalanceExecutionMode,
+  RebalanceProposalStatus,
+  RebalanceReadiness,
+} from '@sentinel-apex/allocator';
 import type { RiskAssessment } from '@sentinel-apex/domain';
 import type { RiskSummary } from '@sentinel-apex/risk-engine';
 import type {
@@ -18,7 +31,9 @@ export type RuntimeCommandType =
   | 'rebuild_projections'
   | 'run_reconciliation'
   | 'run_treasury_evaluation'
-  | 'execute_treasury_action';
+  | 'run_allocator_evaluation'
+  | 'execute_treasury_action'
+  | 'execute_rebalance_proposal';
 export type RuntimeCommandStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type RuntimeRemediationActionType = 'run_cycle' | 'rebuild_projections';
 export type RuntimeRemediationStatus = 'requested' | 'running' | 'completed' | 'failed';
@@ -237,6 +252,168 @@ export interface RuntimeOverviewView {
   latestReconciliationRun: RuntimeReconciliationRunView | null;
   reconciliationSummary: RuntimeReconciliationSummaryView | null;
   treasurySummary: TreasurySummaryView | null;
+  allocatorSummary: AllocatorSummaryView | null;
+}
+
+export interface AllocatorSummaryView {
+  allocatorRunId: string;
+  sourceRunId: string | null;
+  trigger: string;
+  triggeredBy: string | null;
+  regimeState: AllocatorRegimeState;
+  pressureLevel: AllocatorPressureLevel;
+  totalCapitalUsd: string;
+  reserveConstrainedCapitalUsd: string;
+  allocatableCapitalUsd: string;
+  carryTargetPct: number;
+  treasuryTargetPct: number;
+  recommendationCount: number;
+  evaluatedAt: string;
+  updatedAt: string;
+}
+
+export interface AllocatorSleeveTargetView {
+  allocatorRunId: string;
+  sleeveId: AllocatorSleeveId;
+  sleeveKind: 'carry' | 'treasury';
+  sleeveName: string;
+  status: string;
+  throttleState: string;
+  currentAllocationUsd: string;
+  currentAllocationPct: number;
+  targetAllocationUsd: string;
+  targetAllocationPct: number;
+  minAllocationPct: number;
+  maxAllocationPct: number;
+  deltaUsd: string;
+  opportunityScore: number | null;
+  capacityUsd: string | null;
+  rationale: AllocatorRationale[];
+  metadata: Record<string, unknown>;
+}
+
+export interface AllocatorRecommendationView {
+  id: string;
+  allocatorRunId: string;
+  sleeveId: AllocatorSleeveId;
+  recommendationType: string;
+  priority: 'low' | 'medium' | 'high';
+  summary: string;
+  details: Record<string, unknown>;
+  rationale: AllocatorRationale[];
+  createdAt: string;
+}
+
+export interface AllocatorRunView {
+  allocatorRunId: string;
+  sourceRunId: string | null;
+  trigger: string;
+  triggeredBy: string | null;
+  regimeState: AllocatorRegimeState;
+  pressureLevel: AllocatorPressureLevel;
+  totalCapitalUsd: string;
+  reserveConstrainedCapitalUsd: string;
+  allocatableCapitalUsd: string;
+  recommendationCount: number;
+  rationale: AllocatorRationale[];
+  constraints: AllocatorBudgetConstraint[];
+  inputSnapshot: Record<string, unknown>;
+  policySnapshot: Record<string, unknown>;
+  evaluatedAt: string;
+  updatedAt: string;
+}
+
+export interface AllocatorDecisionDetailView {
+  run: AllocatorRunView;
+  summary: AllocatorSummaryView | null;
+  targets: AllocatorSleeveTargetView[];
+  recommendations: AllocatorRecommendationView[];
+  rationale: AllocatorRationale[];
+  constraints: AllocatorBudgetConstraint[];
+}
+
+export interface RebalanceProposalIntentView {
+  id: string;
+  proposalId: string;
+  sleeveId: AllocatorSleeveId;
+  sourceSleeveId: AllocatorSleeveId | null;
+  targetSleeveId: AllocatorSleeveId | null;
+  actionType: Exclude<RebalanceActionType, 'rebalance_between_sleeves'>;
+  status: RebalanceProposalStatus;
+  readiness: RebalanceReadiness;
+  executable: boolean;
+  currentAllocationUsd: string;
+  currentAllocationPct: number;
+  targetAllocationUsd: string;
+  targetAllocationPct: number;
+  deltaUsd: string;
+  rationale: AllocatorRationale[];
+  blockedReasons: RebalanceBlockedReason[];
+  details: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceProposalView {
+  id: string;
+  allocatorRunId: string;
+  actionType: RebalanceActionType;
+  status: RebalanceProposalStatus;
+  summary: string;
+  executionMode: RebalanceExecutionMode;
+  simulated: boolean;
+  executable: boolean;
+  approvalRequirement: RebalanceApprovalRequirement;
+  rationale: AllocatorRationale[];
+  blockedReasons: RebalanceBlockedReason[];
+  details: Record<string, unknown>;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  linkedCommandId: string | null;
+  latestExecutionId: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceExecutionView {
+  id: string;
+  proposalId: string;
+  commandId: string | null;
+  status: RebalanceProposalStatus;
+  executionMode: RebalanceExecutionMode;
+  simulated: boolean;
+  requestedBy: string;
+  startedBy: string | null;
+  outcomeSummary: string | null;
+  outcome: Record<string, unknown>;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+export interface RebalanceCurrentView {
+  allocatorRunId: string;
+  latestProposalId: string | null;
+  carryTargetAllocationUsd: string;
+  carryTargetAllocationPct: number;
+  treasuryTargetAllocationUsd: string;
+  treasuryTargetAllocationPct: number;
+  appliedAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceProposalDetailView {
+  proposal: RebalanceProposalView;
+  intents: RebalanceProposalIntentView[];
+  latestCommand: RuntimeCommandView | null;
+  executions: RebalanceExecutionView[];
+  currentState: RebalanceCurrentView | null;
 }
 
 export interface TreasurySummaryView {
@@ -566,6 +743,14 @@ export interface RuntimeReadApi {
   listOpportunities(limit?: number): Promise<OpportunityView[]>;
   listRecentEvents(limit?: number): Promise<AuditEventView[]>;
   getRuntimeStatus(): Promise<RuntimeStatusView>;
+  getAllocatorSummary(): Promise<AllocatorSummaryView | null>;
+  listAllocatorTargets(limit?: number): Promise<AllocatorSleeveTargetView[]>;
+  listAllocatorRuns(limit?: number): Promise<AllocatorRunView[]>;
+  getAllocatorDecision(allocatorRunId: string): Promise<AllocatorDecisionDetailView | null>;
+  listRebalanceProposals(limit?: number): Promise<RebalanceProposalView[]>;
+  listRebalanceProposalsForDecision(allocatorRunId: string): Promise<RebalanceProposalView[]>;
+  getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null>;
+  getRebalanceCurrent(): Promise<RebalanceCurrentView | null>;
   getTreasurySummary(): Promise<TreasurySummaryView | null>;
   listTreasuryAllocations(limit?: number): Promise<TreasuryAllocationView[]>;
   getTreasuryPolicy(): Promise<TreasuryPolicyView | null>;
