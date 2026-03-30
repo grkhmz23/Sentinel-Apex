@@ -50,7 +50,11 @@ export default async function TreasuryExecutionDetailPage(
 
         <div className="inline-links">
           <Link href="/treasury">Back to treasury</Link>
+          <Link href="/treasury/executions">Execution history</Link>
           {detail.action !== null ? <Link href={`/treasury/actions/${detail.action.id}`}>Action detail</Link> : null}
+          {detail.linkedRebalanceProposal !== null ? (
+            <Link href={`/allocator/rebalance-proposals/${detail.linkedRebalanceProposal.id}`}>Parent rebalance proposal</Link>
+          ) : null}
           {detail.venue !== null ? <Link href={`/treasury/venues/${detail.venue.venueId}`}>Venue detail</Link> : null}
         </div>
 
@@ -60,9 +64,11 @@ export default async function TreasuryExecutionDetailPage(
               items={[
                 { label: 'Requested by', value: execution.requestedBy },
                 { label: 'Started by', value: execution.startedBy ?? 'Unavailable' },
+                { label: 'Execution kind', value: detail.executionKind },
                 { label: 'Execution mode', value: execution.executionMode },
                 { label: 'Command', value: detail.command?.commandId ?? execution.commandId ?? 'Unavailable' },
                 { label: 'Action', value: detail.action?.id ?? execution.treasuryActionId },
+                { label: 'Parent rebalance', value: detail.linkedRebalanceProposal === null ? 'None' : <Link href={`/allocator/rebalance-proposals/${detail.linkedRebalanceProposal.id}`}>{detail.linkedRebalanceProposal.id}</Link> },
                 { label: 'Venue reference', value: execution.venueExecutionReference ?? 'Unavailable' },
                 { label: 'Requested at', value: formatDateTime(execution.createdAt) },
                 { label: 'Started at', value: formatDateTime(execution.startedAt) },

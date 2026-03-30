@@ -94,4 +94,7 @@ export interface VenueAdapter {
 
   // Health
   getStatus(): Promise<{ healthy: boolean; latencyMs: number; message?: string }>;
+
+  // Optional carry controlled-execution capabilities
+  getCarryCapabilities?(): Promise<import('./carry-venue-adapter.js').CarryVenueCapabilities>;
 }

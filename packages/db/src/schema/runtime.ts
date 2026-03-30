@@ -321,6 +321,7 @@ export const treasuryActions = pgTable(
       .references(() => treasuryRuns.treasuryRunId),
     actionType: text('action_type').notNull(),
     status: text('status').notNull().default('recommended'),
+    linkedRebalanceProposalId: uuid('linked_rebalance_proposal_id'),
     venueId: text('venue_id'),
     venueName: text('venue_name'),
     venueMode: text('venue_mode').notNull().default('simulated'),
@@ -353,6 +354,7 @@ export const treasuryActions = pgTable(
   },
   (t) => ({
     treasuryRunIdIdx: index('treasury_actions_treasury_run_id_idx').on(t.treasuryRunId),
+    linkedRebalanceProposalIdIdx: index('treasury_actions_rebalance_proposal_id_idx').on(t.linkedRebalanceProposalId),
     venueIdIdx: index('treasury_actions_venue_id_idx').on(t.venueId),
     statusIdx: index('treasury_actions_status_idx').on(t.status),
     createdAtIdx: index('treasury_actions_created_at_idx').on(t.createdAt),
@@ -392,6 +394,188 @@ export const treasuryActionExecutions = pgTable(
     commandIdIdx: index('treasury_action_executions_command_id_idx').on(t.commandId),
     statusIdx: index('treasury_action_executions_status_idx').on(t.status),
     createdAtIdx: index('treasury_action_executions_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const carryVenueSnapshots = pgTable(
+  'carry_venue_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyRunId: text('strategy_run_id')
+      .notNull()
+      .references(() => strategyRuns.runId),
+    venueId: text('venue_id').notNull(),
+    venueMode: text('venue_mode').notNull().default('simulated'),
+    executionSupported: boolean('execution_supported').notNull().default(false),
+    supportsIncreaseExposure: boolean('supports_increase_exposure').notNull().default(false),
+    supportsReduceExposure: boolean('supports_reduce_exposure').notNull().default(false),
+    readOnly: boolean('read_only').notNull().default(false),
+    approvedForLiveUse: boolean('approved_for_live_use').notNull().default(false),
+    healthy: boolean('healthy').notNull().default(true),
+    onboardingState: text('onboarding_state').notNull().default('simulated'),
+    missingPrerequisites: jsonb('missing_prerequisites').notNull().default([]),
+    metadata: jsonb('metadata').notNull().default({}),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    strategyRunIdIdx: index('carry_venue_snapshots_strategy_run_id_idx').on(t.strategyRunId),
+    venueIdIdx: index('carry_venue_snapshots_venue_id_idx').on(t.venueId),
+  }),
+);
+
+export const carryActions = pgTable(
+  'carry_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyRunId: text('strategy_run_id')
+      .references(() => strategyRuns.runId),
+    linkedRebalanceProposalId: uuid('linked_rebalance_proposal_id'),
+    actionType: text('action_type').notNull(),
+    status: text('status').notNull().default('recommended'),
+    sourceKind: text('source_kind').notNull(),
+    sourceReference: text('source_reference'),
+    opportunityId: text('opportunity_id'),
+    asset: text('asset'),
+    summary: text('summary').notNull(),
+    notionalUsd: text('notional_usd').notNull(),
+    details: jsonb('details').notNull().default({}),
+    readiness: text('readiness').notNull().default('blocked'),
+    executable: boolean('executable').notNull().default(false),
+    blockedReasons: jsonb('blocked_reasons').notNull().default([]),
+    approvalRequirement: text('approval_requirement').notNull().default('operator'),
+    executionMode: text('execution_mode').notNull().default('dry-run'),
+    simulated: boolean('simulated').notNull().default(true),
+    executionPlan: jsonb('execution_plan').notNull().default({}),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    executionRequestedBy: text('execution_requested_by'),
+    executionRequestedAt: timestamp('execution_requested_at', { withTimezone: true }),
+    queuedAt: timestamp('queued_at', { withTimezone: true }),
+    executingAt: timestamp('executing_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    linkedCommandId: text('linked_command_id'),
+    latestExecutionId: text('latest_execution_id'),
+    lastError: text('last_error'),
+    actorId: text('actor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    strategyRunIdIdx: index('carry_actions_strategy_run_id_idx').on(t.strategyRunId),
+    linkedRebalanceProposalIdIdx: index('carry_actions_rebalance_proposal_id_idx').on(t.linkedRebalanceProposalId),
+    statusIdx: index('carry_actions_status_idx').on(t.status),
+    createdAtIdx: index('carry_actions_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const carryActionOrderIntents = pgTable(
+  'carry_action_order_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    carryActionId: uuid('carry_action_id')
+      .notNull()
+      .references(() => carryActions.id),
+    intentId: text('intent_id').notNull(),
+    venueId: text('venue_id').notNull(),
+    asset: text('asset').notNull(),
+    side: text('side').notNull(),
+    orderType: text('order_type').notNull(),
+    requestedSize: text('requested_size').notNull(),
+    requestedPrice: text('requested_price'),
+    reduceOnly: boolean('reduce_only').notNull().default(false),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    carryActionIdIdx: index('carry_action_order_intents_action_id_idx').on(t.carryActionId),
+    intentIdIdx: index('carry_action_order_intents_intent_id_idx').on(t.intentId),
+  }),
+);
+
+export const carryActionExecutions = pgTable(
+  'carry_action_executions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    carryActionId: uuid('carry_action_id')
+      .notNull()
+      .references(() => carryActions.id),
+    strategyRunId: text('strategy_run_id')
+      .references(() => strategyRuns.runId),
+    commandId: text('command_id'),
+    status: text('status').notNull(),
+    executionMode: text('execution_mode').notNull(),
+    simulated: boolean('simulated').notNull().default(true),
+    requestedBy: text('requested_by').notNull(),
+    startedBy: text('started_by'),
+    blockedReasons: jsonb('blocked_reasons').notNull().default([]),
+    outcomeSummary: text('outcome_summary'),
+    outcome: jsonb('outcome').notNull().default({}),
+    venueExecutionReference: text('venue_execution_reference'),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    carryActionIdIdx: index('carry_action_executions_action_id_idx').on(t.carryActionId),
+    strategyRunIdIdx: index('carry_action_executions_strategy_run_id_idx').on(t.strategyRunId),
+    statusIdx: index('carry_action_executions_status_idx').on(t.status),
+  }),
+);
+
+export const carryExecutionSteps = pgTable(
+  'carry_execution_steps',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    carryExecutionId: uuid('carry_execution_id')
+      .notNull()
+      .references(() => carryActionExecutions.id),
+    carryActionId: uuid('carry_action_id')
+      .notNull()
+      .references(() => carryActions.id),
+    strategyRunId: text('strategy_run_id')
+      .references(() => strategyRuns.runId),
+    plannedOrderId: uuid('planned_order_id')
+      .references(() => carryActionOrderIntents.id),
+    intentId: text('intent_id').notNull(),
+    venueId: text('venue_id').notNull(),
+    venueMode: text('venue_mode').notNull().default('simulated'),
+    executionSupported: boolean('execution_supported').notNull().default(false),
+    readOnly: boolean('read_only').notNull().default(false),
+    approvedForLiveUse: boolean('approved_for_live_use').notNull().default(false),
+    onboardingState: text('onboarding_state').notNull().default('simulated'),
+    asset: text('asset').notNull(),
+    side: text('side').notNull(),
+    orderType: text('order_type').notNull(),
+    requestedSize: text('requested_size').notNull(),
+    requestedPrice: text('requested_price'),
+    reduceOnly: boolean('reduce_only').notNull().default(false),
+    clientOrderId: text('client_order_id'),
+    venueOrderId: text('venue_order_id'),
+    executionReference: text('execution_reference'),
+    status: text('status').notNull().default('pending'),
+    simulated: boolean('simulated').notNull().default(true),
+    filledSize: text('filled_size'),
+    averageFillPrice: text('average_fill_price'),
+    outcomeSummary: text('outcome_summary'),
+    outcome: jsonb('outcome').notNull().default({}),
+    lastError: text('last_error'),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => ({
+    carryExecutionIdIdx: index('carry_execution_steps_execution_id_idx').on(t.carryExecutionId),
+    carryActionIdIdx: index('carry_execution_steps_action_id_idx').on(t.carryActionId),
+    strategyRunIdIdx: index('carry_execution_steps_strategy_run_id_idx').on(t.strategyRunId),
+    plannedOrderIdIdx: index('carry_execution_steps_planned_order_id_idx').on(t.plannedOrderId),
+    intentIdIdx: index('carry_execution_steps_intent_id_idx').on(t.intentId),
+    statusIdx: index('carry_execution_steps_status_idx').on(t.status),
   }),
 );
 

@@ -453,6 +453,53 @@ export class RuntimeWorker {
         return;
       }
 
+      if (command.commandType === 'run_carry_evaluation') {
+        const carrySummary = await this.runtime.runCarryEvaluation({
+          actorId: typeof command.payload['actorId'] === 'string'
+            ? String(command.payload['actorId'])
+            : command.requestedBy,
+          trigger: typeof command.payload['trigger'] === 'string'
+            ? String(command.payload['trigger'])
+            : 'manual_carry_evaluation',
+          sourceRunId: typeof command.payload['sourceRunId'] === 'string'
+            ? String(command.payload['sourceRunId'])
+            : null,
+          linkedRebalanceProposalId: typeof command.payload['linkedRebalanceProposalId'] === 'string'
+            ? String(command.payload['linkedRebalanceProposalId'])
+            : null,
+          targetCarryNotionalUsd: typeof command.payload['targetCarryNotionalUsd'] === 'string'
+            ? String(command.payload['targetCarryNotionalUsd'])
+            : null,
+        });
+
+        await this.store.completeRuntimeCommand(command.commandId, {
+          sourceRunId: carrySummary.sourceRunId,
+          actionCount: carrySummary.actionCount,
+        });
+        await this.store.updateWorkerStatus({
+          schedulerState: 'waiting',
+          currentOperation: null,
+          currentCommandId: null,
+          lastSuccessAt: new Date(),
+          lastFailureAt: null,
+          lastFailureReason: null,
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
+          commandId: command.commandId,
+          eventType: 'runtime_command_completed',
+          status: 'completed',
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message: 'Carry evaluation command completed.',
+          details: {
+            sourceRunId: carrySummary.sourceRunId,
+            actionCount: carrySummary.actionCount,
+          },
+        });
+        return;
+      }
+
       if (command.commandType === 'run_allocator_evaluation') {
         const allocatorSummary = await this.runtime.runAllocatorEvaluation({
           trigger: typeof command.payload['trigger'] === 'string'
@@ -493,6 +540,53 @@ export class RuntimeWorker {
           details: {
             allocatorRunId: allocatorSummary.allocatorRunId,
             regimeState: allocatorSummary.regimeState,
+          },
+        });
+        return;
+      }
+
+      if (command.commandType === 'execute_carry_action') {
+        const carryActionId = typeof command.payload['actionId'] === 'string'
+          ? String(command.payload['actionId'])
+          : null;
+        if (carryActionId === null) {
+          throw new Error('Carry action execution command is missing actionId.');
+        }
+
+        const outcome = await this.runtime.executeCarryAction({
+          actionId: carryActionId,
+          actorId: typeof command.payload['actorId'] === 'string'
+            ? String(command.payload['actorId'])
+            : command.requestedBy,
+          commandId: command.commandId,
+          startedBy: this.workerId,
+        });
+
+        await this.store.completeRuntimeCommand(command.commandId, {
+          carryActionId: outcome.actionId,
+          carryExecutionId: outcome.executionId,
+          orderCount: outcome.orderCount,
+        });
+        await this.store.updateWorkerStatus({
+          schedulerState: 'waiting',
+          currentOperation: null,
+          currentCommandId: null,
+          lastSuccessAt: new Date(),
+          lastFailureAt: null,
+          lastFailureReason: null,
+        });
+        await this.store.recordRecoveryEvent({
+          mismatchId: remediation?.mismatchId ?? null,
+          commandId: command.commandId,
+          eventType: 'runtime_command_completed',
+          status: 'completed',
+          sourceComponent: 'runtime-worker',
+          actorId: this.workerId,
+          message: 'Carry action execution completed.',
+          details: {
+            carryActionId: outcome.actionId,
+            carryExecutionId: outcome.executionId,
+            orderCount: outcome.orderCount,
           },
         });
         return;
@@ -568,6 +662,8 @@ export class RuntimeWorker {
           rebalanceExecutionId: outcome.executionId,
           allocatorRunId: outcome.allocatorRunId,
           applied: outcome.applied,
+          downstreamCarryActionIds: outcome.downstreamCarryActionIds,
+          downstreamTreasuryActionIds: outcome.downstreamTreasuryActionIds,
         });
         await this.store.updateWorkerStatus({
           schedulerState: 'waiting',

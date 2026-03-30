@@ -103,6 +103,25 @@ export async function treasuryRoutes(
   app.get<{
     Params: { actionId: string };
   }>(
+    '/api/v1/treasury/actions/:actionId/executions',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const executions = await controlPlane.listTreasuryExecutionsForAction(request.params.actionId);
+      return reply.status(200).send({
+        data: executions,
+        meta: {
+          correlationId: request.id,
+          count: executions.length,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { actionId: string };
+  }>(
     '/api/v1/treasury/actions/:actionId',
     {
       preHandler: authenticate,

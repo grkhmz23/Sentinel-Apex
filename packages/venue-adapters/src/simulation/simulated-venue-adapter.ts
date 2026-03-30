@@ -21,6 +21,7 @@ import type {
   PlaceOrderResult,
   CancelOrderResult,
 } from '../interfaces/venue-adapter.js';
+import type { CarryVenueCapabilities } from '../interfaces/carry-venue-adapter.js';
 
 
 // ---------------------------------------------------------------------------
@@ -232,6 +233,24 @@ export class SimulatedVenueAdapter implements VenueAdapter {
     asset: string,
   ): Promise<{ rate: string; nextFundingTime: Date }> {
     return this.priceFeed.getFundingRate(asset);
+  }
+
+  async getCarryCapabilities(): Promise<CarryVenueCapabilities> {
+    return {
+      venueId: this.venueId,
+      venueMode: 'simulated',
+      executionSupported: true,
+      supportsIncreaseExposure: true,
+      supportsReduceExposure: true,
+      readOnly: false,
+      approvedForLiveUse: false,
+      healthy: true,
+      onboardingState: 'simulated',
+      missingPrerequisites: [],
+      metadata: {
+        venueType: this.venueType,
+      },
+    };
   }
 
   // ── Account ───────────────────────────────────────────────────────────────

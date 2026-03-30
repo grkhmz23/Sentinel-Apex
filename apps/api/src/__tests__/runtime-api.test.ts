@@ -227,10 +227,15 @@ describe('runtime-backed API routes', () => {
     const executionCommand = await waitForCommand(controlPlane, executeBody.data.commandId);
     expect(executionCommand.status).toBe('completed');
 
-    const [actionDetailResponse, executionsResponse, executionDetailResponse, venuesResponse, venueDetailResponse] = await Promise.all([
+    const [actionDetailResponse, actionExecutionsResponse, executionsResponse, executionDetailResponse, venuesResponse, venueDetailResponse] = await Promise.all([
       app.inject({
         method: 'GET',
         url: `/api/v1/treasury/actions/${actionable?.id}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/treasury/actions/${actionable?.id}/executions`,
         headers: { 'x-api-key': TEST_API_KEY },
       }),
       app.inject({
@@ -256,6 +261,7 @@ describe('runtime-backed API routes', () => {
     ]);
 
     expect(actionDetailResponse.statusCode).toBe(200);
+    expect(actionExecutionsResponse.statusCode).toBe(200);
     expect(executionsResponse.statusCode).toBe(200);
     expect(executionDetailResponse.statusCode).toBe(404);
     expect(venuesResponse.statusCode).toBe(200);
@@ -274,6 +280,9 @@ describe('runtime-backed API routes', () => {
     }>();
     const executionsBody = executionsResponse.json<{
       data: Array<{ id: string; status: string; requestedBy: string }>;
+    }>();
+    const actionExecutionsBody = actionExecutionsResponse.json<{
+      data: Array<{ id: string; treasuryActionId: string; status: string }>;
     }>();
     const venuesBody = venuesResponse.json<{
       data: Array<{
@@ -298,6 +307,7 @@ describe('runtime-backed API routes', () => {
     expect(actionDetailBody.data.executions[0]?.requestedBy).toBe('operator-user');
     expect(actionDetailBody.data.timeline.length).toBeGreaterThan(0);
     expect(actionDetailBody.data.venue?.onboardingState).toBeTruthy();
+    expect(actionExecutionsBody.data[0]?.treasuryActionId).toBe(actionable?.id);
     expect(executionsBody.data.some((execution) => execution.status === 'completed')).toBe(true);
     expect(venuesBody.data.length).toBeGreaterThan(0);
     expect(venuesBody.data[0]?.simulationState).toBe('simulated');
@@ -323,6 +333,8 @@ describe('runtime-backed API routes', () => {
           status: string;
         };
         action: null | { id: string };
+        linkedRebalanceProposal: null | { id: string };
+        executionKind: string;
         command: null | { commandId: string };
         venue: null | { venueId: string; executionSupported: boolean };
         timeline: Array<{ eventType: string }>;
@@ -332,9 +344,149 @@ describe('runtime-backed API routes', () => {
     expect(completedExecutionBody.data.execution.id).toBe(completedExecutionId);
     expect(completedExecutionBody.data.execution.status).toBe('completed');
     expect(completedExecutionBody.data.action?.id).toBe(actionable?.id);
+    expect(completedExecutionBody.data.executionKind).toBe('venue_execution');
+    expect(completedExecutionBody.data.linkedRebalanceProposal).toBeNull();
     expect(completedExecutionBody.data.command?.commandId).toBeTruthy();
     expect(completedExecutionBody.data.venue?.executionSupported).toBe(true);
     expect(completedExecutionBody.data.timeline.length).toBeGreaterThan(0);
+  });
+
+  it('exposes carry recommendations, execution history, venue state, and approval-driven execution through the API', async () => {
+    const cycleResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/runtime/cycles/run',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/runtime/cycles/run'),
+    });
+    expect(cycleResponse.statusCode).toBe(202);
+
+    const cycleCommand = cycleResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, cycleCommand.data.commandId);
+
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/carry/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/carry/evaluate'),
+    });
+
+    expect(evaluateResponse.statusCode).toBe(202);
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    const command = await waitForCommand(controlPlane, evaluateBody.data.commandId);
+    expect(command.status).toBe('completed');
+
+    const [recommendationsResponse, actionsResponse, executionsResponse, venuesResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/carry/recommendations',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/carry/actions',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/carry/executions',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/carry/venues',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(recommendationsResponse.statusCode).toBe(200);
+    expect(actionsResponse.statusCode).toBe(200);
+    expect(executionsResponse.statusCode).toBe(200);
+    expect(venuesResponse.statusCode).toBe(200);
+
+    const actionsBody = actionsResponse.json<{
+      data: Array<{ id: string; status: string; executable: boolean; simulated: boolean }>;
+    }>();
+    const venuesBody = venuesResponse.json<{
+      data: Array<{ venueId: string; venueMode: string; executionSupported: boolean }>;
+    }>();
+
+    expect(actionsBody.data.length).toBeGreaterThan(0);
+    expect(venuesBody.data.length).toBeGreaterThan(0);
+    expect(venuesBody.data[0]?.venueMode).toBe('simulated');
+
+    const actionable = actionsBody.data.find((action) => action.executable);
+    expect(actionable?.id).toBeTruthy();
+
+    const approveResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/carry/actions/${actionable?.id}/approve`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/carry/actions/${actionable?.id}/approve`),
+    });
+    expect(approveResponse.statusCode).toBe(202);
+
+    const approveBody = approveResponse.json<{ data: { commandId: string } }>();
+    const executionCommand = await waitForCommand(controlPlane, approveBody.data.commandId);
+    expect(executionCommand.status).toBe('completed');
+
+    const actionDetailResponse = await app.inject({
+      method: 'GET',
+      url: `/api/v1/carry/actions/${actionable?.id}`,
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(actionDetailResponse.statusCode).toBe(200);
+
+    const actionDetailBody = actionDetailResponse.json<{
+      data: {
+        action: { status: string; linkedCommandId: string | null };
+        executions: Array<{ id: string; status: string; requestedBy: string }>;
+        linkedRebalanceProposal: null | { id: string };
+      };
+    }>();
+    expect(actionDetailBody.data.action.status).toBe('completed');
+    expect(actionDetailBody.data.executions[0]?.requestedBy).toBe('operator-user');
+
+    const carryExecutionId = actionDetailBody.data.executions[0]?.id;
+    expect(carryExecutionId).toBeTruthy();
+
+    const [carryActionExecutionsResponse, carryExecutionResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/carry/actions/${actionable?.id}/executions`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/carry/executions/${carryExecutionId}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+    expect(carryActionExecutionsResponse.statusCode).toBe(200);
+    expect(carryExecutionResponse.statusCode).toBe(200);
+
+    const carryActionExecutionsBody = carryActionExecutionsResponse.json<{
+      data: Array<{ id: string; carryActionId: string }>;
+    }>();
+    const carryExecutionBody = carryExecutionResponse.json<{
+      data: {
+        execution: { id: string; status: string; carryActionId: string; simulated: boolean };
+        action: null | { id: string; linkedRebalanceProposalId: string | null };
+        command: null | { commandId: string };
+        linkedRebalanceProposal: null | { id: string };
+        venueSnapshots: Array<{ venueId: string; venueMode: string }>;
+        steps: Array<{ intentId: string; executionReference: string | null; venueId: string; simulated: boolean }>;
+        timeline: Array<{ eventType: string; linkedExecutionId: string | null }>;
+      };
+    }>();
+
+    expect(carryActionExecutionsBody.data[0]?.id).toBe(carryExecutionId);
+    expect(carryExecutionBody.data.execution.id).toBe(carryExecutionId);
+    expect(carryExecutionBody.data.execution.status).toBe('completed');
+    expect(carryExecutionBody.data.execution.carryActionId).toBe(actionable?.id);
+    expect(carryExecutionBody.data.execution.simulated).toBe(true);
+    expect(carryExecutionBody.data.command?.commandId).toBe(executionCommand.commandId);
+    expect(carryExecutionBody.data.steps.length).toBeGreaterThan(0);
+    expect(carryExecutionBody.data.steps[0]?.intentId).toBeTruthy();
+    expect(carryExecutionBody.data.steps[0]?.venueId).toBeTruthy();
+    expect(carryExecutionBody.data.steps[0]?.simulated).toBe(true);
+    expect(carryExecutionBody.data.timeline.some((entry) => entry.linkedExecutionId === carryExecutionId)).toBe(true);
   });
 
   it('surfaces the full mismatch recovery lifecycle through the API', async () => {
@@ -968,11 +1120,37 @@ describe('runtime-backed API routes', () => {
     const approveBody = approveResponse.json<{ data: { commandId: string } }>();
     const command = await waitForCommand(controlPlane, approveBody.data.commandId);
     expect(command.status).toBe('completed');
+    const downstreamCarryActionIds = Array.isArray(command.result['downstreamCarryActionIds'])
+      ? command.result['downstreamCarryActionIds'].filter((value): value is string => typeof value === 'string')
+      : [];
+    const downstreamTreasuryActionIds = Array.isArray(command.result['downstreamTreasuryActionIds'])
+      ? command.result['downstreamTreasuryActionIds'].filter((value): value is string => typeof value === 'string')
+      : [];
 
-    const [detailResponse, byDecisionResponse] = await Promise.all([
+    const [detailResponse, graphResponse, bundleResponse, bundlesResponse, timelineResponse, byDecisionResponse] = await Promise.all([
       app.inject({
         method: 'GET',
         url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}/execution-graph`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}/bundle`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/rebalance-bundles',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}/timeline`,
         headers: { 'x-api-key': TEST_API_KEY },
       }),
       app.inject({
@@ -983,6 +1161,10 @@ describe('runtime-backed API routes', () => {
     ]);
 
     expect(detailResponse.statusCode).toBe(200);
+    expect(graphResponse.statusCode).toBe(200);
+    expect(bundleResponse.statusCode).toBe(200);
+    expect(bundlesResponse.statusCode).toBe(200);
+    expect(timelineResponse.statusCode).toBe(200);
     expect(byDecisionResponse.statusCode).toBe(200);
 
     const detailBody = detailResponse.json<{
@@ -991,10 +1173,83 @@ describe('runtime-backed API routes', () => {
         executions: Array<{ status: string }>;
       };
     }>();
+    const graphBody = graphResponse.json<{
+      data: {
+        detail: {
+          proposal: { id: string; linkedCommandId: string | null };
+        };
+        commands: Array<{ commandId: string }>;
+        downstream: {
+          carry: {
+            actions: Array<{
+              action: { id: string; linkedRebalanceProposalId: string | null };
+              executions: Array<{ id: string; status: string; venueExecutionReference: string | null }>;
+            }>;
+            rollup: { actionCount: number; executionCount: number; status: string };
+          };
+          treasury: {
+            actions: Array<{
+              action: { id: string; linkedRebalanceProposalId: string | null };
+              executions: Array<{ id: string; status: string }>;
+            }>;
+            note: string | null;
+          };
+        };
+        timeline: Array<{ sleeveId: string; scope: string; status: string | null }>;
+      };
+    }>();
+    const timelineBody = timelineResponse.json<{
+      data: Array<{ sleeveId: string; scope: string; summary: string }>;
+    }>();
+    const bundleBody = bundleResponse.json<{
+      data: {
+        bundle: {
+          proposalId: string;
+          status: string;
+          interventionRecommendation: string;
+          totalChildCount: number;
+          completedChildCount: number;
+        };
+        graph: {
+          detail: {
+            proposal: { id: string };
+          };
+        };
+      };
+    }>();
+    const bundlesBody = bundlesResponse.json<{
+      data: Array<{ proposalId: string; status: string }>;
+    }>();
 
     expect(detailBody.data.proposal.status).toBe('completed');
     expect(detailBody.data.proposal.linkedCommandId).toBe(approveBody.data.commandId);
     expect(detailBody.data.executions[0]?.status).toBe('completed');
+    expect(graphBody.data.detail.proposal.id).toBe(actionable?.id);
+    expect(graphBody.data.commands[0]?.commandId).toBe(approveBody.data.commandId);
+    expect(graphBody.data.downstream.carry.actions.map((item) => item.action.id).sort()).toEqual(
+      [...downstreamCarryActionIds].sort(),
+    );
+    if (downstreamCarryActionIds.length > 0) {
+      expect(graphBody.data.downstream.carry.actions[0]?.action.linkedRebalanceProposalId).toBe(actionable?.id);
+    }
+    expect(graphBody.data.downstream.treasury.actions.map((item) => item.action.id).sort()).toEqual(
+      [...downstreamTreasuryActionIds].sort(),
+    );
+    if (downstreamTreasuryActionIds.length > 0) {
+      expect(graphBody.data.downstream.treasury.actions[0]?.action.linkedRebalanceProposalId).toBe(actionable?.id);
+      expect(graphBody.data.downstream.treasury.actions[0]?.executions.length).toBeGreaterThan(0);
+      expect(graphBody.data.downstream.treasury.note).toBeNull();
+    } else {
+      expect(graphBody.data.downstream.treasury.note).toBeTruthy();
+    }
+    expect(graphBody.data.timeline.some((entry) => entry.sleeveId === 'carry')).toBe(true);
+    expect(timelineBody.data.some((entry) => entry.scope === 'downstream_execution')).toBe(true);
+    expect(bundleBody.data.bundle.proposalId).toBe(actionable?.id);
+    expect(bundleBody.data.graph.detail.proposal.id).toBe(actionable?.id);
+    expect(bundleBody.data.bundle.totalChildCount).toBeGreaterThanOrEqual(bundleBody.data.bundle.completedChildCount);
+    expect(bundlesBody.data.some((bundle) => bundle.proposalId === actionable?.id)).toBe(true);
+    expect(Array.isArray(command.result['downstreamCarryActionIds'])).toBe(true);
+    expect(Array.isArray(command.result['downstreamTreasuryActionIds'])).toBe(true);
   });
 
   it('requires operator authorization for allocator evaluation', async () => {

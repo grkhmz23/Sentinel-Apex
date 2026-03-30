@@ -11,6 +11,14 @@ import type {
   RebalanceProposalStatus,
   RebalanceReadiness,
 } from '@sentinel-apex/allocator';
+import type {
+  CarryActionReadiness,
+  CarryActionType,
+  CarryApprovalRequirement,
+  CarryExecutionMode,
+  CarryExecutionStatus,
+  CarryOperationalBlockedReason,
+} from '@sentinel-apex/carry';
 import type { RiskAssessment } from '@sentinel-apex/domain';
 import type { RiskSummary } from '@sentinel-apex/risk-engine';
 import type {
@@ -28,10 +36,12 @@ export type WorkerLifecycleState = 'starting' | 'ready' | 'stopping' | 'stopped'
 export type WorkerSchedulerState = 'idle' | 'waiting' | 'running' | 'paused';
 export type RuntimeCommandType =
   | 'run_cycle'
+  | 'run_carry_evaluation'
   | 'rebuild_projections'
   | 'run_reconciliation'
   | 'run_treasury_evaluation'
   | 'run_allocator_evaluation'
+  | 'execute_carry_action'
   | 'execute_treasury_action'
   | 'execute_rebalance_proposal';
 export type RuntimeCommandStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -416,6 +426,291 @@ export interface RebalanceProposalDetailView {
   currentState: RebalanceCurrentView | null;
 }
 
+export interface RebalanceDownstreamStatusRollupView {
+  status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'failed' | 'blocked';
+  actionCount: number;
+  executionCount: number;
+  blockedCount: number;
+  failureCount: number;
+  completedCount: number;
+  simulated: boolean;
+  live: boolean;
+  references: string[];
+  summary: string;
+}
+
+export interface RebalanceCarryActionNodeView {
+  action: CarryActionView;
+  executions: CarryExecutionView[];
+}
+
+export interface RebalanceTreasuryActionNodeView {
+  action: TreasuryActionView;
+  executions: TreasuryExecutionView[];
+}
+
+export interface RebalanceExecutionTimelineEntry {
+  id: string;
+  eventType:
+    | 'proposed'
+    | 'approved'
+    | 'rejected'
+    | 'queued'
+    | 'command_linked'
+    | 'execution_recorded'
+    | 'executing'
+    | 'completed'
+    | 'failed'
+    | 'budget_state_applied'
+    | 'downstream_action_recorded'
+    | 'downstream_execution_recorded';
+  at: string;
+  actorId: string | null;
+  sleeveId: 'allocator' | 'carry' | 'treasury';
+  scope: 'proposal' | 'command' | 'rebalance_execution' | 'downstream_action' | 'downstream_execution';
+  status: string | null;
+  summary: string;
+  linkedCommandId: string | null;
+  linkedRebalanceExecutionId: string | null;
+  linkedActionId: string | null;
+  linkedExecutionId: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface RebalanceExecutionGraphView {
+  detail: RebalanceProposalDetailView;
+  allocatorDecision: AllocatorDecisionDetailView | null;
+  commands: RuntimeCommandView[];
+  downstream: {
+    carry: {
+      actions: RebalanceCarryActionNodeView[];
+      rollup: RebalanceDownstreamStatusRollupView;
+    };
+    treasury: {
+      actions: RebalanceTreasuryActionNodeView[];
+      rollup: RebalanceDownstreamStatusRollupView;
+      note: string | null;
+    };
+  };
+  timeline: RebalanceExecutionTimelineEntry[];
+}
+
+export type RebalanceBundleStatus =
+  | 'proposed'
+  | 'queued'
+  | 'executing'
+  | 'completed'
+  | 'partially_completed'
+  | 'blocked'
+  | 'failed'
+  | 'requires_intervention'
+  | 'rejected';
+export type RebalanceBundleCompletionState = 'open' | 'finalized';
+export type RebalanceBundleInterventionRecommendation =
+  | 'no_action_needed'
+  | 'wait_for_inflight_children'
+  | 'inspect_child_failures'
+  | 'operator_review_required'
+  | 'unresolved_partial_application';
+export type RebalanceBundleOutcomeClassification =
+  | 'pending'
+  | 'safe_complete'
+  | 'partial_application'
+  | 'blocked'
+  | 'failed'
+  | 'rejected';
+
+export interface RebalanceBundleView {
+  id: string;
+  proposalId: string;
+  allocatorRunId: string;
+  proposalStatus: RebalanceProposalStatus;
+  status: RebalanceBundleStatus;
+  completionState: RebalanceBundleCompletionState;
+  outcomeClassification: RebalanceBundleOutcomeClassification;
+  interventionRecommendation: RebalanceBundleInterventionRecommendation;
+  totalChildCount: number;
+  blockedChildCount: number;
+  failedChildCount: number;
+  completedChildCount: number;
+  pendingChildCount: number;
+  childRollup: Record<string, unknown>;
+  finalizationReason: string | null;
+  finalizedAt: string | null;
+  executionMode: RebalanceExecutionMode;
+  simulated: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceBundleDetailView {
+  bundle: RebalanceBundleView;
+  graph: RebalanceExecutionGraphView;
+}
+
+export interface CarryVenueView {
+  strategyRunId: string | null;
+  venueId: string;
+  venueMode: 'simulated' | 'live';
+  executionSupported: boolean;
+  supportsIncreaseExposure: boolean;
+  supportsReduceExposure: boolean;
+  readOnly: boolean;
+  approvedForLiveUse: boolean;
+  healthy: boolean;
+  onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
+  missingPrerequisites: string[];
+  metadata: Record<string, unknown>;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface CarryActionPlannedOrderView {
+  id: string;
+  carryActionId: string;
+  intentId: string;
+  venueId: string;
+  asset: string;
+  side: 'buy' | 'sell';
+  orderType: 'market' | 'limit' | 'post_only';
+  requestedSize: string;
+  requestedPrice: string | null;
+  reduceOnly: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CarryActionView {
+  id: string;
+  strategyRunId: string | null;
+  linkedRebalanceProposalId: string | null;
+  actionType: CarryActionType;
+  status: CarryExecutionStatus;
+  sourceKind: 'opportunity' | 'rebalance';
+  sourceReference: string | null;
+  opportunityId: string | null;
+  asset: string | null;
+  summary: string;
+  notionalUsd: string;
+  details: Record<string, unknown>;
+  readiness: CarryActionReadiness;
+  executable: boolean;
+  blockedReasons: CarryOperationalBlockedReason[];
+  approvalRequirement: CarryApprovalRequirement;
+  executionMode: CarryExecutionMode;
+  simulated: boolean;
+  executionPlan: Record<string, unknown>;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  executionRequestedBy: string | null;
+  executionRequestedAt: string | null;
+  queuedAt: string | null;
+  executingAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  cancelledAt: string | null;
+  linkedCommandId: string | null;
+  latestExecutionId: string | null;
+  lastError: string | null;
+  actorId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CarryExecutionView {
+  id: string;
+  carryActionId: string;
+  strategyRunId: string | null;
+  commandId: string | null;
+  status: CarryExecutionStatus;
+  executionMode: CarryExecutionMode;
+  simulated: boolean;
+  requestedBy: string;
+  startedBy: string | null;
+  blockedReasons: CarryOperationalBlockedReason[];
+  outcomeSummary: string | null;
+  outcome: Record<string, unknown>;
+  venueExecutionReference: string | null;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+export interface CarryExecutionStepView {
+  id: string;
+  carryExecutionId: string;
+  carryActionId: string;
+  strategyRunId: string | null;
+  plannedOrderId: string | null;
+  intentId: string;
+  venueId: string;
+  venueMode: 'simulated' | 'live';
+  executionSupported: boolean;
+  readOnly: boolean;
+  approvedForLiveUse: boolean;
+  onboardingState: CarryVenueView['onboardingState'];
+  asset: string;
+  side: 'buy' | 'sell';
+  orderType: 'market' | 'limit' | 'post_only';
+  requestedSize: string;
+  requestedPrice: string | null;
+  reduceOnly: boolean;
+  clientOrderId: string | null;
+  venueOrderId: string | null;
+  executionReference: string | null;
+  status: string;
+  simulated: boolean;
+  filledSize: string | null;
+  averageFillPrice: string | null;
+  outcomeSummary: string | null;
+  outcome: Record<string, unknown>;
+  lastError: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface CarryExecutionTimelineEntry {
+  id: string;
+  eventType:
+    | 'recommended'
+    | 'approved'
+    | 'queued'
+    | 'executing'
+    | 'step_recorded'
+    | 'completed'
+    | 'failed';
+  at: string;
+  actorId: string | null;
+  status: CarryExecutionStatus | null;
+  summary: string;
+  linkedCommandId: string | null;
+  linkedExecutionId: string | null;
+  linkedStepId: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface CarryExecutionDetailView {
+  execution: CarryExecutionView;
+  action: CarryActionView | null;
+  command: RuntimeCommandView | null;
+  linkedRebalanceProposal: RebalanceProposalView | null;
+  venueSnapshots: CarryVenueView[];
+  steps: CarryExecutionStepView[];
+  timeline: CarryExecutionTimelineEntry[];
+}
+
+export interface CarryActionDetailView {
+  action: CarryActionView;
+  plannedOrders: CarryActionPlannedOrderView[];
+  latestCommand: RuntimeCommandView | null;
+  executions: CarryExecutionView[];
+  linkedRebalanceProposal: RebalanceProposalView | null;
+}
+
 export interface TreasurySummaryView {
   treasuryRunId: string;
   sourceRunId: string | null;
@@ -458,6 +753,7 @@ export interface TreasuryAllocationView {
 export interface TreasuryActionView {
   id: string;
   treasuryRunId: string;
+  linkedRebalanceProposalId: string | null;
   actionType: TreasuryActionType;
   status: TreasuryExecutionStatus;
   readiness: TreasuryActionReadiness;
@@ -496,6 +792,7 @@ export interface TreasuryActionDetailView {
   latestCommand: RuntimeCommandView | null;
   executions: TreasuryExecutionView[];
   timeline: TreasuryActionTimelineEntry[];
+  linkedRebalanceProposal: RebalanceProposalView | null;
   venue: TreasuryVenueView | null;
   summary: TreasurySummaryView | null;
   policy: TreasuryPolicyView | null;
@@ -527,6 +824,8 @@ export interface TreasuryExecutionDetailView {
   execution: TreasuryExecutionView;
   action: TreasuryActionView | null;
   command: RuntimeCommandView | null;
+  linkedRebalanceProposal: RebalanceProposalView | null;
+  executionKind: 'venue_execution' | 'budget_state_application';
   venue: TreasuryVenueView | null;
   timeline: TreasuryActionTimelineEntry[];
 }
@@ -743,13 +1042,25 @@ export interface RuntimeReadApi {
   listOpportunities(limit?: number): Promise<OpportunityView[]>;
   listRecentEvents(limit?: number): Promise<AuditEventView[]>;
   getRuntimeStatus(): Promise<RuntimeStatusView>;
+  listCarryRecommendations(limit?: number): Promise<CarryActionView[]>;
+  listCarryActions(limit?: number): Promise<CarryActionView[]>;
+  getCarryAction(actionId: string): Promise<CarryActionDetailView | null>;
+  listCarryExecutions(limit?: number): Promise<CarryExecutionView[]>;
+  listCarryExecutionsForAction(actionId: string): Promise<CarryExecutionView[]>;
+  getCarryExecution(executionId: string): Promise<CarryExecutionDetailView | null>;
+  listCarryVenues(limit?: number): Promise<CarryVenueView[]>;
   getAllocatorSummary(): Promise<AllocatorSummaryView | null>;
   listAllocatorTargets(limit?: number): Promise<AllocatorSleeveTargetView[]>;
   listAllocatorRuns(limit?: number): Promise<AllocatorRunView[]>;
   getAllocatorDecision(allocatorRunId: string): Promise<AllocatorDecisionDetailView | null>;
   listRebalanceProposals(limit?: number): Promise<RebalanceProposalView[]>;
   listRebalanceProposalsForDecision(allocatorRunId: string): Promise<RebalanceProposalView[]>;
+  listRebalanceBundles(limit?: number): Promise<RebalanceBundleView[]>;
+  getRebalanceBundle(bundleId: string): Promise<RebalanceBundleDetailView | null>;
+  getRebalanceBundleForProposal(proposalId: string): Promise<RebalanceBundleDetailView | null>;
   getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null>;
+  getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null>;
+  getRebalanceTimeline(proposalId: string): Promise<RebalanceExecutionTimelineEntry[]>;
   getRebalanceCurrent(): Promise<RebalanceCurrentView | null>;
   getTreasurySummary(): Promise<TreasurySummaryView | null>;
   listTreasuryAllocations(limit?: number): Promise<TreasuryAllocationView[]>;
@@ -757,6 +1068,7 @@ export interface RuntimeReadApi {
   listTreasuryActions(limit?: number): Promise<TreasuryActionView[]>;
   getTreasuryAction(actionId: string): Promise<TreasuryActionDetailView | null>;
   listTreasuryExecutions(limit?: number): Promise<TreasuryExecutionView[]>;
+  listTreasuryExecutionsForAction(actionId: string): Promise<TreasuryExecutionView[]>;
   getTreasuryExecution(executionId: string): Promise<TreasuryExecutionView | null>;
   getTreasuryExecutionDetail(executionId: string): Promise<TreasuryExecutionDetailView | null>;
   listTreasuryVenues(limit?: number): Promise<TreasuryVenueView[]>;

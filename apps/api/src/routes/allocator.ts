@@ -115,6 +115,108 @@ export async function allocatorRoutes(
   app.get<{
     Querystring: { limit?: string };
   }>(
+    '/api/v1/allocator/rebalance-bundles',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const limit = Math.min(Number.parseInt(request.query.limit ?? '20', 10), 200);
+      const bundles = await controlPlane.listRebalanceBundles(limit);
+      return reply.status(200).send({
+        data: bundles,
+        meta: {
+          correlationId: request.id,
+          count: bundles.length,
+          limit,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { bundleId: string };
+  }>(
+    '/api/v1/allocator/rebalance-bundles/:bundleId',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const bundle = await controlPlane.getRebalanceBundle(request.params.bundleId);
+      if (bundle === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Rebalance bundle '${request.params.bundleId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: bundle,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { proposalId: string };
+  }>(
+    '/api/v1/allocator/rebalance-proposals/:proposalId/bundle',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const bundle = await controlPlane.getRebalanceBundleForProposal(request.params.proposalId);
+      if (bundle === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Rebalance bundle for proposal '${request.params.proposalId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: bundle,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { bundleId: string };
+  }>(
+    '/api/v1/allocator/rebalance-bundles/:bundleId/timeline',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const bundle = await controlPlane.getRebalanceBundle(request.params.bundleId);
+      if (bundle === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Rebalance bundle '${request.params.bundleId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: bundle.graph.timeline,
+        meta: {
+          correlationId: request.id,
+          count: bundle.graph.timeline.length,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Querystring: { limit?: string };
+  }>(
     '/api/v1/allocator/rebalance-proposals',
     {
       preHandler: authenticate,
@@ -147,6 +249,62 @@ export async function allocatorRoutes(
         meta: {
           correlationId: request.id,
           count: proposals.length,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { proposalId: string };
+  }>(
+    '/api/v1/allocator/rebalance-proposals/:proposalId/execution-graph',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const graph = await controlPlane.getRebalanceExecutionGraph(request.params.proposalId);
+      if (graph === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Rebalance proposal '${request.params.proposalId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: graph,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { proposalId: string };
+  }>(
+    '/api/v1/allocator/rebalance-proposals/:proposalId/timeline',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const proposal = await controlPlane.getRebalanceProposal(request.params.proposalId);
+      if (proposal === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Rebalance proposal '${request.params.proposalId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      const timeline = await controlPlane.getRebalanceTimeline(request.params.proposalId);
+      return reply.status(200).send({
+        data: timeline,
+        meta: {
+          correlationId: request.id,
+          count: timeline.length,
         },
       });
     },

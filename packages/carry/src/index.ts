@@ -29,3 +29,26 @@ export { computeHedgeState, HEDGE_TOLERANCE_PCT } from './hedge-state.js';
 
 export type { PositionPnl, ComputeCarryPnlParams } from './pnl.js';
 export { computeCarryPnl } from './pnl.js';
+
+export {
+  CarryControlledExecutionPlanner,
+  DEFAULT_CARRY_OPERATIONAL_POLICY,
+  buildCarryReductionIntents,
+} from './controlled-execution.js';
+export type {
+  CarryActionReadiness,
+  CarryActionType,
+  CarryApprovalRequirement,
+  CarryControlledExecutionPlanningInput,
+  CarryExecutionEffects,
+  CarryExecutionIntent,
+  CarryExecutionMode,
+  CarryExecutionRecommendation,
+  CarryExecutionStatus,
+  CarryOperationalBlockedReason,
+  CarryOperationalBlockedReasonCategory,
+  CarryOperationalBlockedReasonCode,
+  CarryOperationalPolicy,
+  CarryPositionSnapshot,
+  CarryRecommendationSourceKind,
+} from './types.js';

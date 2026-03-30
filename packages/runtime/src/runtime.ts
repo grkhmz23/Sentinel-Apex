@@ -9,13 +9,21 @@ import {
   type AllocatorPolicyInput,
   type AllocatorSleeveSnapshot,
 } from '@sentinel-apex/allocator';
-import { DEFAULT_CARRY_CONFIG, type CarryOpportunityCandidate } from '@sentinel-apex/carry';
+import {
+  CarryControlledExecutionPlanner,
+  DEFAULT_CARRY_CONFIG,
+  DEFAULT_CARRY_OPERATIONAL_POLICY,
+  buildCarryReductionIntents,
+  type CarryExecutionRecommendation,
+  type CarryOpportunityCandidate,
+  type CarryPositionSnapshot,
+} from '@sentinel-apex/carry';
 import {
   applyMigrations,
   createDatabaseConnection,
   type DatabaseConnection,
 } from '@sentinel-apex/db';
-import { createId, type OrderFill } from '@sentinel-apex/domain';
+import { createId, type OrderFill, type OrderIntent } from '@sentinel-apex/domain';
 import { OrderExecutor, type OrderRecord } from '@sentinel-apex/execution';
 import { createLogger, registry, type Logger } from '@sentinel-apex/observability';
 import {
@@ -55,6 +63,11 @@ import { DatabaseAuditWriter, RuntimeOrderStore, RuntimeStore } from './store.js
 import type {
   AllocatorSummaryView,
   AuditEventView,
+  CarryActionDetailView,
+  CarryActionView,
+  CarryExecutionDetailView,
+  CarryExecutionView,
+  CarryVenueView,
   OpportunityView,
   OrderView,
   PnlSummaryView,
@@ -62,6 +75,8 @@ import type {
   PortfolioSummaryView,
   PositionView,
   RiskBreachView,
+  RebalanceExecutionGraphView,
+  RebalanceExecutionTimelineEntry,
   RuntimeLifecycleState,
   RuntimeReconciliationRunView,
   RiskSummaryView,
@@ -107,6 +122,27 @@ function buildPositionViews(
     closedAt: null,
     updatedAt: position.updatedAt.toISOString(),
   }));
+}
+
+function toCarryPositionSnapshot(position: PositionView): CarryPositionSnapshot | null {
+  if (position.side !== 'long' && position.side !== 'short') {
+    return null;
+  }
+
+  const updatedAt = new Date(position.updatedAt);
+  if (Number.isNaN(updatedAt.getTime())) {
+    return null;
+  }
+
+  return {
+    positionId: position.id,
+    venueId: position.venueId,
+    asset: position.asset,
+    side: position.side,
+    size: position.size,
+    markPrice: position.markPrice,
+    updatedAt: updatedAt.toISOString(),
+  };
 }
 
 function normaliseCarryOpportunityScore(opportunities: OpportunityView[]): number {
@@ -168,6 +204,7 @@ export class SentinelRuntime {
   private readonly allocatorRegistry = new SentinelSleeveRegistry();
   private readonly allocatorPolicyEngine = new SentinelAllocatorPolicyEngine();
   private readonly rebalancePlanner = new SentinelRebalancePlanner();
+  private readonly carryExecutionPlanner = new CarryControlledExecutionPlanner();
 
   constructor(private readonly options: SentinelRuntimeOptions) {
     this.healthMonitor = new RuntimeHealthMonitor(this.options.store);
@@ -741,6 +778,235 @@ export class SentinelRuntime {
     return this.options.store.getTreasurySummary();
   }
 
+  async listCarryRecommendations(limit = 50): Promise<CarryActionView[]> {
+    return this.options.store.listCarryRecommendations(limit);
+  }
+
+  async listCarryActions(limit = 50): Promise<CarryActionView[]> {
+    return this.options.store.listCarryActions(limit);
+  }
+
+  async getCarryAction(actionId: string): Promise<CarryActionDetailView | null> {
+    return this.options.store.getCarryAction(actionId);
+  }
+
+  async listCarryExecutions(limit = 50): Promise<CarryExecutionView[]> {
+    return this.options.store.listCarryExecutions(limit);
+  }
+
+  async listCarryExecutionsForAction(actionId: string): Promise<CarryExecutionView[]> {
+    return this.options.store.listCarryExecutionsForAction(actionId);
+  }
+
+  async getCarryExecution(executionId: string): Promise<CarryExecutionDetailView | null> {
+    return this.options.store.getCarryExecution(executionId);
+  }
+
+  async getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null> {
+    return this.options.store.getRebalanceExecutionGraph(proposalId);
+  }
+
+  async getRebalanceTimeline(proposalId: string): Promise<RebalanceExecutionTimelineEntry[]> {
+    return this.options.store.getRebalanceTimeline(proposalId);
+  }
+
+  async listCarryVenues(limit = 50): Promise<CarryVenueView[]> {
+    return this.options.store.listCarryVenues(limit);
+  }
+
+  private async collectCarryVenueViews(
+    strategyRunId: string | null,
+  ): Promise<Array<{
+    strategyRunId: string | null;
+    venueId: string;
+    venueMode: 'simulated' | 'live';
+    executionSupported: boolean;
+    supportsIncreaseExposure: boolean;
+    supportsReduceExposure: boolean;
+    readOnly: boolean;
+    approvedForLiveUse: boolean;
+    healthy: boolean;
+    onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
+    missingPrerequisites: string[];
+    metadata: Record<string, unknown>;
+    updatedAt: string;
+    createdAt: string;
+  }>> {
+    const now = new Date().toISOString();
+    const views = [];
+
+    for (const adapter of this.options.adapters.values()) {
+      const capabilities = typeof adapter.getCarryCapabilities === 'function'
+        ? await adapter.getCarryCapabilities()
+        : {
+          venueId: adapter.venueId,
+          venueMode: 'simulated' as const,
+          executionSupported: false,
+          supportsIncreaseExposure: false,
+          supportsReduceExposure: false,
+          readOnly: true,
+          approvedForLiveUse: false,
+          healthy: true,
+          onboardingState: 'read_only' as const,
+          missingPrerequisites: ['carry_controlled_execution_not_implemented'],
+          metadata: {
+            venueType: adapter.venueType,
+          },
+        };
+
+      views.push({
+        strategyRunId,
+        venueId: capabilities.venueId,
+        venueMode: capabilities.venueMode,
+        executionSupported: capabilities.executionSupported,
+        supportsIncreaseExposure: capabilities.supportsIncreaseExposure,
+        supportsReduceExposure: capabilities.supportsReduceExposure,
+        readOnly: capabilities.readOnly,
+        approvedForLiveUse: capabilities.approvedForLiveUse,
+        healthy: capabilities.healthy,
+        onboardingState: capabilities.onboardingState,
+        missingPrerequisites: capabilities.missingPrerequisites,
+        metadata: capabilities.metadata,
+        updatedAt: now,
+        createdAt: now,
+      });
+    }
+
+    return views;
+  }
+
+  async runCarryEvaluation(input: {
+    actorId: string;
+    trigger: string;
+    sourceRunId?: string | null;
+    linkedRebalanceProposalId?: string | null;
+    targetCarryNotionalUsd?: string | null;
+  }): Promise<{ sourceRunId: string | null; actionCount: number }> {
+    const sourceRunId = input.sourceRunId ?? await this.options.store.getLatestStrategyRunId();
+    if (sourceRunId === null) {
+      return { sourceRunId: null, actionCount: 0 };
+    }
+
+    const [opportunities, approvedIntents, runtimeStatus, carryVenues, portfolioSummary] = await Promise.all([
+      this.options.store.listApprovedOpportunitiesForRun(sourceRunId),
+      this.options.store.listApprovedStrategyIntentsForRun(sourceRunId),
+      this.options.store.getRuntimeStatus(),
+      this.collectCarryVenueViews(sourceRunId),
+      this.options.store.getPortfolioSummary(),
+    ]);
+
+    await this.options.store.persistCarryVenueSnapshots({
+      strategyRunId: sourceRunId,
+      venues: carryVenues,
+    });
+
+    const carryCurrentAllocationUsd = portfolioSummary?.sleeves.find((sleeve) => sleeve.sleeveId === 'carry')?.nav ?? '0';
+    const approvedCarryBudgetUsd = (await this.options.store.getRebalanceCurrent())?.carryTargetAllocationUsd
+      ?? (await this.options.store.getAllocatorSummary())?.totalCapitalUsd
+      ?? null;
+    const approvedBudgetCapUsd = (await this.options.store.getRebalanceCurrent())?.carryTargetAllocationUsd ?? approvedCarryBudgetUsd;
+    const openPositions = (await this.collectPositions())
+      .filter((position) => position.sleeveId === this.options.sleeveId && position.status === 'open')
+      .flatMap((position) => {
+        const snapshot = toCarryPositionSnapshot(position);
+        return snapshot === null ? [] : [snapshot];
+      });
+
+    const recommendations: CarryExecutionRecommendation[] = [];
+    const approvedByOpportunityId = new Map<string, OrderIntent[]>();
+
+    for (const intent of approvedIntents) {
+      const existing = approvedByOpportunityId.get(String(intent.opportunityId)) ?? [];
+      existing.push(intent);
+      approvedByOpportunityId.set(String(intent.opportunityId), existing);
+    }
+
+    let remainingTarget = input.targetCarryNotionalUsd === null || input.targetCarryNotionalUsd === undefined
+      ? null
+      : new Decimal(input.targetCarryNotionalUsd);
+
+    for (const opportunity of opportunities) {
+      const plannedOrders = approvedByOpportunityId.get(opportunity.opportunityId) ?? [];
+      const notionalUsd = String(plannedOrders[0]?.metadata['positionSizeUsd'] ?? '0');
+      const amount = new Decimal(notionalUsd);
+      if (remainingTarget !== null && remainingTarget.lte(0)) {
+        break;
+      }
+      if (remainingTarget !== null && amount.gt(remainingTarget)) {
+        continue;
+      }
+
+      recommendations.push({
+        actionType: input.linkedRebalanceProposalId === null || input.linkedRebalanceProposalId === undefined
+          ? 'increase_carry_exposure'
+          : 'restore_carry_budget',
+        sourceKind: input.linkedRebalanceProposalId === null || input.linkedRebalanceProposalId === undefined
+          ? 'opportunity'
+          : 'rebalance',
+        sourceReference: input.linkedRebalanceProposalId ?? opportunity.opportunityId,
+        opportunityId: opportunity.opportunityId,
+        asset: opportunity.asset,
+        summary: `Deploy carry exposure for ${opportunity.asset} opportunity ${opportunity.opportunityId}.`,
+        notionalUsd,
+        details: {
+          confidenceScore: Number(opportunity.confidenceScore),
+          expectedAnnualYieldPct: opportunity.expectedAnnualYieldPct,
+          netYieldPct: opportunity.netYieldPct,
+          expiresAt: opportunity.expiresAt,
+        },
+        plannedOrders,
+      });
+
+      if (remainingTarget !== null) {
+        remainingTarget = remainingTarget.minus(amount);
+      }
+    }
+
+    const intents = this.carryExecutionPlanner.createExecutionIntents({
+      recommendations,
+      policy: DEFAULT_CARRY_OPERATIONAL_POLICY,
+      currentCarryAllocationUsd: carryCurrentAllocationUsd,
+      approvedCarryBudgetUsd: approvedBudgetCapUsd,
+      totalCapitalUsd: portfolioSummary?.totalNav ?? null,
+      runtimeLifecycleState: runtimeStatus.lifecycleState,
+      runtimeHalted: runtimeStatus.halted,
+      criticalMismatchCount: await this.options.store.countOpenMismatches(),
+      carryThrottleState: runtimeStatus.halted ? 'blocked' : 'normal',
+      executionMode: this.options.executionMode,
+      liveExecutionEnabled: this.options.liveExecutionEnabled,
+      venueCapabilities: carryVenues,
+      openPositions,
+      now: new Date(),
+    });
+
+    const actions = await this.options.store.createCarryActions({
+      strategyRunId: sourceRunId,
+      linkedRebalanceProposalId: input.linkedRebalanceProposalId ?? null,
+      intents,
+      actorId: input.actorId,
+      createdAt: new Date(),
+    });
+
+    await this.options.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'carry.evaluated',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId: input.actorId,
+      sleeveId: 'carry',
+      data: {
+        sourceRunId,
+        trigger: input.trigger,
+        actionCount: actions.length,
+      },
+    });
+
+    return {
+      sourceRunId,
+      actionCount: actions.length,
+    };
+  }
+
   async runAllocatorEvaluation(input: {
     trigger: string;
     actorId: string;
@@ -1120,6 +1386,8 @@ export class SentinelRuntime {
     executionId: string;
     applied: boolean;
     allocatorRunId: string;
+    downstreamCarryActionIds: string[];
+    downstreamTreasuryActionIds: string[];
   }> {
     const detail = await this.options.store.getRebalanceProposal(input.proposalId);
     if (detail === null) {
@@ -1131,6 +1399,10 @@ export class SentinelRuntime {
         `Rebalance proposal "${input.proposalId}" is not executable from status "${detail.proposal.status}".`,
       );
     }
+
+    const syncBundle = async (): Promise<void> => {
+      await this.options.store.syncRebalanceBundleForProposal(detail.proposal.id);
+    };
 
     const execution = await this.options.store.createRebalanceExecution({
       proposalId: detail.proposal.id,
@@ -1155,6 +1427,7 @@ export class SentinelRuntime {
         latestExecutionId: execution.id,
         errorMessage,
       });
+      await syncBundle();
       throw new Error(errorMessage);
     }
 
@@ -1173,11 +1446,180 @@ export class SentinelRuntime {
         latestExecutionId: execution.id,
         errorMessage: 'Rebalance proposal is missing carry or treasury intent.',
       });
+      await syncBundle();
       throw new Error('Rebalance proposal is missing carry or treasury intent.');
     }
 
     const appliedAt = new Date();
     const applied = detail.proposal.executionMode === 'live';
+    const downstreamCarryActionIds: string[] = [];
+    const downstreamTreasuryActionIds: string[] = [];
+    const runtimeStatus = await this.options.store.getRuntimeStatus();
+    const allocatorDecision = await this.options.store.getAllocatorDecision(detail.proposal.allocatorRunId);
+    const carrySourceRunId = allocatorDecision?.run.sourceRunId ?? null;
+
+    const carryDeltaUsd = new Decimal(carryIntent.deltaUsd);
+    if (!carryDeltaUsd.isZero()) {
+      if (carryDeltaUsd.greaterThan(0)) {
+        const carryEvaluation = await this.runCarryEvaluation({
+          actorId: input.actorId,
+          trigger: 'rebalance_proposal_execution',
+          sourceRunId: carrySourceRunId,
+          linkedRebalanceProposalId: detail.proposal.id,
+          targetCarryNotionalUsd: carryDeltaUsd.toFixed(2),
+        });
+        const carryActions = await this.options.store.listCarryActions(20);
+        downstreamCarryActionIds.push(
+          ...carryActions
+            .filter((action) => action.linkedRebalanceProposalId === detail.proposal.id)
+            .map((action) => action.id),
+        );
+        void carryEvaluation;
+      } else {
+        const openPositions = (await this.collectPositions())
+          .filter((position) => position.sleeveId === this.options.sleeveId && position.status === 'open')
+          .flatMap((position) => {
+            const snapshot = toCarryPositionSnapshot(position);
+            return snapshot === null ? [] : [snapshot];
+          });
+        const plannedOrders = buildCarryReductionIntents(
+          openPositions,
+          carryDeltaUsd.abs().toFixed(2),
+          detail.proposal.id,
+        );
+        const carryVenues = await this.collectCarryVenueViews(carrySourceRunId);
+        const coveredNotionalUsd = plannedOrders
+          .reduce((sum, order) => {
+            const plannedReductionUsd = order.metadata['plannedReductionUsd'];
+            return typeof plannedReductionUsd === 'string'
+              ? sum.plus(plannedReductionUsd)
+              : sum;
+          }, new Decimal(0))
+          .toFixed(2);
+        const carryActions = await this.options.store.createCarryActions({
+          strategyRunId: null,
+          linkedRebalanceProposalId: detail.proposal.id,
+          intents: this.carryExecutionPlanner.createExecutionIntents({
+            recommendations: [{
+              actionType: 'reduce_carry_exposure',
+              sourceKind: 'rebalance',
+              sourceReference: detail.proposal.id,
+              opportunityId: null,
+              asset: null,
+              summary: `Reduce carry exposure by ${carryDeltaUsd.abs().toFixed(2)} USD for rebalance proposal ${detail.proposal.id}.`,
+              notionalUsd: carryDeltaUsd.abs().toFixed(2),
+              details: {
+                coveredNotionalUsd,
+              },
+              plannedOrders,
+            }],
+            policy: DEFAULT_CARRY_OPERATIONAL_POLICY,
+            currentCarryAllocationUsd: carryIntent.currentAllocationUsd,
+            approvedCarryBudgetUsd: carryIntent.targetAllocationUsd,
+            totalCapitalUsd: detail.proposal.details['rebalanceAmountUsd'] === undefined
+              ? null
+              : new Decimal(carryIntent.currentAllocationUsd).plus(treasuryIntent.currentAllocationUsd).toFixed(2),
+            runtimeLifecycleState: runtimeStatus.lifecycleState,
+            runtimeHalted: runtimeStatus.halted,
+            criticalMismatchCount: await this.options.store.countOpenMismatches(),
+            carryThrottleState: 'normal',
+            executionMode: this.options.executionMode,
+            liveExecutionEnabled: this.options.liveExecutionEnabled,
+            venueCapabilities: carryVenues,
+            openPositions,
+            now: new Date(),
+          }),
+          actorId: input.actorId,
+          createdAt: new Date(),
+        });
+        downstreamCarryActionIds.push(...carryActions.map((action) => action.id));
+      }
+    }
+
+    const treasuryDeltaUsd = new Decimal(treasuryIntent.deltaUsd);
+    if (!treasuryDeltaUsd.isZero()) {
+      const treasurySummary = await this.options.store.getTreasurySummary();
+      if (treasurySummary !== null) {
+        const treasuryAction = await this.options.store.createTreasuryAction({
+          treasuryRunId: treasurySummary.treasuryRunId,
+          linkedRebalanceProposalId: detail.proposal.id,
+          actionType: 'rebalance_treasury_budget',
+          venueId: null,
+          venueName: null,
+          venueMode: 'reserve',
+          amountUsd: treasuryDeltaUsd.abs().toFixed(2),
+          reasonCode: 'rebalance_budget_application',
+          summary: treasuryDeltaUsd.greaterThan(0)
+            ? `Increase treasury budget by ${treasuryDeltaUsd.toFixed(2)} USD for rebalance proposal ${detail.proposal.id}.`
+            : `Reduce treasury budget by ${treasuryDeltaUsd.abs().toFixed(2)} USD for rebalance proposal ${detail.proposal.id}.`,
+          details: {
+            rebalanceProposalId: detail.proposal.id,
+            currentAllocationUsd: treasuryIntent.currentAllocationUsd,
+            targetAllocationUsd: treasuryIntent.targetAllocationUsd,
+            deltaUsd: treasuryIntent.deltaUsd,
+            applied,
+          },
+          readiness: 'actionable',
+          executable: true,
+          blockedReasons: [],
+          approvalRequirement: detail.proposal.approvalRequirement,
+          executionMode: detail.proposal.executionMode,
+          simulated: detail.proposal.simulated,
+          actorId: input.actorId,
+          createdAt: appliedAt,
+        });
+        await this.options.store.approveTreasuryAction(treasuryAction.id, input.actorId);
+        if (input.commandId !== null) {
+          await this.options.store.queueTreasuryActionExecution({
+            actionId: treasuryAction.id,
+            commandId: input.commandId,
+            actorId: input.actorId,
+          });
+        }
+        await this.options.store.markTreasuryActionExecuting(treasuryAction.id);
+
+        const treasuryExecution = await this.options.store.createTreasuryExecution({
+          treasuryActionId: treasuryAction.id,
+          treasuryRunId: treasurySummary.treasuryRunId,
+          commandId: input.commandId,
+          status: 'executing',
+          executionMode: detail.proposal.executionMode,
+          venueMode: 'reserve',
+          simulated: detail.proposal.simulated,
+          requestedBy: input.actorId,
+          startedBy: input.startedBy,
+          blockedReasons: [],
+          outcome: {
+            executionKind: 'budget_state_application',
+            rebalanceProposalId: detail.proposal.id,
+            currentAllocationUsd: treasuryIntent.currentAllocationUsd,
+            targetAllocationUsd: treasuryIntent.targetAllocationUsd,
+            deltaUsd: treasuryIntent.deltaUsd,
+          },
+        });
+        await this.options.store.updateTreasuryExecution(treasuryExecution.id, {
+          status: 'completed',
+          outcomeSummary: applied
+            ? 'Treasury sleeve budget state was applied as part of rebalance execution.'
+            : 'Treasury sleeve budget change was recorded as a dry-run rebalance outcome.',
+          outcome: {
+            executionKind: 'budget_state_application',
+            rebalanceProposalId: detail.proposal.id,
+            currentAllocationUsd: treasuryIntent.currentAllocationUsd,
+            targetAllocationUsd: treasuryIntent.targetAllocationUsd,
+            deltaUsd: treasuryIntent.deltaUsd,
+            applied,
+          },
+          lastError: null,
+        });
+        await this.options.store.completeTreasuryAction({
+          actionId: treasuryAction.id,
+          latestExecutionId: treasuryExecution.id,
+        });
+        downstreamTreasuryActionIds.push(treasuryAction.id);
+      }
+    }
+
     if (applied) {
       await this.options.store.applyRebalanceCurrent({
         proposalId: detail.proposal.id,
@@ -1197,6 +1639,8 @@ export class SentinelRuntime {
         : 'Rebalance proposal completed in dry-run mode; no sleeve budget state was changed.',
       outcome: {
         applied,
+        downstreamCarryActionIds,
+        downstreamTreasuryActionIds,
         carryTargetAllocationUsd: carryIntent.targetAllocationUsd,
         carryTargetAllocationPct: carryIntent.targetAllocationPct,
         treasuryTargetAllocationUsd: treasuryIntent.targetAllocationUsd,
@@ -1209,6 +1653,7 @@ export class SentinelRuntime {
       proposalId: detail.proposal.id,
       latestExecutionId: execution.id,
     });
+    await syncBundle();
     await this.options.store.auditWriter.write({
       eventId: createId(),
       eventType: applied
@@ -1231,6 +1676,268 @@ export class SentinelRuntime {
       executionId: execution.id,
       applied,
       allocatorRunId: detail.proposal.allocatorRunId,
+      downstreamCarryActionIds,
+      downstreamTreasuryActionIds,
+    };
+  }
+
+  async executeCarryAction(input: {
+    actionId: string;
+    actorId: string;
+    commandId: string | null;
+    startedBy: string;
+  }): Promise<{
+    actionId: string;
+    executionId: string;
+    orderCount: number;
+  }> {
+    const detail = await this.options.store.getCarryAction(input.actionId);
+    if (detail === null) {
+      throw new Error(`Carry action "${input.actionId}" was not found.`);
+    }
+
+    if (detail.action.status !== 'queued' && detail.action.status !== 'approved') {
+      throw new Error(`Carry action "${input.actionId}" is not executable from status "${detail.action.status}".`);
+    }
+
+    const syncLinkedBundle = async (): Promise<void> => {
+      if (detail.action.linkedRebalanceProposalId !== null) {
+        await this.options.store.syncRebalanceBundleForProposal(detail.action.linkedRebalanceProposalId);
+      }
+    };
+
+    const execution = await this.options.store.createCarryExecution({
+      carryActionId: detail.action.id,
+      strategyRunId: detail.action.strategyRunId,
+      commandId: input.commandId,
+      status: detail.action.executable ? 'executing' : 'failed',
+      executionMode: detail.action.executionMode,
+      simulated: detail.action.simulated,
+      requestedBy: input.actorId,
+      startedBy: input.startedBy,
+      blockedReasons: detail.action.blockedReasons,
+      lastError: detail.action.executable
+        ? null
+        : detail.action.blockedReasons.map((reason) => reason.message).join('; '),
+      outcome: {
+        blockedReasons: detail.action.blockedReasons,
+      },
+    });
+
+    if (!detail.action.executable) {
+      const errorMessage = detail.action.blockedReasons.map((reason) => reason.message).join('; ');
+      await this.options.store.failCarryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage,
+      });
+      await syncLinkedBundle();
+      throw new Error(errorMessage);
+    }
+
+    await this.options.store.markCarryActionExecuting(detail.action.id);
+
+    const orderStore = new RuntimeOrderStore(this.options.store.db);
+    const carryVenues = await this.collectCarryVenueViews(detail.action.strategyRunId);
+    const carryVenueById = new Map(carryVenues.map((venue) => [venue.venueId, venue] as const));
+    const orderResults: Array<{
+      stepId: string;
+      intentId: string;
+      clientOrderId: string;
+      venueOrderId: string | null;
+      status: string;
+      filledSize: string;
+      averageFillPrice: string | null;
+      executionReference: string | null;
+    }> = [];
+
+    for (const plannedOrder of detail.plannedOrders) {
+      const venueSnapshot = carryVenueById.get(plannedOrder.venueId) ?? {
+        venueId: plannedOrder.venueId,
+        venueMode: detail.action.simulated ? 'simulated' as const : 'live' as const,
+        executionSupported: false,
+        readOnly: true,
+        approvedForLiveUse: false,
+        onboardingState: 'read_only' as const,
+      };
+      const step = await this.options.store.createCarryExecutionStep({
+        carryExecutionId: execution.id,
+        carryActionId: detail.action.id,
+        strategyRunId: detail.action.strategyRunId,
+        plannedOrderId: plannedOrder.id,
+        intentId: plannedOrder.intentId,
+        venueId: plannedOrder.venueId,
+        venueMode: venueSnapshot.venueMode,
+        executionSupported: venueSnapshot.executionSupported,
+        readOnly: venueSnapshot.readOnly,
+        approvedForLiveUse: venueSnapshot.approvedForLiveUse,
+        onboardingState: venueSnapshot.onboardingState,
+        asset: plannedOrder.asset,
+        side: plannedOrder.side,
+        orderType: plannedOrder.orderType,
+        requestedSize: plannedOrder.requestedSize,
+        requestedPrice: plannedOrder.requestedPrice,
+        reduceOnly: plannedOrder.reduceOnly,
+        clientOrderId: plannedOrder.intentId,
+        status: 'pending',
+        simulated: detail.action.simulated,
+        metadata: plannedOrder.metadata,
+      });
+      const adapter = this.options.adapters.get(plannedOrder.venueId);
+      if (adapter === undefined) {
+        await this.options.store.updateCarryExecutionStep(step.id, {
+          status: 'failed',
+          outcomeSummary: `Carry venue "${plannedOrder.venueId}" is not registered.`,
+          lastError: `Carry venue "${plannedOrder.venueId}" is not registered.`,
+          outcome: {
+            attempted: false,
+          },
+          completedAt: new Date(),
+        });
+        await this.options.store.updateCarryExecution(execution.id, {
+          status: 'failed',
+          lastError: `Carry venue "${plannedOrder.venueId}" is not registered.`,
+          completedAt: new Date(),
+        });
+        await this.options.store.failCarryAction({
+          actionId: detail.action.id,
+          latestExecutionId: execution.id,
+          errorMessage: `Carry venue "${plannedOrder.venueId}" is not registered.`,
+        });
+        await syncLinkedBundle();
+        throw new Error(`Carry venue "${plannedOrder.venueId}" is not registered.`);
+      }
+
+      try {
+        const executor = new OrderExecutor(
+          adapter,
+          orderStore,
+          {
+            maxRetries: 0,
+            retryDelayMs: 0,
+            orderTimeoutMs: 1000,
+          },
+          this.options.logger,
+          this.options.store.auditWriter,
+        );
+
+        const orderRecord = await executor.submitIntent({
+          intentId: plannedOrder.intentId,
+          venueId: plannedOrder.venueId as never,
+          asset: plannedOrder.asset as never,
+          side: plannedOrder.side,
+          type: plannedOrder.orderType,
+          size: plannedOrder.requestedSize,
+          limitPrice: plannedOrder.requestedPrice,
+          opportunityId: (detail.action.opportunityId ?? createId()) as never,
+          reduceOnly: plannedOrder.reduceOnly,
+          createdAt: new Date(plannedOrder.createdAt),
+          metadata: plannedOrder.metadata,
+        });
+        if (detail.action.strategyRunId !== null) {
+          await this.persistExecutionRecord(detail.action.strategyRunId, orderRecord);
+        }
+        const executionReference = orderRecord.venueOrderId ?? plannedOrder.intentId;
+        await this.options.store.updateCarryExecutionStep(step.id, {
+          clientOrderId: plannedOrder.intentId,
+          venueOrderId: orderRecord.venueOrderId,
+          executionReference,
+          status: orderRecord.status,
+          simulated: detail.action.simulated,
+          filledSize: orderRecord.filledSize,
+          averageFillPrice: orderRecord.averageFillPrice,
+          outcomeSummary: orderRecord.lastError === null
+            ? `Execution step completed with status ${orderRecord.status}.`
+            : orderRecord.lastError,
+          outcome: {
+            attemptCount: orderRecord.attemptCount,
+            feesPaid: orderRecord.feesPaid,
+            fillCount: orderRecord.fills.length,
+            submittedAt: orderRecord.submittedAt?.toISOString() ?? null,
+          },
+          lastError: orderRecord.lastError,
+          completedAt: orderRecord.completedAt ?? new Date(),
+        });
+        orderResults.push({
+          stepId: step.id,
+          intentId: plannedOrder.intentId,
+          clientOrderId: plannedOrder.intentId,
+          venueOrderId: orderRecord.venueOrderId,
+          status: orderRecord.status,
+          filledSize: orderRecord.filledSize,
+          averageFillPrice: orderRecord.averageFillPrice,
+          executionReference,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Carry order execution failed.';
+        await this.options.store.updateCarryExecutionStep(step.id, {
+          status: 'failed',
+          simulated: detail.action.simulated,
+          outcomeSummary: message,
+          outcome: {
+            attempted: true,
+          },
+          lastError: message,
+          completedAt: new Date(),
+        });
+        await this.options.store.updateCarryExecution(execution.id, {
+          status: 'failed',
+          lastError: message,
+          outcomeSummary: message,
+          outcome: {
+            orderResults,
+          },
+          completedAt: new Date(),
+        });
+        await this.options.store.failCarryAction({
+          actionId: detail.action.id,
+          latestExecutionId: execution.id,
+          errorMessage: message,
+        });
+        await syncLinkedBundle();
+        throw error;
+      }
+    }
+
+    await this.options.store.updateCarryExecution(execution.id, {
+      status: 'completed',
+      outcomeSummary: detail.action.simulated
+        ? 'Carry action completed against simulated venues.'
+        : 'Carry action completed against live venues.',
+      outcome: {
+        stepCount: orderResults.length,
+        orderResults,
+      },
+      venueExecutionReference: orderResults
+        .map((result) => result.executionReference)
+        .filter((value): value is string => value !== null && value.length > 0)
+        .join(','),
+      completedAt: new Date(),
+    });
+    await this.options.store.completeCarryAction({
+      actionId: detail.action.id,
+      latestExecutionId: execution.id,
+    });
+    await syncLinkedBundle();
+    await this.options.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'carry.executed',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId: input.actorId,
+      sleeveId: 'carry',
+      data: {
+        carryActionId: detail.action.id,
+        executionId: execution.id,
+        orderCount: orderResults.length,
+        simulated: detail.action.simulated,
+      },
+    });
+
+    return {
+      actionId: detail.action.id,
+      executionId: execution.id,
+      orderCount: orderResults.length,
     };
   }
 
@@ -1255,6 +1962,54 @@ export class SentinelRuntime {
       throw new Error(
         `Treasury action "${input.actionId}" is not executable from status "${detail.action.status}".`,
       );
+    }
+
+    const syncLinkedBundle = async (): Promise<void> => {
+      if (detail.action.linkedRebalanceProposalId !== null) {
+        await this.options.store.syncRebalanceBundleForProposal(detail.action.linkedRebalanceProposalId);
+      }
+    };
+
+    if (detail.action.actionType === 'rebalance_treasury_budget') {
+      const execution = await this.options.store.createTreasuryExecution({
+        treasuryActionId: detail.action.id,
+        treasuryRunId: detail.action.treasuryRunId,
+        commandId: input.commandId,
+        status: 'executing',
+        executionMode: detail.action.executionMode,
+        venueMode: 'reserve',
+        simulated: detail.action.simulated,
+        requestedBy: input.actorId,
+        startedBy: input.startedBy,
+        blockedReasons: [],
+        outcome: {
+          executionKind: 'budget_state_application',
+          ...detail.action.details,
+        },
+      });
+
+      await this.options.store.updateTreasuryExecution(execution.id, {
+        status: 'completed',
+        outcomeSummary: 'Treasury budget-state action completed without venue-native execution.',
+        outcome: {
+          executionKind: 'budget_state_application',
+          ...detail.action.details,
+        },
+        lastError: null,
+      });
+      await this.options.store.completeTreasuryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+      });
+      await syncLinkedBundle();
+
+      return {
+        actionId: detail.action.id,
+        executionId: execution.id,
+        treasuryRunId: detail.action.treasuryRunId,
+        venueExecutionReference: null,
+        simulated: detail.action.simulated,
+      };
     }
 
     const portfolioState = await this.options.portfolioTracker.refresh();
@@ -1314,6 +2069,7 @@ export class SentinelRuntime {
         latestExecutionId: execution.id,
         errorMessage: executionIntent.blockedReasons.map((reason) => reason.message).join('; '),
       });
+      await syncLinkedBundle();
       await this.options.store.auditWriter.write({
         eventId: createId(),
         eventType: 'treasury.execution_blocked',
@@ -1342,6 +2098,7 @@ export class SentinelRuntime {
         latestExecutionId: execution.id,
         errorMessage: 'Treasury action did not target a venue.',
       });
+      await syncLinkedBundle();
       throw new Error('Treasury action did not target a venue.');
     }
 
@@ -1356,6 +2113,7 @@ export class SentinelRuntime {
         latestExecutionId: execution.id,
         errorMessage: `Treasury venue "${detail.action.venueId}" is not registered.`,
       });
+      await syncLinkedBundle();
       throw new Error(`Treasury venue "${detail.action.venueId}" is not registered.`);
     }
 
@@ -1394,6 +2152,7 @@ export class SentinelRuntime {
         actionId: detail.action.id,
         latestExecutionId: execution.id,
       });
+      await syncLinkedBundle();
       await this.options.store.auditWriter.write({
         eventId: createId(),
         eventType: 'treasury.executed',
@@ -1428,6 +2187,7 @@ export class SentinelRuntime {
         latestExecutionId: execution.id,
         errorMessage: message,
       });
+      await syncLinkedBundle();
       await this.options.store.auditWriter.write({
         eventId: createId(),
         eventType: 'treasury.execution_failed',

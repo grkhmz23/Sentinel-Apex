@@ -7,13 +7,18 @@ import {
   createAllocatorRun,
   createAllocatorSummary,
   createAllocatorTarget,
+  createCarryAction,
+  createCarryActionDetail,
+  createCarryExecutionDetail,
+  createCarryExecution,
+  createCarryVenue,
   createCommand,
   createDashboardSession,
   createMismatch,
   createMismatchDetail,
   createOverview,
+  createRebalanceBundleDetail,
   createRebalanceProposal,
-  createRebalanceProposalDetail,
   createRecoveryEvent,
   createReconciliationFinding,
   createReconciliationRun,
@@ -29,13 +34,19 @@ import {
 } from './test/fixtures';
 import AllocatorDecisionPage from '../app/allocator/decisions/[allocatorRunId]/page';
 import AllocatorPage from '../app/allocator/page';
+import RebalanceBundlePage from '../app/allocator/rebalance-bundles/[bundleId]/page';
 import RebalanceProposalPage from '../app/allocator/rebalance-proposals/[proposalId]/page';
+import CarryActionDetailPage from '../app/carry/actions/[actionId]/page';
+import CarryExecutionDetailPage from '../app/carry/executions/[executionId]/page';
+import CarryExecutionsPage from '../app/carry/executions/page';
+import CarryPage from '../app/carry/page';
 import MismatchDetailPage from '../app/mismatches/[mismatchId]/page';
 import MismatchesPage from '../app/mismatches/page';
 import OverviewPage from '../app/page';
 import ReconciliationPage from '../app/reconciliation/page';
 import TreasuryActionDetailPage from '../app/treasury/actions/[actionId]/page';
 import TreasuryExecutionDetailPage from '../app/treasury/executions/[executionId]/page';
+import TreasuryExecutionsPage from '../app/treasury/executions/page';
 import TreasuryPage from '../app/treasury/page';
 import TreasuryVenueDetailPage from '../app/treasury/venues/[venueId]/page';
 import TreasuryVenuesPage from '../app/treasury/venues/page';
@@ -56,6 +67,14 @@ vi.mock('./components/treasury-actions', () => ({
 
 vi.mock('./components/treasury-action-table', () => ({
   TreasuryActionTable: () => <div>Treasury action table</div>,
+}));
+
+vi.mock('./components/carry-action-table', () => ({
+  CarryActionTable: () => <div>Carry action table</div>,
+}));
+
+vi.mock('./components/carry-actions', () => ({
+  CarryActions: () => <div>Carry actions</div>,
 }));
 
 vi.mock('./components/rebalance-proposal-actions', () => ({
@@ -104,7 +123,40 @@ vi.mock('./lib/runtime-api.server', () => ({
   })),
   loadRebalanceProposalPageData: vi.fn(async () => ({
     data: {
-      detail: createRebalanceProposalDetail(),
+      bundle: createRebalanceBundleDetail(),
+    },
+    error: null,
+  })),
+  loadRebalanceBundlePageData: vi.fn(async () => ({
+    data: {
+      bundle: createRebalanceBundleDetail(),
+    },
+    error: null,
+  })),
+  loadCarryPageData: vi.fn(async () => ({
+    data: {
+      recommendations: [createCarryAction()],
+      actions: [createCarryAction()],
+      executions: [createCarryExecution()],
+      venues: [createCarryVenue()],
+    },
+    error: null,
+  })),
+  loadCarryActionDetailPageData: vi.fn(async () => ({
+    data: {
+      detail: createCarryActionDetail(),
+    },
+    error: null,
+  })),
+  loadCarryExecutionsPageData: vi.fn(async () => ({
+    data: {
+      executions: [createCarryExecution()],
+    },
+    error: null,
+  })),
+  loadCarryExecutionDetailPageData: vi.fn(async () => ({
+    data: {
+      detail: createCarryExecutionDetail(),
     },
     error: null,
   })),
@@ -138,6 +190,12 @@ vi.mock('./lib/runtime-api.server', () => ({
   loadTreasuryExecutionDetailPageData: vi.fn(async () => ({
     data: {
       detail: createTreasuryExecutionDetail(),
+    },
+    error: null,
+  })),
+  loadTreasuryExecutionsPageData: vi.fn(async () => ({
+    data: {
+      executions: [createTreasuryExecution()],
     },
     error: null,
   })),
@@ -196,7 +254,40 @@ describe('ops dashboard pages', () => {
 
     expect(screen.getByText('Rebalance Proposal Detail')).toBeInTheDocument();
     expect(screen.getByText('Sleeve Intents')).toBeInTheDocument();
-    expect(screen.getByText('Execution outcomes linked to the proposal command rail')).toBeInTheDocument();
+    expect(screen.getByText('Carry Downstream')).toBeInTheDocument();
+    expect(screen.getByText('Timeline')).toBeInTheDocument();
+
+    render(await RebalanceBundlePage({ params: { bundleId: 'rebalance-bundle-1' } }));
+
+    expect(screen.getByText('Rebalance Bundle Detail')).toBeInTheDocument();
+    expect(screen.getByText('Child Rollup')).toBeInTheDocument();
+  });
+
+  it('renders carry overview and carry action detail views', async () => {
+    render(await CarryPage());
+
+    expect(screen.getByText('Carry Sleeve')).toBeInTheDocument();
+    expect(screen.getByText('Recommendations')).toBeInTheDocument();
+    expect(screen.getByText('Venue Readiness')).toBeInTheDocument();
+    expect(screen.getByText('Execution History')).toBeInTheDocument();
+
+    render(await CarryActionDetailPage({ params: { actionId: 'carry-action-1' } }));
+
+    expect(screen.getByText('Carry Action Detail')).toBeInTheDocument();
+    expect(screen.getByText('Blocked Reasons')).toBeInTheDocument();
+    expect(screen.getByText('Planned Orders')).toBeInTheDocument();
+    expect(screen.getByText('Executions')).toBeInTheDocument();
+
+    render(await CarryExecutionsPage());
+
+    expect(screen.getByText('Carry Executions')).toBeInTheDocument();
+    expect(screen.getByText('Execution Attempts')).toBeInTheDocument();
+
+    render(await CarryExecutionDetailPage({ params: { executionId: 'carry-execution-1' } }));
+
+    expect(screen.getByText('Carry Execution Detail')).toBeInTheDocument();
+    expect(screen.getByText('Execution Steps')).toBeInTheDocument();
+    expect(screen.getByText('Timeline')).toBeInTheDocument();
   });
 
   it('renders reconciliation runs and findings from server data', async () => {
@@ -221,6 +312,10 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Treasury Action Detail')).toBeInTheDocument();
     expect(screen.getByText('Blocked Reasons')).toBeInTheDocument();
     expect(screen.getByText('Timeline')).toBeInTheDocument();
+
+    render(await TreasuryExecutionsPage());
+    expect(screen.getByText('Treasury Execution History')).toBeInTheDocument();
+    expect(screen.getByText('Direct treasury execution drill-through with mode and reference visibility')).toBeInTheDocument();
 
     render(await TreasuryExecutionDetailPage({ params: { executionId: 'treasury-execution-1' } }));
     expect(screen.getByText('Treasury Execution Detail')).toBeInTheDocument();

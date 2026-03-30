@@ -186,4 +186,32 @@ describe('SentinelRuntime', () => {
 
     await runtime.close();
   });
+
+  it('persists carry evaluations with actionability state and venue readiness snapshots', async () => {
+    const runtime = await createRuntime();
+
+    await runtime.runCycle('runtime-carry-evaluation-test');
+    const evaluation = await runtime.runCarryEvaluation({
+      actorId: 'vitest',
+      trigger: 'runtime_carry_evaluation_test',
+    });
+
+    const actions = await runtime.listCarryActions(20);
+    const venues = await runtime.listCarryVenues(20);
+    const detail = actions[0] === undefined ? null : await runtime.getCarryAction(actions[0].id);
+    const executionDetail = detail?.executions[0] === undefined
+      ? null
+      : await runtime.getCarryExecution(detail.executions[0].id);
+
+    expect(evaluation.actionCount).toBeGreaterThan(0);
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions[0]?.executionMode).toBe('dry-run');
+    expect(actions[0]?.simulated).toBe(true);
+    expect(venues.length).toBeGreaterThan(0);
+    expect(venues[0]?.venueMode).toBe('simulated');
+    expect(detail?.plannedOrders.length).toBeGreaterThan(0);
+    expect(executionDetail).toBeNull();
+
+    await runtime.close();
+  });
 });

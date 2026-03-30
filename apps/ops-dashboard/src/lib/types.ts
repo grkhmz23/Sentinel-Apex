@@ -3,7 +3,12 @@ import type {
   AllocatorRunView,
   AllocatorSleeveTargetView,
   AllocatorSummaryView,
-  RebalanceProposalDetailView,
+  CarryActionDetailView,
+  CarryActionView,
+  CarryExecutionDetailView,
+  CarryExecutionView,
+  CarryVenueView,
+  RebalanceBundleDetailView,
   RebalanceProposalView,
   RuntimeCommandView,
   RuntimeMismatchDetailView,
@@ -83,7 +88,11 @@ export interface AllocatorDecisionPageData {
 }
 
 export interface RebalanceProposalPageData {
-  detail: RebalanceProposalDetailView;
+  bundle: RebalanceBundleDetailView;
+}
+
+export interface RebalanceBundlePageData {
+  bundle: RebalanceBundleDetailView;
 }
 
 export interface ReconciliationPageData {
@@ -107,12 +116,35 @@ export interface TreasuryPageData {
   venues: TreasuryVenueView[];
 }
 
+export interface CarryPageData {
+  recommendations: CarryActionView[];
+  actions: CarryActionView[];
+  executions: CarryExecutionView[];
+  venues: CarryVenueView[];
+}
+
+export interface CarryActionDetailPageData {
+  detail: CarryActionDetailView;
+}
+
+export interface CarryExecutionsPageData {
+  executions: CarryExecutionView[];
+}
+
+export interface CarryExecutionDetailPageData {
+  detail: CarryExecutionDetailView;
+}
+
 export interface TreasuryActionDetailPageData {
   detail: TreasuryActionDetailView;
 }
 
 export interface TreasuryExecutionDetailPageData {
   detail: TreasuryExecutionDetailView;
+}
+
+export interface TreasuryExecutionsPageData {
+  executions: TreasuryExecutionView[];
 }
 
 export interface TreasuryVenuesPageData {

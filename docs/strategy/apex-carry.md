@@ -2,7 +2,36 @@
 
 **Version:** 1.0.0
 **Status:** Active
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-30
+
+## Phase 4.3 Addendum: Execution Transparency
+
+Phase 4.3 does not change the carry thesis. It changes how operators inspect execution truth.
+
+Current execution transparency truth:
+
+- carry execution now has a dedicated execution-detail read model
+- each execution can expose downstream execution steps when the runtime actually attempted order-like work
+- venue references are shown only when the connector/runtime really produced them
+- rebalance proposal detail, carry action detail, and carry execution detail now link together directly
+
+This remains an operator-grade transparency layer, not a full OMS.
+
+## Phase 4.2 Addendum: Controlled Execution Boundary
+
+The carry sleeve is no longer only a recommendation engine. Phase 4.2 adds explicit controlled-execution semantics on top of the strategy layer.
+
+Current execution truth:
+
+- carry opportunities still originate from the strategy pipeline and approved strategy intents
+- carry deployment now becomes an explicit persisted action before execution
+- each carry action carries readiness, blocked reasons, approval requirement, execution mode, and deterministic planned orders
+- dry-run remains the default
+- simulated carry execution is supported and durable
+- unsupported live carry connectors remain explicitly blocked
+- allocator rebalance execution may create downstream carry actions, but it does not hide autonomous live deployment
+
+Operationally, this means the strategy document below describes the economic thesis and opportunity logic, while Phase 4.2 adds a separate operator-visible action layer that gates whether those opportunities can actually be executed.
 
 ---
 

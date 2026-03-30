@@ -1,6 +1,7 @@
 import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { allocatorRoutes } from './allocator.js';
+import { carryRoutes } from './carry.js';
 import { controlRoutes } from './control.js';
 import { eventRoutes } from './events.js';
 import { healthRoutes } from './health.js';
@@ -66,6 +67,17 @@ import type { FastifyInstance } from 'fastify';
  *   POST /api/v1/treasury/evaluate            — queue treasury evaluation (auth)
  *   POST /api/v1/treasury/actions/:actionId/approve — approve treasury action (auth)
  *   POST /api/v1/treasury/actions/:actionId/execute — queue treasury execution (auth)
+ *   GET  /api/v1/carry/recommendations       — recent carry recommendations with actionability (auth)
+ *   GET  /api/v1/carry/actions               — carry actions with lifecycle state (auth)
+ *   GET  /api/v1/carry/actions/:actionId/executions — carry executions for an action (auth)
+ *   GET  /api/v1/carry/actions/:actionId     — carry action detail and execution history (auth)
+ *   GET  /api/v1/carry/executions            — carry execution attempts (auth)
+ *   GET  /api/v1/carry/executions/:executionId — carry execution detail (auth)
+ *   GET  /api/v1/carry/venues                — carry venue capability and simulation state (auth)
+ *   POST /api/v1/carry/evaluate              — queue carry evaluation (auth)
+ *   POST /api/v1/carry/actions/:actionId/approve — approve and queue carry execution (auth)
+ *   GET  /api/v1/allocator/rebalance-proposals/:proposalId/execution-graph — proposal-scoped downstream execution graph (auth)
+ *   GET  /api/v1/allocator/rebalance-proposals/:proposalId/timeline — proposal-scoped execution timeline (auth)
  *   POST /api/v1/runtime/mismatches/:id/acknowledge — acknowledge mismatch (auth)
  *   POST /api/v1/runtime/mismatches/:id/recover     — start recovery workflow (auth)
  *   POST /api/v1/runtime/mismatches/:id/resolve     — resolve mismatch (auth)
@@ -93,5 +105,6 @@ export async function registerRoutes(
   await eventRoutes(app, controlPlane);
   await runtimeRoutes(app, controlPlane);
   await treasuryRoutes(app, controlPlane);
+  await carryRoutes(app, controlPlane);
   await controlRoutes(app, controlPlane);
 }

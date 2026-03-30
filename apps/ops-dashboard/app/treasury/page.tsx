@@ -40,6 +40,7 @@ export default async function TreasuryPage(): Promise<JSX.Element> {
           <div className="stack stack--compact stack--align-end">
             <TreasuryActions />
             <div className="inline-links">
+              <Link href="/treasury/executions">Execution history</Link>
               <Link href="/treasury/venues">Venue readiness</Link>
             </div>
           </div>

@@ -191,6 +191,36 @@ export const allocatorRebalanceExecutions = pgTable(
   }),
 );
 
+export const allocatorRebalanceBundles = pgTable(
+  'allocator_rebalance_bundles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    proposalId: uuid('proposal_id')
+      .notNull()
+      .unique()
+      .references(() => allocatorRebalanceProposals.id),
+    status: text('status').notNull().default('proposed'),
+    completionState: text('completion_state').notNull().default('open'),
+    outcomeClassification: text('outcome_classification').notNull().default('pending'),
+    interventionRecommendation: text('intervention_recommendation').notNull().default('operator_review_required'),
+    totalChildCount: integer('total_child_count').notNull().default(0),
+    blockedChildCount: integer('blocked_child_count').notNull().default(0),
+    failedChildCount: integer('failed_child_count').notNull().default(0),
+    completedChildCount: integer('completed_child_count').notNull().default(0),
+    pendingChildCount: integer('pending_child_count').notNull().default(0),
+    childRollup: jsonb('child_rollup').notNull().default({}),
+    finalizationReason: text('finalization_reason'),
+    finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    proposalIdIdx: index('allocator_rebalance_bundles_proposal_id_idx').on(t.proposalId),
+    statusIdx: index('allocator_rebalance_bundles_status_idx').on(t.status),
+    createdAtIdx: index('allocator_rebalance_bundles_created_at_idx').on(t.createdAt),
+  }),
+);
+
 export const allocatorRebalanceCurrent = pgTable('allocator_rebalance_current', {
   id: text('id').primaryKey(),
   latestProposalId: uuid('latest_proposal_id')

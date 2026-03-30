@@ -58,6 +58,46 @@ export async function triggerAllocatorEvaluation(): Promise<unknown> {
   return payload.data;
 }
 
+export async function triggerCarryEvaluation(): Promise<unknown> {
+  const response = await fetch('/api/carry/evaluate', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function approveCarryAction(actionId: string): Promise<unknown> {
+  const response = await fetch(`/api/carry/actions/${actionId}/approve`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
 export async function approveRebalanceProposal(proposalId: string): Promise<unknown> {
   const response = await fetch(`/api/allocator/rebalance-proposals/${proposalId}/approve`, {
     method: 'POST',

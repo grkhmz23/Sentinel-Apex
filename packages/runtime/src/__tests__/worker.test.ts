@@ -3,7 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createDatabaseConnection, treasuryActions } from '@sentinel-apex/db';
+import {
+  allocatorRebalanceProposals,
+  allocatorRebalanceExecutions,
+  carryActions,
+  createDatabaseConnection,
+  treasuryActionExecutions,
+  treasuryActions,
+} from '@sentinel-apex/db';
 
 import { RuntimeControlPlane } from '../control-plane.js';
 import { RuntimeWorker } from '../worker.js';
@@ -399,12 +406,322 @@ describe('RuntimeWorker', () => {
     );
     const detail = await waitFor(
       async () => controlPlane.getRebalanceProposal(actionable.id),
-      (value): value is Exclude<typeof value, null> => value !== null && value.proposal.status === 'completed',
+      (value): value is Exclude<typeof value, null> => value !== null && value.executions.length > 0,
     );
+    const downstreamCarryActionIds = Array.isArray(completedCommand?.result['downstreamCarryActionIds'])
+      ? completedCommand.result['downstreamCarryActionIds'].filter((value): value is string => typeof value === 'string')
+      : [];
+    const downstreamTreasuryActionIds = Array.isArray(completedCommand?.result['downstreamTreasuryActionIds'])
+      ? completedCommand.result['downstreamTreasuryActionIds'].filter((value): value is string => typeof value === 'string')
+      : [];
+    const graph = await waitFor(
+      async () => controlPlane.getRebalanceExecutionGraph(actionable.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.timeline.length > 0,
+    );
+    const bundle = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(actionable.id),
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (bundle === null) {
+      throw new Error('Expected rebalance bundle detail.');
+    }
 
     expect(completedCommand?.result['proposalId']).toBe(actionable.id);
     expect(detail?.executions.length).toBeGreaterThan(0);
     expect(detail?.proposal.linkedCommandId).toBe(executionCommand?.commandId ?? null);
+    expect(Array.isArray(completedCommand?.result['downstreamCarryActionIds'])).toBe(true);
+    expect(Array.isArray(completedCommand?.result['downstreamTreasuryActionIds'])).toBe(true);
+    expect(graph?.downstream.carry.rollup.actionCount).toBe(downstreamCarryActionIds.length);
+    expect(graph?.downstream.carry.actions.map((action) => action.action.id).sort()).toEqual(
+      [...downstreamCarryActionIds].sort(),
+    );
+    if (downstreamCarryActionIds.length > 0) {
+      expect(graph?.downstream.carry.actions.every((action) => action.action.linkedRebalanceProposalId === actionable.id)).toBe(true);
+    }
+    expect(graph?.downstream.treasury.actions.map((action) => action.action.id).sort()).toEqual(
+      [...downstreamTreasuryActionIds].sort(),
+    );
+    if (downstreamTreasuryActionIds.length > 0) {
+      expect(graph?.downstream.treasury.actions.every((action) => action.action.linkedRebalanceProposalId === actionable.id)).toBe(true);
+    } else {
+      expect(graph?.downstream.treasury.note).toBeTruthy();
+    }
+    expect(bundle.bundle.proposalId).toBe(actionable.id);
+    expect(bundle.graph.detail.proposal.id).toBe(actionable.id);
+    expect(bundle.bundle.totalChildCount).toBeGreaterThanOrEqual(bundle.bundle.completedChildCount);
+    expect(bundle.bundle.interventionRecommendation).toBeTruthy();
+  });
+
+  it('rolls partial downstream application into a requires_intervention bundle recommendation', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const connection = await createDatabaseConnection(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+    cleanups.push(async () => {
+      await connection.close();
+    });
+
+    await worker.start();
+
+    const command = await controlPlane.enqueueAllocatorEvaluation('vitest', {
+      actorId: 'vitest',
+      trigger: 'worker_rebalance_bundle_partial_test',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const proposal = await waitFor(
+      async () => {
+        const proposals = await controlPlane.listRebalanceProposals(10);
+        return proposals[0] ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    const treasurySummary = await waitFor(
+      () => controlPlane.getTreasurySummary(),
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (proposal === null || treasurySummary === null) {
+      throw new Error('Expected rebalance proposal and treasury summary.');
+    }
+
+    const [rebalanceExecution] = await connection.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: proposal.id,
+        commandId: 'command-partial-bundle-1',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        simulated: proposal.simulated,
+        requestedBy: 'vitest',
+        startedBy: 'worker-test',
+        outcomeSummary: 'Manual partial bundle setup for runtime test.',
+        outcome: {
+          applied: true,
+        },
+        createdAt: new Date('2026-03-20T12:03:00.000Z'),
+        startedAt: new Date('2026-03-20T12:03:01.000Z'),
+        completedAt: new Date('2026-03-20T12:03:02.000Z'),
+        updatedAt: new Date('2026-03-20T12:03:02.000Z'),
+      })
+      .returning();
+
+    const [carryAction] = await connection.db
+      .insert(carryActions)
+      .values({
+        strategyRunId: null,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'increase_carry_exposure',
+        status: 'recommended',
+        sourceKind: 'rebalance',
+        sourceReference: proposal.id,
+        opportunityId: null,
+        asset: null,
+        summary: 'Carry child remained blocked for bundle test.',
+        notionalUsd: '150000.00',
+        details: {},
+        readiness: 'blocked',
+        executable: false,
+        blockedReasons: [{
+          code: 'venue_execution_unsupported',
+          category: 'venue_capability',
+          message: 'Carry venue remains unsupported for execution.',
+          operatorAction: 'Inspect venue readiness before retrying.',
+          details: {},
+        }],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        executionPlan: {},
+        actorId: 'vitest',
+        createdAt: new Date('2026-03-20T12:03:03.000Z'),
+        updatedAt: new Date('2026-03-20T12:03:03.000Z'),
+      })
+      .returning();
+
+    const [treasuryAction] = await connection.db
+      .insert(treasuryActions)
+      .values({
+        treasuryRunId: treasurySummary.treasuryRunId,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'rebalance_treasury_budget',
+        status: 'completed',
+        venueId: null,
+        venueName: null,
+        venueMode: 'reserve',
+        amountUsd: '150000.00',
+        reasonCode: 'rebalance_budget_application',
+        summary: 'Treasury child completed for bundle test.',
+        details: {
+          rebalanceProposalId: proposal.id,
+        },
+        readiness: 'actionable',
+        executable: true,
+        blockedReasons: [],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        approvedBy: 'vitest',
+        approvedAt: new Date('2026-03-20T12:03:04.000Z'),
+        completedAt: new Date('2026-03-20T12:03:06.000Z'),
+        actorId: 'vitest',
+        createdAt: new Date('2026-03-20T12:03:04.000Z'),
+        updatedAt: new Date('2026-03-20T12:03:06.000Z'),
+      })
+      .returning();
+
+    const [treasuryExecution] = await connection.db
+      .insert(treasuryActionExecutions)
+      .values({
+        treasuryActionId: treasuryAction.id,
+        treasuryRunId: treasurySummary.treasuryRunId,
+        commandId: 'command-partial-bundle-1',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        venueMode: 'reserve',
+        simulated: true,
+        requestedBy: 'vitest',
+        startedBy: 'worker-test',
+        blockedReasons: [],
+        outcomeSummary: 'Budget-state treasury application completed.',
+        outcome: {
+          executionKind: 'budget_state_application',
+          rebalanceProposalId: proposal.id,
+        },
+        createdAt: new Date('2026-03-20T12:03:05.000Z'),
+        startedAt: new Date('2026-03-20T12:03:05.000Z'),
+        completedAt: new Date('2026-03-20T12:03:06.000Z'),
+        updatedAt: new Date('2026-03-20T12:03:06.000Z'),
+      })
+      .returning();
+
+    await connection.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: rebalanceExecution.id,
+        linkedCommandId: 'command-partial-bundle-1',
+        updatedAt: new Date('2026-03-20T12:03:06.000Z'),
+      })
+      .where(eq(allocatorRebalanceProposals.id, proposal.id));
+
+    await connection.db
+      .update(treasuryActions)
+      .set({
+        latestExecutionId: treasuryExecution.id,
+        updatedAt: new Date('2026-03-20T12:03:06.000Z'),
+      })
+      .where(eq(treasuryActions.id, treasuryAction.id));
+
+    await connection.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        outcome: {
+          applied: true,
+          downstreamCarryActionIds: [carryAction.id],
+          downstreamTreasuryActionIds: [treasuryAction.id],
+        },
+        updatedAt: new Date('2026-03-20T12:03:06.000Z'),
+      })
+      .where(eq(allocatorRebalanceExecutions.id, rebalanceExecution.id));
+
+    const proposalDetail = await controlPlane.getRebalanceProposal(proposal.id);
+    if (proposalDetail === null) {
+      throw new Error('Expected rebalance proposal detail.');
+    }
+
+    const bundle = await controlPlane.getRebalanceBundleForProposal(proposal.id);
+    if (bundle === null) {
+      throw new Error('Expected rebalance bundle detail.');
+    }
+
+    expect(bundle.bundle.status).toBe('requires_intervention');
+    expect(bundle.bundle.outcomeClassification).toBe('partial_application');
+    expect(bundle.bundle.interventionRecommendation).toBe('unresolved_partial_application');
+    expect(bundle.bundle.completedChildCount).toBe(1);
+    expect(bundle.bundle.blockedChildCount).toBe(1);
+    expect(bundle.graph.downstream.carry.actions[0]?.action.id).toBe(carryAction.id);
+    expect(bundle.graph.downstream.treasury.actions[0]?.executions[0]?.id).toBe(treasuryExecution.id);
+    expect(proposalDetail.executions[0]?.id).toBe(rebalanceExecution.id);
+  });
+
+  it('evaluates and executes carry actions through the runtime command rail', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+    await controlPlane.enqueueCommand('run_cycle', 'vitest', {
+      triggerSource: 'carry-worker-test-cycle',
+    });
+
+    const evaluationCommand = await controlPlane.enqueueCarryEvaluation('vitest', {
+      actorId: 'vitest',
+      trigger: 'worker_carry_test',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(evaluationCommand.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const action = await waitFor(
+      async () => {
+        const actions = await controlPlane.listCarryActions(20);
+        return actions.find((item) => item.executable) ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (action === null) {
+      throw new Error('Expected actionable carry action.');
+    }
+
+    const command = await controlPlane.approveCarryAction(action.id, 'vitest', 'operator');
+    if (command === null) {
+      throw new Error('Expected carry execution command to be queued.');
+    }
+
+    const completedCommand = await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+    const detail = await waitFor(
+      () => controlPlane.getCarryAction(action.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.action.status === 'completed',
+    );
+    const executions = await controlPlane.listCarryExecutions(10);
+    const executionDetail = await waitFor(
+      () => controlPlane.getCarryExecution(String(detail?.executions[0]?.id)),
+      (value): value is Exclude<typeof value, null> => value !== null && value.steps.length > 0,
+    );
+    if (executionDetail === null) {
+      throw new Error('Expected carry execution detail.');
+    }
+
+    expect(completedCommand?.result['carryExecutionId']).toBeTruthy();
+    expect(detail?.executions[0]?.status).toBe('completed');
+    expect(detail?.executions[0]?.requestedBy).toBe('vitest');
+    expect(executions.some((execution) => execution.carryActionId === action.id)).toBe(true);
+    expect(executionDetail.execution.id).toBe(detail?.executions[0]?.id);
+    expect(executionDetail.action?.id).toBe(action.id);
+    expect(executionDetail.steps[0]?.intentId).toBeTruthy();
+    expect(executionDetail.steps[0]?.executionReference).toBeTruthy();
+    expect(executionDetail.timeline.some((entry) => entry.linkedExecutionId === executionDetail.execution.id)).toBe(true);
   });
 
   it('approves and executes treasury actions with durable execution history', async () => {

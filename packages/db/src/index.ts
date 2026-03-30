@@ -4,7 +4,13 @@
 
 // Schema tables — re-exported so consumers don't need to drill into sub-paths
 export {
+  carryActionExecutions,
+  carryActionOrderIntents,
+  carryExecutionSteps,
+  carryActions,
+  carryVenueSnapshots,
   allocatorCurrent,
+  allocatorRebalanceBundles,
   allocatorRebalanceCurrent,
   allocatorRebalanceExecutions,
   allocatorRebalanceProposalIntents,

@@ -3,7 +3,14 @@ import type {
   AllocatorRunView,
   AllocatorSleeveTargetView,
   AllocatorSummaryView,
-  RebalanceProposalDetailView,
+  CarryActionDetailView,
+  CarryActionView,
+  CarryExecutionDetailView,
+  CarryExecutionView,
+  CarryVenueView,
+  RebalanceBundleDetailView,
+  RebalanceBundleView,
+  RebalanceExecutionGraphView,
   RebalanceProposalView,
   RuntimeCommandView,
   RuntimeMismatchDetailView,
@@ -30,6 +37,10 @@ import type {
   ApiEnvelope,
   AllocatorDecisionPageData,
   AllocatorPageData,
+  CarryActionDetailPageData,
+  CarryExecutionDetailPageData,
+  CarryExecutionsPageData,
+  CarryPageData,
   DashboardPageState,
   MismatchListFilters,
   OperationsPageData,
@@ -38,13 +49,16 @@ import type {
   ReconciliationPageData,
   TreasuryActionDetailPageData,
   TreasuryExecutionDetailPageData,
+  TreasuryExecutionsPageData,
   TreasuryPageData,
+  RebalanceProposalPageData,
+  RebalanceBundlePageData,
   TreasuryVenueDetailPageData,
   TreasuryVenuesPageData,
-  RebalanceProposalPageData,
 } from './types';
 
 const ALLOCATOR_API_PREFIX = '/api/v1/allocator';
+const CARRY_API_PREFIX = '/api/v1/carry';
 const API_PREFIX = '/api/v1/runtime';
 const TREASURY_API_PREFIX = '/api/v1/treasury';
 
@@ -123,6 +137,31 @@ async function fetchTreasuryApi<T>(
   return payload.data;
 }
 
+async function fetchCarryApi<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${CARRY_API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Carry API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
 function buildSearchParams(params: Record<string, string | number | undefined>): string {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -169,8 +208,52 @@ export async function listDecisionRebalanceProposals(
 
 export async function getRebalanceProposalDetail(
   proposalId: string,
-): Promise<RebalanceProposalDetailView> {
-  return fetchAllocatorApi<RebalanceProposalDetailView>(`/rebalance-proposals/${proposalId}`);
+): Promise<RebalanceExecutionGraphView> {
+  return fetchAllocatorApi<RebalanceExecutionGraphView>(`/rebalance-proposals/${proposalId}/execution-graph`);
+}
+
+export async function listRebalanceBundles(limit = 20): Promise<RebalanceBundleView[]> {
+  return fetchAllocatorApi<RebalanceBundleView[]>(`/rebalance-bundles${buildSearchParams({ limit })}`);
+}
+
+export async function getRebalanceBundleForProposal(
+  proposalId: string,
+): Promise<RebalanceBundleDetailView> {
+  return fetchAllocatorApi<RebalanceBundleDetailView>(`/rebalance-proposals/${proposalId}/bundle`);
+}
+
+export async function getRebalanceBundleDetail(bundleId: string): Promise<RebalanceBundleDetailView> {
+  return fetchAllocatorApi<RebalanceBundleDetailView>(`/rebalance-bundles/${bundleId}`);
+}
+
+export async function listCarryRecommendations(limit = 20): Promise<CarryActionView[]> {
+  return fetchCarryApi<CarryActionView[]>(`/recommendations${buildSearchParams({ limit })}`);
+}
+
+export async function listCarryActions(limit = 20): Promise<CarryActionView[]> {
+  return fetchCarryApi<CarryActionView[]>(`/actions${buildSearchParams({ limit })}`);
+}
+
+export async function getCarryActionDetail(actionId: string): Promise<CarryActionDetailView> {
+  return fetchCarryApi<CarryActionDetailView>(`/actions/${actionId}`);
+}
+
+export async function listCarryExecutions(limit = 20): Promise<CarryExecutionView[]> {
+  return fetchCarryApi<CarryExecutionView[]>(`/executions${buildSearchParams({ limit })}`);
+}
+
+export async function listCarryExecutionsForAction(actionId: string): Promise<CarryExecutionView[]> {
+  return fetchCarryApi<CarryExecutionView[]>(`/actions/${actionId}/executions`);
+}
+
+export async function getCarryExecutionDetail(
+  executionId: string,
+): Promise<CarryExecutionDetailView> {
+  return fetchCarryApi<CarryExecutionDetailView>(`/executions/${executionId}`);
+}
+
+export async function listCarryVenues(limit = 20): Promise<CarryVenueView[]> {
+  return fetchCarryApi<CarryVenueView[]>(`/venues${buildSearchParams({ limit })}`);
 }
 
 export async function listRuntimeCommands(limit = 20): Promise<RuntimeCommandView[]> {
@@ -242,6 +325,10 @@ export async function getTreasuryActionDetail(actionId: string): Promise<Treasur
 
 export async function listTreasuryExecutions(limit = 20): Promise<TreasuryExecutionView[]> {
   return fetchTreasuryApi<TreasuryExecutionView[]>(`/executions${buildSearchParams({ limit })}`);
+}
+
+export async function listTreasuryExecutionsForAction(actionId: string): Promise<TreasuryExecutionView[]> {
+  return fetchTreasuryApi<TreasuryExecutionView[]>(`/actions/${actionId}/executions`);
 }
 
 export async function getTreasuryExecutionDetail(
@@ -338,15 +425,110 @@ export async function loadRebalanceProposalPageData(
   proposalId: string,
 ): Promise<DashboardPageState<RebalanceProposalPageData>> {
   try {
-    const detail = await getRebalanceProposalDetail(proposalId);
+    const bundle = await getRebalanceBundleForProposal(proposalId);
     return {
-      data: { detail },
+      data: { bundle },
       error: null,
     };
   } catch (error) {
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load rebalance proposal.',
+    };
+  }
+}
+
+export async function loadRebalanceBundlePageData(
+  bundleId: string,
+): Promise<DashboardPageState<RebalanceBundlePageData>> {
+  try {
+    const bundle = await getRebalanceBundleDetail(bundleId);
+    return {
+      data: { bundle },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load rebalance proposal.',
+    };
+  }
+}
+
+export async function loadCarryPageData(): Promise<DashboardPageState<CarryPageData>> {
+  try {
+    const [recommendations, actions, executions, venues] = await Promise.all([
+      listCarryRecommendations(20),
+      listCarryActions(20),
+      listCarryExecutions(20),
+      listCarryVenues(20),
+    ]);
+
+    return {
+      data: {
+        recommendations,
+        actions,
+        executions,
+        venues,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load carry data.',
+    };
+  }
+}
+
+export async function loadCarryActionDetailPageData(
+  actionId: string,
+): Promise<DashboardPageState<CarryActionDetailPageData>> {
+  try {
+    return {
+      data: {
+        detail: await getCarryActionDetail(actionId),
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load carry action detail.',
+    };
+  }
+}
+
+export async function loadCarryExecutionsPageData(): Promise<DashboardPageState<CarryExecutionsPageData>> {
+  try {
+    return {
+      data: {
+        executions: await listCarryExecutions(50),
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load carry executions.',
+    };
+  }
+}
+
+export async function loadCarryExecutionDetailPageData(
+  executionId: string,
+): Promise<DashboardPageState<CarryExecutionDetailPageData>> {
+  try {
+    return {
+      data: {
+        detail: await getCarryExecutionDetail(executionId),
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load carry execution detail.',
     };
   }
 }
@@ -411,6 +593,21 @@ export async function loadTreasuryExecutionDetailPageData(
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load treasury execution detail.',
+    };
+  }
+}
+
+export async function loadTreasuryExecutionsPageData(): Promise<DashboardPageState<TreasuryExecutionsPageData>> {
+  try {
+    const executions = await listTreasuryExecutions(50);
+    return {
+      data: { executions },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load treasury executions.',
     };
   }
 }

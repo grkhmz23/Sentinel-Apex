@@ -23,13 +23,22 @@ import type {
   AllocatorSleeveTargetView,
   AllocatorSummaryView,
   AuditEventView,
+  CarryActionDetailView,
+  CarryActionView,
+  CarryExecutionDetailView,
+  CarryExecutionView,
+  CarryVenueView,
   OpportunityView,
   OrderView,
   PnlSummaryView,
   PortfolioSnapshotView,
   PortfolioSummaryView,
   PositionView,
+  RebalanceBundleDetailView,
+  RebalanceBundleView,
   RebalanceCurrentView,
+  RebalanceExecutionGraphView,
+  RebalanceExecutionTimelineEntry,
   RebalanceProposalDetailView,
   RebalanceProposalView,
   RiskBreachView,
@@ -142,6 +151,34 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async getRuntimeStatus(): Promise<RuntimeStatusView> {
     return this.store.getRuntimeStatus();
+  }
+
+  async listCarryRecommendations(limit = 50): Promise<CarryActionView[]> {
+    return this.store.listCarryRecommendations(limit);
+  }
+
+  async listCarryActions(limit = 50): Promise<CarryActionView[]> {
+    return this.store.listCarryActions(limit);
+  }
+
+  async getCarryAction(actionId: string): Promise<CarryActionDetailView | null> {
+    return this.store.getCarryAction(actionId);
+  }
+
+  async listCarryExecutions(limit = 50): Promise<CarryExecutionView[]> {
+    return this.store.listCarryExecutions(limit);
+  }
+
+  async listCarryExecutionsForAction(actionId: string): Promise<CarryExecutionView[]> {
+    return this.store.listCarryExecutionsForAction(actionId);
+  }
+
+  async getCarryExecution(executionId: string): Promise<CarryExecutionDetailView | null> {
+    return this.store.getCarryExecution(executionId);
+  }
+
+  async listCarryVenues(limit = 50): Promise<CarryVenueView[]> {
+    return this.store.listCarryVenues(limit);
   }
 
   async getWorkerStatus(): Promise<WorkerStatusView> {
@@ -282,6 +319,13 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.enqueueCommand('run_allocator_evaluation', requestedBy, payload);
   }
 
+  async enqueueCarryEvaluation(
+    requestedBy: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<RuntimeCommandView> {
+    return this.enqueueCommand('run_carry_evaluation', requestedBy, payload);
+  }
+
   async getAllocatorSummary(): Promise<AllocatorSummaryView | null> {
     return this.store.getAllocatorSummary();
   }
@@ -310,8 +354,28 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.listRebalanceProposalsForDecision(allocatorRunId);
   }
 
+  async listRebalanceBundles(limit = 50): Promise<RebalanceBundleView[]> {
+    return this.store.listRebalanceBundles(limit);
+  }
+
+  async getRebalanceBundle(bundleId: string): Promise<RebalanceBundleDetailView | null> {
+    return this.store.getRebalanceBundle(bundleId);
+  }
+
+  async getRebalanceBundleForProposal(proposalId: string): Promise<RebalanceBundleDetailView | null> {
+    return this.store.getRebalanceBundleForProposal(proposalId);
+  }
+
   async getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null> {
     return this.store.getRebalanceProposal(proposalId);
+  }
+
+  async getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null> {
+    return this.store.getRebalanceExecutionGraph(proposalId);
+  }
+
+  async getRebalanceTimeline(proposalId: string): Promise<RebalanceExecutionTimelineEntry[]> {
+    return this.store.getRebalanceTimeline(proposalId);
   }
 
   async getRebalanceCurrent(): Promise<RebalanceCurrentView | null> {
@@ -340,6 +404,10 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async listTreasuryExecutions(limit = 50): Promise<TreasuryExecutionView[]> {
     return this.store.listTreasuryExecutions(limit);
+  }
+
+  async listTreasuryExecutionsForAction(actionId: string): Promise<TreasuryExecutionView[]> {
+    return this.store.listTreasuryExecutionsForAction(actionId);
   }
 
   async getTreasuryExecution(executionId: string): Promise<TreasuryExecutionView | null> {
@@ -391,6 +459,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
         approvalRequirement: detail.action.approvalRequirement,
       },
     });
+    if (detail.action.linkedRebalanceProposalId !== null) {
+      await this.store.syncRebalanceBundleForProposal(detail.action.linkedRebalanceProposalId);
+    }
 
     return approved;
   }
@@ -440,6 +511,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
         commandId: command.commandId,
       },
     });
+    if (detail.action.linkedRebalanceProposalId !== null) {
+      await this.store.syncRebalanceBundleForProposal(detail.action.linkedRebalanceProposalId);
+    }
 
     return command;
   }
@@ -490,6 +564,57 @@ export class RuntimeControlPlane implements RuntimeReadApi {
         commandId: command.commandId,
       },
     });
+
+    return command;
+  }
+
+  async approveCarryAction(
+    actionId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+  ): Promise<RuntimeCommandView | null> {
+    const detail = await this.store.getCarryAction(actionId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (!detail.action.executable || detail.action.blockedReasons.length > 0) {
+      throw new Error('Carry action is blocked and cannot be approved.');
+    }
+
+    if (!canSatisfyApprovalRequirement(actorRole, detail.action.approvalRequirement)) {
+      throw new Error(`Carry action requires ${detail.action.approvalRequirement} approval.`);
+    }
+
+    if (detail.action.status !== 'recommended') {
+      throw new Error(`Carry action cannot be approved from status "${detail.action.status}".`);
+    }
+
+    await this.store.approveCarryAction(actionId, actorId);
+    const command = await this.enqueueCommand('execute_carry_action', actorId, {
+      actionId,
+      actorId,
+    });
+    await this.store.queueCarryActionExecution({
+      actionId,
+      commandId: command.commandId,
+      actorId,
+    });
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'carry.action_approved',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        carryActionId: actionId,
+        commandId: command.commandId,
+      },
+    });
+    if (detail.action.linkedRebalanceProposalId !== null) {
+      await this.store.syncRebalanceBundleForProposal(detail.action.linkedRebalanceProposalId);
+    }
 
     return command;
   }

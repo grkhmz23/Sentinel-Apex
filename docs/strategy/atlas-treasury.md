@@ -8,6 +8,7 @@
 
 Phase 3.1 establishes the first controlled treasury execution foundation in the repo.
 Phase 3.2 adds operator-grade workflow depth and connector readiness visibility on top of that execution foundation.
+Phase 4.5 adds dedicated treasury execution drill-through symmetry and rebalance-linked treasury execution visibility.
 
 Implemented now:
 
@@ -20,6 +21,9 @@ Implemented now:
 - treasury approval and controlled execution via runtime commands
 - treasury API and ops-dashboard visibility for recommendations and execution state
 - treasury action detail, execution detail, and venue readiness drill-through
+- treasury execution history page and action-scoped execution inspection
+- rebalance-linked treasury budget-application actions and executions
+- explicit treasury execution-kind visibility for venue execution vs budget-state application
 - structured blocked-reason categories with operator guidance
 - venue readiness metadata for simulated, read-only, and live-approval posture
 - connector onboarding and live-enable runbooks
@@ -56,6 +60,19 @@ It still does not claim:
 - allocator-driven treasury targets
 - generic connector orchestration
 - production-ready real treasury integrations in this repo today
+
+## Phase 4.5 Operator Transparency Boundary
+
+Phase 4.5 improves treasury execution visibility without overstating venue-native support:
+
+- treasury execution detail now distinguishes venue execution from budget-state application
+- rebalance-originated treasury sleeve changes can persist treasury action/execution records linked to the parent proposal
+- proposal drill-through can now show real downstream treasury detail when the runtime persisted it
+
+It still does not claim:
+
+- full venue-native treasury execution detail for flows that are only sleeve budget application
+- autonomous treasury routing from allocator approval
 
 ---
 

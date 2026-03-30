@@ -46,6 +46,12 @@ Repo: `/workspaces/Sentinel-Apex`
   - operator-safe pause, resume, cycle-run, projection-rebuild, and reconciliation-run command controls
   - runtime-integrated treasury evaluation with explicit `run_treasury_evaluation` command support
   - runtime-integrated allocator evaluation with explicit `run_allocator_evaluation` command support
+  - runtime-integrated carry evaluation with explicit `run_carry_evaluation` command support
+  - runtime-integrated carry execution with explicit `execute_carry_action` command support
+  - durable carry action lifecycle, carry execution history, carry execution-step persistence, carry venue readiness snapshots, and rebalance-to-carry downstream action linkage
+  - durable treasury action lifecycle, treasury execution history, treasury proposal linkage for rebalance-created budget actions, and treasury execution-kind visibility across venue execution vs budget-state application
+  - backend-native rebalance execution graph queries spanning proposal, command, rebalance execution, downstream carry action/execution, downstream treasury action/execution when persisted, and ordered operator timeline detail
+  - durable rebalance bundle coordination with proposal-scoped bundle records, bundle rollups, partial-failure classification, and operator intervention recommendations
 - `packages/allocator` now provides:
   - Sentinel sleeve registry for Carry and Treasury
   - deterministic portfolio-level budgeting policy
@@ -61,6 +67,7 @@ Repo: `/workspaces/Sentinel-Apex`
   - treasury execution intent planning with explicit blocked reasons
   - treasury execution-time effect modeling
 - `packages/venue-adapters` now also provides treasury-specific venue abstractions and explicit simulated treasury adapters.
+- `packages/venue-adapters` now also provides carry capability metadata and explicit simulated carry execution capability reporting.
 - `packages/db` now also persists treasury state in:
   - `treasury_runs`
   - `treasury_venue_snapshots`
@@ -77,11 +84,22 @@ Repo: `/workspaces/Sentinel-Apex`
   - `allocator_rebalance_proposals`
   - `allocator_rebalance_proposal_intents`
   - `allocator_rebalance_executions`
+  - `allocator_rebalance_bundles`
   - `allocator_rebalance_current`
+- `packages/db` now also persists carry controlled-execution state in:
+  - `carry_venue_snapshots`
+  - `carry_actions`
+  - `carry_action_order_intents`
+  - `carry_action_executions`
+  - `carry_execution_steps`
 - `apps/api` serves portfolio, risk, orders, positions, opportunities, events, runtime status, worker status, mismatch history, and control surfaces from persisted runtime-backed state.
 - `apps/api` now also serves treasury summary, allocations, policy, recommendations, action detail, execution detail, venue readiness/detail, treasury approval, and explicit treasury execution queueing.
+- `apps/api` now also serves action-scoped treasury execution history and richer treasury execution detail with proposal linkage where available.
 - `apps/api` now also serves allocator summary, latest sleeve targets, decision history/detail, run history, and explicit allocator evaluation queueing.
 - `apps/api` now also serves rebalance proposal list/detail, decision-linked proposals, and rebalance approval/rejection actions.
+- `apps/api` now also serves proposal-scoped rebalance execution graph detail and rebalance timeline detail.
+- `apps/api` now also serves rebalance bundle list/detail, proposal-to-bundle linkage, and bundle timeline detail.
+- `apps/api` now also serves carry recommendations/actions, carry action detail, action-scoped carry execution history, dedicated carry execution detail, carry venue capability state, explicit carry evaluation queueing, and carry approval-driven execution queueing.
 - `apps/runtime-worker` executes scheduled cycles, processes runtime commands, and persists scheduler/recovery visibility independently of the API process.
 - `apps/ops-dashboard` now provides an internal Next.js operator UI for overview, mismatch inspection, reconciliation visibility, recovery and command inspection, and safe action dispatch through the existing runtime API.
 - `apps/ops-dashboard` now also provides:
@@ -91,9 +109,13 @@ Repo: `/workspaces/Sentinel-Apex`
   - signed operator propagation from the dashboard proxy into the API
   - Atlas Treasury overview visibility and a dedicated treasury page
   - treasury recommendation readiness, blocked reasons, approval controls, execution controls, and execution history
-  - treasury action detail, execution detail, and venue readiness drill-through views
+  - treasury action detail, dedicated treasury execution history/detail, and venue readiness drill-through views
   - a first Sentinel allocator page with current-vs-target sleeve budgets, rationale visibility, decision history, and decision detail
   - rebalance proposal visibility and proposal detail with approval controls and execution outcome state
+  - backend-native rebalance proposal execution graph drill-through with grouped downstream carry/treasury sections and ordered workflow timeline
+  - bundle-level rebalance coordination drill-through with durable status, recovery recommendation, and downstream child rollups
+  - a first controlled-execution carry page with recommendation/actionability visibility, blocked reasons, execution history, venue readiness, and carry action drill-through
+  - dedicated carry execution list/detail drill-through with step-level outcomes and timeline visibility
 - `apps/api` now enforces backend operator authorization for sensitive runtime and control mutations in addition to API-key authentication.
 - `packages/db` now persists internal operators and dashboard sessions in `ops_operators` and `ops_operator_sessions`.
 - Existing runtime actor/audit fields are now populated from authenticated operator identity for dashboard-driven actions instead of client-supplied placeholders.
@@ -120,10 +142,15 @@ Repo: `/workspaces/Sentinel-Apex`
 ## What Is Missing
 
 - Broader operator workflows beyond treasury drill-through, especially command detail and richer recovery navigation.
+- Full production-grade live carry connectors and venue onboarding beyond explicit simulated/read-only posture.
+- Full venue-native order drill-through beyond the connector references and step outcomes the current runtime actually captures.
 - Operator management workflows beyond bootstrap and direct DB-backed setup.
 - Production-grade live venue integration.
 - Backtest foundations.
 - Autonomous allocator-to-sleeve routing beyond explicit operator-approved budget-state workflows.
+- Autonomous carry deployment directly from allocator evaluation.
+- Full venue-native treasury detail for flows that are only budget-state application; those flows are now explicit treasury action/execution records when persisted, but they are still not connector-native treasury venue executions.
+- Explicit rebalance retry/cancel tooling; Phase 4.6 adds operator-readable recovery semantics, not retry automation.
 
 ## Validation Results
 
@@ -186,6 +213,7 @@ Results:
 - Build passes in targeted package runs and in the full monorepo run, including the new treasury package and dashboard treasury page.
 - Typecheck passes in targeted package runs and in the full monorepo run, including the updated runtime/API/dashboard treasury contracts.
 - Tests pass in targeted package runs and in the full monorepo run, including treasury policy, runtime treasury integration, API treasury detail/readiness endpoints, and dashboard treasury drill-through rendering.
+- Carry execution transparency now also passes targeted runtime/API/dashboard validation with dedicated execution detail and step-level drill-through after rebuilding dependent workspace packages.
 - The new auth/session and role-gating package-level checks pass in targeted API and ops-dashboard runs.
 - Lint passes in targeted package runs. Existing `import/no-named-as-default` warnings remain in packages that already used `decimal.js` default imports.
 - During implementation, API tests briefly failed because `@sentinel-apex/api` consumed a stale `@sentinel-apex/runtime/dist` build artifact that still generated non-UUID position IDs. Rebuilding the runtime package fixed the issue.

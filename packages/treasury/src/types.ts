@@ -1,7 +1,10 @@
 export type TreasuryLiquidityTier = 'instant' | 'same_day' | 'delayed';
 export type TreasuryVenueMode = 'simulated' | 'live';
 export type TreasuryRecommendationType = 'deposit' | 'redeem';
-export type TreasuryActionType = 'allocate_to_venue' | 'reduce_venue_allocation';
+export type TreasuryActionType =
+  | 'allocate_to_venue'
+  | 'reduce_venue_allocation'
+  | 'rebalance_treasury_budget';
 export type TreasuryExecutionMode = 'dry-run' | 'live';
 export type TreasuryApprovalRequirement = 'operator' | 'admin';
 export type TreasuryExecutionStatus =
@@ -16,7 +19,8 @@ export type TreasuryRecommendationReasonCode =
   | 'reserve_shortfall'
   | 'surplus_deployable'
   | 'venue_concentration'
-  | 'venue_ineligible';
+  | 'venue_ineligible'
+  | 'rebalance_budget_application';
 export type TreasuryActionBlockedReasonCode =
   | 'below_minimum_action_size'
   | 'insufficient_idle_capital'

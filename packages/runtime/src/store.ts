@@ -7,8 +7,10 @@ import type {
   RebalanceBlockedReason,
   RebalanceProposal,
 } from '@sentinel-apex/allocator';
+import type { CarryExecutionIntent, CarryOperationalBlockedReason } from '@sentinel-apex/carry';
 import {
   allocatorCurrent,
+  allocatorRebalanceBundles,
   allocatorRebalanceCurrent,
   allocatorRebalanceExecutions,
   allocatorRebalanceProposalIntents,
@@ -17,6 +19,11 @@ import {
   allocatorRuns,
   allocatorSleeveTargets,
   auditEvents,
+  carryActionExecutions,
+  carryActionOrderIntents,
+  carryExecutionSteps,
+  carryActions,
+  carryVenueSnapshots,
   executionEvents,
   fills,
   orders,
@@ -62,6 +69,14 @@ import type {
   AllocatorSleeveTargetView,
   AllocatorSummaryView,
   AuditEventView,
+  CarryActionDetailView,
+  CarryActionPlannedOrderView,
+  CarryActionView,
+  CarryExecutionDetailView,
+  CarryExecutionStepView,
+  CarryExecutionTimelineEntry,
+  CarryExecutionView,
+  CarryVenueView,
   OpportunityView,
   OrderView,
   PnlSummaryView,
@@ -70,10 +85,21 @@ import type {
   PortfolioSummaryView,
   PositionView,
   RebalanceCurrentView,
+  RebalanceBundleCompletionState,
+  RebalanceBundleDetailView,
+  RebalanceBundleInterventionRecommendation,
+  RebalanceBundleOutcomeClassification,
+  RebalanceBundleStatus,
+  RebalanceBundleView,
+  RebalanceDownstreamStatusRollupView,
   RebalanceExecutionView,
+  RebalanceExecutionGraphView,
+  RebalanceExecutionTimelineEntry,
+  RebalanceCarryActionNodeView,
   RebalanceProposalDetailView,
   RebalanceProposalIntentView,
   RebalanceProposalView,
+  RebalanceTreasuryActionNodeView,
   RiskBreachView,
   RuntimeCommandStatus,
   RuntimeCommandType,
@@ -165,6 +191,41 @@ function asTreasuryBlockedReasons(value: unknown): TreasuryActionBlockedReason[]
     return [{
       code: code as TreasuryActionBlockedReason['code'],
       category: category as TreasuryActionBlockedReason['category'],
+      message,
+      operatorAction,
+      details: asJsonObject(record['details']),
+    }];
+  });
+}
+
+function asCarryBlockedReasons(value: unknown): CarryOperationalBlockedReason[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const code = record['code'];
+    const category = record['category'];
+    const message = record['message'];
+    const operatorAction = record['operatorAction'];
+
+    if (
+      typeof code !== 'string'
+      || typeof category !== 'string'
+      || typeof message !== 'string'
+      || typeof operatorAction !== 'string'
+    ) {
+      return [];
+    }
+
+    return [{
+      code: code as CarryOperationalBlockedReason['code'],
+      category: category as CarryOperationalBlockedReason['category'],
       message,
       operatorAction,
       details: asJsonObject(record['details']),
@@ -561,6 +622,7 @@ function mapTreasuryActionRow(
   return {
     id: row.id,
     treasuryRunId: row.treasuryRunId,
+    linkedRebalanceProposalId: row.linkedRebalanceProposalId ?? null,
     actionType: row.actionType as TreasuryActionView['actionType'],
     status: row.status as TreasuryActionView['status'],
     readiness: row.readiness as TreasuryActionView['readiness'],
@@ -632,6 +694,151 @@ function mapAllocatorSummaryRow(row: typeof allocatorRuns.$inferSelect): Allocat
     recommendationCount: row.recommendationCount,
     evaluatedAt: row.evaluatedAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapCarryVenueRow(
+  row: typeof carryVenueSnapshots.$inferSelect,
+): CarryVenueView {
+  return {
+    strategyRunId: row.strategyRunId,
+    venueId: row.venueId,
+    venueMode: row.venueMode as CarryVenueView['venueMode'],
+    executionSupported: row.executionSupported,
+    supportsIncreaseExposure: row.supportsIncreaseExposure,
+    supportsReduceExposure: row.supportsReduceExposure,
+    readOnly: row.readOnly,
+    approvedForLiveUse: row.approvedForLiveUse,
+    healthy: row.healthy,
+    onboardingState: row.onboardingState as CarryVenueView['onboardingState'],
+    missingPrerequisites: Array.isArray(row.missingPrerequisites) ? row.missingPrerequisites as string[] : [],
+    metadata: asJsonObject(row.metadata),
+    updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapCarryActionRow(
+  row: typeof carryActions.$inferSelect,
+): CarryActionView {
+  return {
+    id: row.id,
+    strategyRunId: row.strategyRunId ?? null,
+    linkedRebalanceProposalId: row.linkedRebalanceProposalId ?? null,
+    actionType: row.actionType as CarryActionView['actionType'],
+    status: row.status as CarryActionView['status'],
+    sourceKind: row.sourceKind as CarryActionView['sourceKind'],
+    sourceReference: row.sourceReference ?? null,
+    opportunityId: row.opportunityId ?? null,
+    asset: row.asset ?? null,
+    summary: row.summary,
+    notionalUsd: row.notionalUsd,
+    details: asJsonObject(row.details),
+    readiness: row.readiness as CarryActionView['readiness'],
+    executable: row.executable,
+    blockedReasons: asCarryBlockedReasons(row.blockedReasons),
+    approvalRequirement: row.approvalRequirement as CarryActionView['approvalRequirement'],
+    executionMode: row.executionMode as CarryActionView['executionMode'],
+    simulated: row.simulated,
+    executionPlan: asJsonObject(row.executionPlan),
+    approvedBy: row.approvedBy ?? null,
+    approvedAt: toIsoString(row.approvedAt),
+    executionRequestedBy: row.executionRequestedBy ?? null,
+    executionRequestedAt: toIsoString(row.executionRequestedAt),
+    queuedAt: toIsoString(row.queuedAt),
+    executingAt: toIsoString(row.executingAt),
+    completedAt: toIsoString(row.completedAt),
+    failedAt: toIsoString(row.failedAt),
+    cancelledAt: toIsoString(row.cancelledAt),
+    linkedCommandId: row.linkedCommandId ?? null,
+    latestExecutionId: row.latestExecutionId ?? null,
+    lastError: row.lastError ?? null,
+    actorId: row.actorId ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapCarryPlannedOrderRow(
+  row: typeof carryActionOrderIntents.$inferSelect,
+): CarryActionPlannedOrderView {
+  return {
+    id: row.id,
+    carryActionId: row.carryActionId,
+    intentId: row.intentId,
+    venueId: row.venueId,
+    asset: row.asset,
+    side: row.side as CarryActionPlannedOrderView['side'],
+    orderType: row.orderType as CarryActionPlannedOrderView['orderType'],
+    requestedSize: row.requestedSize,
+    requestedPrice: row.requestedPrice ?? null,
+    reduceOnly: row.reduceOnly,
+    metadata: asJsonObject(row.metadata),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapCarryExecutionRow(
+  row: typeof carryActionExecutions.$inferSelect,
+): CarryExecutionView {
+  return {
+    id: row.id,
+    carryActionId: row.carryActionId,
+    strategyRunId: row.strategyRunId ?? null,
+    commandId: row.commandId ?? null,
+    status: row.status as CarryExecutionView['status'],
+    executionMode: row.executionMode as CarryExecutionView['executionMode'],
+    simulated: row.simulated,
+    requestedBy: row.requestedBy,
+    startedBy: row.startedBy ?? null,
+    blockedReasons: asCarryBlockedReasons(row.blockedReasons),
+    outcomeSummary: row.outcomeSummary ?? null,
+    outcome: asJsonObject(row.outcome),
+    venueExecutionReference: row.venueExecutionReference ?? null,
+    lastError: row.lastError ?? null,
+    createdAt: row.createdAt.toISOString(),
+    startedAt: toIsoString(row.startedAt),
+    completedAt: toIsoString(row.completedAt),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapCarryExecutionStepRow(
+  row: typeof carryExecutionSteps.$inferSelect,
+): CarryExecutionStepView {
+  return {
+    id: row.id,
+    carryExecutionId: row.carryExecutionId,
+    carryActionId: row.carryActionId,
+    strategyRunId: row.strategyRunId ?? null,
+    plannedOrderId: row.plannedOrderId ?? null,
+    intentId: row.intentId,
+    venueId: row.venueId,
+    venueMode: row.venueMode as CarryExecutionStepView['venueMode'],
+    executionSupported: row.executionSupported,
+    readOnly: row.readOnly,
+    approvedForLiveUse: row.approvedForLiveUse,
+    onboardingState: row.onboardingState as CarryExecutionStepView['onboardingState'],
+    asset: row.asset,
+    side: row.side as CarryExecutionStepView['side'],
+    orderType: row.orderType as CarryExecutionStepView['orderType'],
+    requestedSize: row.requestedSize,
+    requestedPrice: row.requestedPrice ?? null,
+    reduceOnly: row.reduceOnly,
+    clientOrderId: row.clientOrderId ?? null,
+    venueOrderId: row.venueOrderId ?? null,
+    executionReference: row.executionReference ?? null,
+    status: row.status,
+    simulated: row.simulated,
+    filledSize: row.filledSize ?? null,
+    averageFillPrice: row.averageFillPrice ?? null,
+    outcomeSummary: row.outcomeSummary ?? null,
+    outcome: asJsonObject(row.outcome),
+    lastError: row.lastError ?? null,
+    metadata: asJsonObject(row.metadata),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    completedAt: toIsoString(row.completedAt),
   };
 }
 
@@ -788,6 +995,505 @@ function mapRebalanceCurrentRow(
   };
 }
 
+function mapRebalanceBundleRow(
+  row: typeof allocatorRebalanceBundles.$inferSelect,
+  proposal: RebalanceProposalView,
+): RebalanceBundleView {
+  return {
+    id: row.id,
+    proposalId: row.proposalId,
+    allocatorRunId: proposal.allocatorRunId,
+    proposalStatus: proposal.status,
+    status: row.status as RebalanceBundleStatus,
+    completionState: row.completionState as RebalanceBundleCompletionState,
+    outcomeClassification: row.outcomeClassification as RebalanceBundleOutcomeClassification,
+    interventionRecommendation: row.interventionRecommendation as RebalanceBundleInterventionRecommendation,
+    totalChildCount: row.totalChildCount,
+    blockedChildCount: row.blockedChildCount,
+    failedChildCount: row.failedChildCount,
+    completedChildCount: row.completedChildCount,
+    pendingChildCount: row.pendingChildCount,
+    childRollup: asJsonObject(row.childRollup),
+    finalizationReason: row.finalizationReason ?? null,
+    finalizedAt: toIsoString(row.finalizedAt),
+    executionMode: proposal.executionMode,
+    simulated: proposal.simulated,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function summariseRebalanceDownstreamRollup(input: {
+  actionCount: number;
+  executionCount: number;
+  blockedCount: number;
+  failureCount: number;
+  completedCount: number;
+  simulated: boolean;
+  live: boolean;
+  references: string[];
+}): RebalanceDownstreamStatusRollupView {
+  let status: RebalanceDownstreamStatusRollupView['status'] = 'idle';
+  if (input.blockedCount > 0) {
+    status = 'blocked';
+  } else if (input.failureCount > 0) {
+    status = 'failed';
+  } else if (input.executionCount === 0 && input.actionCount > 0) {
+    status = 'pending';
+  } else if (input.executionCount > 0 && input.completedCount < input.executionCount) {
+    status = 'in_progress';
+  } else if (input.executionCount > 0 && input.completedCount === input.executionCount) {
+    status = 'completed';
+  }
+
+  const summary = input.actionCount === 0
+    ? 'No downstream actions were persisted.'
+    : `${input.actionCount} actions and ${input.executionCount} executions recorded.`;
+
+  return {
+    status,
+    actionCount: input.actionCount,
+    executionCount: input.executionCount,
+    blockedCount: input.blockedCount,
+    failureCount: input.failureCount,
+    completedCount: input.completedCount,
+    simulated: input.simulated,
+    live: input.live,
+    references: Array.from(new Set(input.references.filter((value) => value.length > 0))),
+    summary,
+  };
+}
+
+function deriveBundleChildState(
+  action:
+    | RebalanceCarryActionNodeView['action']
+    | RebalanceTreasuryActionNodeView['action'],
+  executions: Array<CarryExecutionView | TreasuryExecutionView>,
+): 'blocked' | 'failed' | 'completed' | 'pending' | 'executing' {
+  if (executions.some((execution) => execution.status === 'failed')) {
+    return 'failed';
+  }
+
+  if (executions.length > 0) {
+    if (executions.every((execution) => execution.status === 'completed')) {
+      return 'completed';
+    }
+
+    return 'executing';
+  }
+
+  if (action.status === 'failed') {
+    return 'failed';
+  }
+
+  if (action.status === 'completed') {
+    return 'completed';
+  }
+
+  if (!action.executable || action.blockedReasons.length > 0) {
+    return 'blocked';
+  }
+
+  if (action.status === 'executing' || action.status === 'queued' || action.status === 'approved') {
+    return 'executing';
+  }
+
+  return 'pending';
+}
+
+function deriveRebalanceBundleSnapshot(
+  graph: RebalanceExecutionGraphView,
+): {
+  status: RebalanceBundleStatus;
+  completionState: RebalanceBundleCompletionState;
+  outcomeClassification: RebalanceBundleOutcomeClassification;
+  interventionRecommendation: RebalanceBundleInterventionRecommendation;
+  totalChildCount: number;
+  blockedChildCount: number;
+  failedChildCount: number;
+  completedChildCount: number;
+  pendingChildCount: number;
+  childRollup: Record<string, unknown>;
+  finalizationReason: string | null;
+  finalizedAt: string | null;
+} {
+  const carryChildStates = graph.downstream.carry.actions.map((node) =>
+    deriveBundleChildState(node.action, node.executions)
+  );
+  const treasuryChildStates = graph.downstream.treasury.actions.map((node) =>
+    deriveBundleChildState(node.action, node.executions)
+  );
+  const childStates = [...carryChildStates, ...treasuryChildStates];
+
+  const totalChildCount = childStates.length;
+  const blockedChildCount = childStates.filter((state) => state === 'blocked').length;
+  const failedChildCount = childStates.filter((state) => state === 'failed').length;
+  const completedChildCount = childStates.filter((state) => state === 'completed').length;
+  const pendingChildCount = childStates.filter((state) => state === 'pending' || state === 'executing').length;
+  const hasCompletedChildren = completedChildCount > 0;
+  const hasPendingChildren = pendingChildCount > 0;
+  const hasFailedChildren = failedChildCount > 0;
+  const hasBlockedChildren = blockedChildCount > 0;
+  const proposal = graph.detail.proposal;
+
+  let status: RebalanceBundleStatus = 'proposed';
+  let completionState: RebalanceBundleCompletionState = 'open';
+  let outcomeClassification: RebalanceBundleOutcomeClassification = 'pending';
+  let interventionRecommendation: RebalanceBundleInterventionRecommendation = 'operator_review_required';
+  let finalizationReason: string | null = null;
+
+  if (proposal.status === 'rejected') {
+    status = 'rejected';
+    completionState = 'finalized';
+    outcomeClassification = 'rejected';
+    interventionRecommendation = 'no_action_needed';
+    finalizationReason = proposal.rejectionReason ?? 'Proposal was rejected before coordinated execution.';
+  } else if (proposal.status === 'proposed' || proposal.status === 'approved' || proposal.status === 'queued') {
+    status = proposal.status === 'queued' ? 'queued' : 'proposed';
+    completionState = 'open';
+    outcomeClassification = 'pending';
+    interventionRecommendation = proposal.status === 'queued'
+      ? 'wait_for_inflight_children'
+      : 'operator_review_required';
+  } else if (proposal.status === 'executing' || hasPendingChildren) {
+    status = 'executing';
+    completionState = 'open';
+    outcomeClassification = hasCompletedChildren ? 'partial_application' : 'pending';
+    interventionRecommendation = 'wait_for_inflight_children';
+  } else if (hasFailedChildren && hasCompletedChildren) {
+    status = 'requires_intervention';
+    completionState = 'finalized';
+    outcomeClassification = 'partial_application';
+    interventionRecommendation = 'inspect_child_failures';
+    finalizationReason = 'At least one downstream child completed and at least one failed.';
+  } else if (hasBlockedChildren && hasCompletedChildren) {
+    status = 'requires_intervention';
+    completionState = 'finalized';
+    outcomeClassification = 'partial_application';
+    interventionRecommendation = 'unresolved_partial_application';
+    finalizationReason = 'At least one downstream child completed and at least one remains blocked.';
+  } else if (hasFailedChildren) {
+    status = 'failed';
+    completionState = 'finalized';
+    outcomeClassification = 'failed';
+    interventionRecommendation = 'inspect_child_failures';
+    finalizationReason = 'At least one downstream child failed and no child completed successfully.';
+  } else if (hasBlockedChildren) {
+    status = 'blocked';
+    completionState = 'finalized';
+    outcomeClassification = 'blocked';
+    interventionRecommendation = 'operator_review_required';
+    finalizationReason = 'At least one downstream child remained blocked.';
+  } else if (hasCompletedChildren && completedChildCount < totalChildCount) {
+    status = 'partially_completed';
+    completionState = 'finalized';
+    outcomeClassification = 'partial_application';
+    interventionRecommendation = 'unresolved_partial_application';
+    finalizationReason = 'The rebalance finished with only a subset of downstream children completed.';
+  } else if (proposal.status === 'failed') {
+    status = hasCompletedChildren ? 'requires_intervention' : 'failed';
+    completionState = 'finalized';
+    outcomeClassification = hasCompletedChildren ? 'partial_application' : 'failed';
+    interventionRecommendation = hasCompletedChildren
+      ? 'unresolved_partial_application'
+      : 'inspect_child_failures';
+    finalizationReason = proposal.lastError ?? 'Rebalance execution failed.';
+  } else if (proposal.status === 'completed') {
+    status = completedChildCount > 0 || totalChildCount === 0 ? 'completed' : 'partially_completed';
+    completionState = 'finalized';
+    outcomeClassification = 'safe_complete';
+    interventionRecommendation = 'no_action_needed';
+    finalizationReason = 'All downstream work recorded for the rebalance bundle completed successfully.';
+  }
+
+  const terminalTimestamp = graph.timeline
+    .filter((entry) => entry.status === 'completed' || entry.status === 'failed' || entry.status === 'rejected')
+    .map((entry) => entry.at)
+    .sort()
+    .at(-1) ?? null;
+
+  return {
+    status,
+    completionState,
+    outcomeClassification,
+    interventionRecommendation,
+    totalChildCount,
+    blockedChildCount,
+    failedChildCount,
+    completedChildCount,
+    pendingChildCount,
+    childRollup: {
+      carry: {
+        status: graph.downstream.carry.rollup.status,
+        actionCount: graph.downstream.carry.rollup.actionCount,
+        executionCount: graph.downstream.carry.rollup.executionCount,
+        blockedCount: graph.downstream.carry.rollup.blockedCount,
+        failureCount: graph.downstream.carry.rollup.failureCount,
+        completedCount: graph.downstream.carry.rollup.completedCount,
+      },
+      treasury: {
+        status: graph.downstream.treasury.rollup.status,
+        actionCount: graph.downstream.treasury.rollup.actionCount,
+        executionCount: graph.downstream.treasury.rollup.executionCount,
+        blockedCount: graph.downstream.treasury.rollup.blockedCount,
+        failureCount: graph.downstream.treasury.rollup.failureCount,
+        completedCount: graph.downstream.treasury.rollup.completedCount,
+        note: graph.downstream.treasury.note,
+      },
+    },
+    finalizationReason,
+    finalizedAt: completionState === 'finalized' ? terminalTimestamp : null,
+  };
+}
+
+function createRebalanceTimeline(input: {
+  detail: RebalanceProposalDetailView;
+  commands: RuntimeCommandView[];
+  carryActions: RebalanceCarryActionNodeView[];
+  treasuryActions: RebalanceTreasuryActionNodeView[];
+}): RebalanceExecutionTimelineEntry[] {
+  const entries: RebalanceExecutionTimelineEntry[] = [{
+    id: `${input.detail.proposal.id}:proposed`,
+    eventType: 'proposed',
+    at: input.detail.proposal.createdAt,
+    actorId: null,
+    sleeveId: 'allocator',
+    scope: 'proposal',
+    status: input.detail.proposal.status,
+    summary: 'Rebalance proposal was persisted from the allocator decision.',
+    linkedCommandId: null,
+    linkedRebalanceExecutionId: null,
+    linkedActionId: null,
+    linkedExecutionId: null,
+    details: {
+      allocatorRunId: input.detail.proposal.allocatorRunId,
+      actionType: input.detail.proposal.actionType,
+    },
+  }];
+
+  if (input.detail.proposal.approvedAt !== null) {
+    entries.push({
+      id: `${input.detail.proposal.id}:approved`,
+      eventType: 'approved',
+      at: input.detail.proposal.approvedAt,
+      actorId: input.detail.proposal.approvedBy,
+      sleeveId: 'allocator',
+      scope: 'proposal',
+      status: 'approved',
+      summary: 'Rebalance proposal was approved for command execution.',
+      linkedCommandId: input.detail.proposal.linkedCommandId,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: null,
+      linkedExecutionId: null,
+      details: {
+        approvalRequirement: input.detail.proposal.approvalRequirement,
+      },
+    });
+  }
+
+  if (input.detail.proposal.rejectedAt !== null) {
+    entries.push({
+      id: `${input.detail.proposal.id}:rejected`,
+      eventType: 'rejected',
+      at: input.detail.proposal.rejectedAt,
+      actorId: input.detail.proposal.rejectedBy,
+      sleeveId: 'allocator',
+      scope: 'proposal',
+      status: 'rejected',
+      summary: input.detail.proposal.rejectionReason ?? 'Rebalance proposal was rejected.',
+      linkedCommandId: null,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: null,
+      linkedExecutionId: null,
+      details: {
+        rejectionReason: input.detail.proposal.rejectionReason,
+      },
+    });
+  }
+
+  for (const command of input.commands) {
+    entries.push({
+      id: `${input.detail.proposal.id}:command:${command.commandId}`,
+      eventType: 'command_linked',
+      at: command.requestedAt,
+      actorId: command.requestedBy,
+      sleeveId: 'allocator',
+      scope: 'command',
+      status: command.status,
+      summary: `Runtime command ${command.commandType} was linked to the rebalance proposal.`,
+      linkedCommandId: command.commandId,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: null,
+      linkedExecutionId: null,
+      details: {
+        commandType: command.commandType,
+      },
+    });
+  }
+
+  for (const execution of input.detail.executions) {
+    entries.push({
+      id: `${input.detail.proposal.id}:execution:${execution.id}`,
+      eventType: 'execution_recorded',
+      at: execution.createdAt,
+      actorId: execution.requestedBy,
+      sleeveId: 'allocator',
+      scope: 'rebalance_execution',
+      status: execution.status,
+      summary: execution.outcomeSummary ?? execution.lastError ?? 'Rebalance execution was recorded.',
+      linkedCommandId: execution.commandId,
+      linkedRebalanceExecutionId: execution.id,
+      linkedActionId: null,
+      linkedExecutionId: null,
+      details: execution.outcome,
+    });
+
+    if (execution.startedAt !== null) {
+      entries.push({
+        id: `${input.detail.proposal.id}:executing:${execution.id}`,
+        eventType: 'executing',
+        at: execution.startedAt,
+        actorId: execution.startedBy,
+        sleeveId: 'allocator',
+        scope: 'rebalance_execution',
+        status: 'executing',
+        summary: 'Rebalance execution started.',
+        linkedCommandId: execution.commandId,
+        linkedRebalanceExecutionId: execution.id,
+        linkedActionId: null,
+        linkedExecutionId: null,
+        details: {},
+      });
+    }
+
+    if (execution.completedAt !== null) {
+      const applied = execution.outcome['applied'] === true;
+      entries.push({
+        id: `${input.detail.proposal.id}:${execution.status}:${execution.id}`,
+        eventType: execution.status === 'completed' ? 'completed' : 'failed',
+        at: execution.completedAt,
+        actorId: execution.startedBy ?? execution.requestedBy,
+        sleeveId: 'allocator',
+        scope: 'rebalance_execution',
+        status: execution.status,
+        summary: execution.outcomeSummary ?? execution.lastError ?? 'Rebalance execution completed.',
+        linkedCommandId: execution.commandId,
+        linkedRebalanceExecutionId: execution.id,
+        linkedActionId: null,
+        linkedExecutionId: null,
+        details: execution.outcome,
+      });
+
+      if (applied) {
+        entries.push({
+          id: `${input.detail.proposal.id}:applied:${execution.id}`,
+          eventType: 'budget_state_applied',
+          at: execution.completedAt,
+          actorId: execution.startedBy ?? execution.requestedBy,
+          sleeveId: 'allocator',
+          scope: 'rebalance_execution',
+          status: execution.status,
+          summary: 'Approved rebalance budget state was applied.',
+          linkedCommandId: execution.commandId,
+          linkedRebalanceExecutionId: execution.id,
+          linkedActionId: null,
+          linkedExecutionId: null,
+          details: {
+            carryTargetAllocationUsd: execution.outcome['carryTargetAllocationUsd'],
+            treasuryTargetAllocationUsd: execution.outcome['treasuryTargetAllocationUsd'],
+          },
+        });
+      }
+    }
+  }
+
+  for (const node of input.carryActions) {
+    entries.push({
+      id: `${input.detail.proposal.id}:carry-action:${node.action.id}`,
+      eventType: 'downstream_action_recorded',
+      at: node.action.createdAt,
+      actorId: node.action.actorId,
+      sleeveId: 'carry',
+      scope: 'downstream_action',
+      status: node.action.status,
+      summary: node.action.summary,
+      linkedCommandId: node.action.linkedCommandId,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: node.action.id,
+      linkedExecutionId: null,
+      details: {
+        actionType: node.action.actionType,
+        blockedReasons: node.action.blockedReasons,
+      },
+    });
+
+    for (const execution of node.executions) {
+      entries.push({
+        id: `${input.detail.proposal.id}:carry-execution:${execution.id}`,
+        eventType: 'downstream_execution_recorded',
+        at: execution.createdAt,
+        actorId: execution.requestedBy,
+        sleeveId: 'carry',
+        scope: 'downstream_execution',
+        status: execution.status,
+        summary: execution.outcomeSummary ?? execution.lastError ?? 'Carry execution was recorded.',
+        linkedCommandId: execution.commandId,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: node.action.id,
+        linkedExecutionId: execution.id,
+        details: {
+          blockedReasons: execution.blockedReasons,
+          venueExecutionReference: execution.venueExecutionReference,
+        },
+      });
+    }
+  }
+
+  for (const node of input.treasuryActions) {
+    entries.push({
+      id: `${input.detail.proposal.id}:treasury-action:${node.action.id}`,
+      eventType: 'downstream_action_recorded',
+      at: node.action.createdAt,
+      actorId: node.action.actorId,
+      sleeveId: 'treasury',
+      scope: 'downstream_action',
+      status: node.action.status,
+      summary: node.action.summary,
+      linkedCommandId: node.action.linkedCommandId,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: node.action.id,
+      linkedExecutionId: null,
+      details: {
+        actionType: node.action.actionType,
+        blockedReasons: node.action.blockedReasons,
+      },
+    });
+
+    for (const execution of node.executions) {
+      entries.push({
+        id: `${input.detail.proposal.id}:treasury-execution:${execution.id}`,
+        eventType: 'downstream_execution_recorded',
+        at: execution.createdAt,
+        actorId: execution.requestedBy,
+        sleeveId: 'treasury',
+        scope: 'downstream_execution',
+        status: execution.status,
+        summary: execution.outcomeSummary ?? execution.lastError ?? 'Treasury execution was recorded.',
+        linkedCommandId: execution.commandId,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: node.action.id,
+        linkedExecutionId: execution.id,
+        details: {
+          blockedReasons: execution.blockedReasons,
+          venueExecutionReference: execution.venueExecutionReference,
+        },
+      });
+    }
+  }
+
+  return entries.sort((left, right) => left.at.localeCompare(right.at));
+}
+
 function createTreasuryTimeline(
   action: TreasuryActionView,
   executions: TreasuryExecutionView[],
@@ -894,6 +1600,147 @@ function createTreasuryTimeline(
         },
       });
     }
+  }
+
+  return entries.sort((left, right) => left.at.localeCompare(right.at));
+}
+
+function createCarryTimeline(
+  action: CarryActionView | null,
+  execution: CarryExecutionView,
+  steps: CarryExecutionStepView[],
+): CarryExecutionTimelineEntry[] {
+  const entries: CarryExecutionTimelineEntry[] = [];
+
+  if (action !== null) {
+    entries.push({
+      id: `${action.id}:recommended`,
+      eventType: 'recommended',
+      at: action.createdAt,
+      actorId: action.actorId,
+      status: 'recommended',
+      summary: 'Carry action was recommended by the latest evaluation.',
+      linkedCommandId: null,
+      linkedExecutionId: null,
+      linkedStepId: null,
+      details: {
+        readiness: action.readiness,
+        approvalRequirement: action.approvalRequirement,
+      },
+    });
+
+    if (action.approvedAt !== null) {
+      entries.push({
+        id: `${action.id}:approved`,
+        eventType: 'approved',
+        at: action.approvedAt,
+        actorId: action.approvedBy,
+        status: 'approved',
+        summary: 'Carry action was approved for execution.',
+        linkedCommandId: null,
+        linkedExecutionId: null,
+        linkedStepId: null,
+        details: {
+          approvalRequirement: action.approvalRequirement,
+        },
+      });
+    }
+
+    if (action.executionRequestedAt !== null) {
+      entries.push({
+        id: `${action.id}:queued`,
+        eventType: 'queued',
+        at: action.executionRequestedAt,
+        actorId: action.executionRequestedBy,
+        status: 'queued',
+        summary: 'Carry action was queued on the runtime command rail.',
+        linkedCommandId: action.linkedCommandId,
+        linkedExecutionId: action.latestExecutionId,
+        linkedStepId: null,
+        details: {
+          linkedCommandId: action.linkedCommandId,
+        },
+      });
+    }
+  }
+
+  entries.push({
+    id: `${execution.carryActionId}:execution:${execution.id}`,
+    eventType: execution.startedAt === null ? 'failed' : 'executing',
+    at: execution.createdAt,
+    actorId: execution.requestedBy,
+    status: execution.status,
+    summary: execution.outcomeSummary
+      ?? execution.lastError
+      ?? 'Carry execution attempt was recorded.',
+    linkedCommandId: execution.commandId,
+    linkedExecutionId: execution.id,
+    linkedStepId: null,
+    details: {
+      blockedReasons: execution.blockedReasons,
+      venueExecutionReference: execution.venueExecutionReference,
+    },
+  });
+
+  if (execution.startedAt !== null) {
+    entries.push({
+      id: `${execution.carryActionId}:executing:${execution.id}`,
+      eventType: 'executing',
+      at: execution.startedAt,
+      actorId: execution.startedBy,
+      status: 'executing',
+      summary: 'Carry execution started.',
+      linkedCommandId: execution.commandId,
+      linkedExecutionId: execution.id,
+      linkedStepId: null,
+      details: {},
+    });
+  }
+
+  for (const step of steps) {
+    entries.push({
+      id: `${execution.carryActionId}:step:${step.id}`,
+      eventType: 'step_recorded',
+      at: step.createdAt,
+      actorId: execution.startedBy ?? execution.requestedBy,
+      status: null,
+      summary: step.outcomeSummary
+        ?? step.lastError
+        ?? `Execution step ${step.intentId} recorded with status ${step.status}.`,
+      linkedCommandId: execution.commandId,
+      linkedExecutionId: execution.id,
+      linkedStepId: step.id,
+      details: {
+        intentId: step.intentId,
+        venueId: step.venueId,
+        venueOrderId: step.venueOrderId,
+        executionReference: step.executionReference,
+        status: step.status,
+      },
+    });
+  }
+
+  if (execution.completedAt !== null) {
+    entries.push({
+      id: `${execution.carryActionId}:${execution.status}:${execution.id}`,
+      eventType: execution.status === 'completed' ? 'completed' : 'failed',
+      at: execution.completedAt,
+      actorId: execution.startedBy ?? execution.requestedBy,
+      status: execution.status,
+      summary: execution.outcomeSummary
+        ?? execution.lastError
+        ?? (execution.status === 'completed'
+          ? 'Carry execution completed.'
+          : 'Carry execution failed.'),
+      linkedCommandId: execution.commandId,
+      linkedExecutionId: execution.id,
+      linkedStepId: null,
+      details: {
+        blockedReasons: execution.blockedReasons,
+        venueExecutionReference: execution.venueExecutionReference,
+        outcome: execution.outcome,
+      },
+    });
   }
 
   return entries.sort((left, right) => left.at.localeCompare(right.at));
@@ -1196,6 +2043,161 @@ export class RuntimeStore {
       reason: row.reason ?? null,
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+
+  async listCarryRecommendations(limit = 50): Promise<CarryActionView[]> {
+    return this.listCarryActions(limit);
+  }
+
+  async listCarryActions(limit = 50): Promise<CarryActionView[]> {
+    const rows = await this.db
+      .select()
+      .from(carryActions)
+      .orderBy(desc(carryActions.createdAt))
+      .limit(limit);
+
+    return rows.map(mapCarryActionRow);
+  }
+
+  async getCarryAction(actionId: string): Promise<CarryActionDetailView | null> {
+    const [actionRow] = await this.db
+      .select()
+      .from(carryActions)
+      .where(eq(carryActions.id, actionId))
+      .limit(1);
+
+    if (actionRow === undefined) {
+      return null;
+    }
+
+    const [plannedOrderRows, executionRows, latestCommand, linkedRebalanceProposal] = await Promise.all([
+      this.db
+        .select()
+        .from(carryActionOrderIntents)
+        .where(eq(carryActionOrderIntents.carryActionId, actionRow.id))
+        .orderBy(desc(carryActionOrderIntents.createdAt)),
+      this.db
+        .select()
+        .from(carryActionExecutions)
+        .where(eq(carryActionExecutions.carryActionId, actionRow.id))
+        .orderBy(desc(carryActionExecutions.createdAt)),
+      actionRow.linkedCommandId === null
+        ? Promise.resolve<RuntimeCommandView | null>(null)
+        : this.getRuntimeCommand(actionRow.linkedCommandId),
+      actionRow.linkedRebalanceProposalId === null
+        ? Promise.resolve<RebalanceProposalView | null>(null)
+        : this.db
+          .select()
+          .from(allocatorRebalanceProposals)
+          .where(eq(allocatorRebalanceProposals.id, actionRow.linkedRebalanceProposalId))
+          .limit(1)
+          .then((rows) => rows[0] === undefined ? null : mapRebalanceProposalRow(rows[0])),
+    ]);
+
+    return {
+      action: mapCarryActionRow(actionRow),
+      plannedOrders: plannedOrderRows.map(mapCarryPlannedOrderRow),
+      latestCommand,
+      executions: executionRows.map(mapCarryExecutionRow),
+      linkedRebalanceProposal,
+    };
+  }
+
+  async listCarryExecutions(limit = 50): Promise<CarryExecutionView[]> {
+    const rows = await this.db
+      .select()
+      .from(carryActionExecutions)
+      .orderBy(desc(carryActionExecutions.createdAt))
+      .limit(limit);
+
+    return rows.map(mapCarryExecutionRow);
+  }
+
+  async listCarryExecutionsForAction(actionId: string): Promise<CarryExecutionView[]> {
+    const rows = await this.db
+      .select()
+      .from(carryActionExecutions)
+      .where(eq(carryActionExecutions.carryActionId, actionId))
+      .orderBy(desc(carryActionExecutions.createdAt));
+
+    return rows.map(mapCarryExecutionRow);
+  }
+
+  private async getCarryExecutionViewRecord(executionId: string): Promise<CarryExecutionView | null> {
+    const [row] = await this.db
+      .select()
+      .from(carryActionExecutions)
+      .where(eq(carryActionExecutions.id, executionId))
+      .limit(1);
+
+    return row === undefined ? null : mapCarryExecutionRow(row);
+  }
+
+  async getCarryExecution(executionId: string): Promise<CarryExecutionDetailView | null> {
+    const [executionRow] = await this.db
+      .select()
+      .from(carryActionExecutions)
+      .where(eq(carryActionExecutions.id, executionId))
+      .limit(1);
+
+    if (executionRow === undefined) {
+      return null;
+    }
+
+    const execution = mapCarryExecutionRow(executionRow);
+    const [actionDetail, command, stepRows] = await Promise.all([
+      this.getCarryAction(execution.carryActionId),
+      execution.commandId === null
+        ? Promise.resolve<RuntimeCommandView | null>(null)
+        : this.getRuntimeCommand(execution.commandId),
+      this.db
+        .select()
+        .from(carryExecutionSteps)
+        .where(eq(carryExecutionSteps.carryExecutionId, executionId))
+        .orderBy(desc(carryExecutionSteps.createdAt)),
+    ]);
+
+    const action = actionDetail?.action ?? null;
+    const linkedRebalanceProposal = actionDetail?.linkedRebalanceProposal ?? null;
+    const venueIds = new Set<string>();
+    for (const step of stepRows) {
+      venueIds.add(step.venueId);
+    }
+    for (const plannedOrder of actionDetail?.plannedOrders ?? []) {
+      venueIds.add(plannedOrder.venueId);
+    }
+
+    const venueSnapshots = action === null || action.strategyRunId === null || venueIds.size === 0
+      ? []
+      : (await this.db
+        .select()
+        .from(carryVenueSnapshots)
+        .where(eq(carryVenueSnapshots.strategyRunId, action.strategyRunId)))
+        .filter((row) => venueIds.has(row['venueId']))
+        .map(mapCarryVenueRow);
+    const steps = stepRows.map(mapCarryExecutionStepRow).sort(
+      (left, right) => left.createdAt.localeCompare(right.createdAt),
+    );
+
+    return {
+      execution,
+      action,
+      command,
+      linkedRebalanceProposal,
+      venueSnapshots,
+      steps,
+      timeline: createCarryTimeline(action, execution, steps),
+    };
+  }
+
+  async listCarryVenues(limit = 50): Promise<CarryVenueView[]> {
+    const rows = await this.db
+      .select()
+      .from(carryVenueSnapshots)
+      .orderBy(desc(carryVenueSnapshots.updatedAt))
+      .limit(limit);
+
+    return rows.map(mapCarryVenueRow);
   }
 
   async updateRuntimeStatus(
@@ -2758,6 +3760,61 @@ export class RuntimeStore {
     }));
   }
 
+  async getLatestStrategyRunId(): Promise<string | null> {
+    const [row] = await this.db
+      .select({ runId: strategyRuns.runId })
+      .from(strategyRuns)
+      .orderBy(desc(strategyRuns.createdAt))
+      .limit(1);
+
+    return row?.runId ?? null;
+  }
+
+  async listApprovedOpportunitiesForRun(runId: string): Promise<OpportunityView[]> {
+    const rows = await this.db
+      .select()
+      .from(strategyOpportunities)
+      .where(and(eq(strategyOpportunities.runId, runId), eq(strategyOpportunities.approved, true)))
+      .orderBy(desc(strategyOpportunities.detectedAt));
+
+    return rows.map((row) => ({
+      opportunityId: row.opportunityId,
+      runId: row.runId,
+      sleeveId: row.sleeveId,
+      asset: row.asset,
+      opportunityType: row.opportunityType,
+      expectedAnnualYieldPct: row.expectedAnnualYieldPct,
+      netYieldPct: row.netYieldPct,
+      confidenceScore: row.confidenceScore,
+      detectedAt: row.detectedAt.toISOString(),
+      expiresAt: row.expiresAt.toISOString(),
+      approved: row.approved,
+      payload: row.payload as Record<string, unknown>,
+    }));
+  }
+
+  async listApprovedStrategyIntentsForRun(runId: string): Promise<OrderIntent[]> {
+    const rows = await this.db
+      .select()
+      .from(strategyIntents)
+      .where(and(eq(strategyIntents.runId, runId), eq(strategyIntents.approved, true)))
+      .orderBy(desc(strategyIntents.createdAt));
+
+    return rows.map((row) => ({
+      intentId: row.intentId,
+      venueId: row.venueId,
+      asset: row.asset,
+      side: row.side as OrderIntent['side'],
+      type: row.orderType as OrderIntent['type'],
+      size: row.requestedSize,
+      limitPrice: row.requestedPrice ?? null,
+      opportunityId: row.opportunityId as OrderIntent['opportunityId'],
+      reduceOnly: row.reduceOnly,
+      createdAt: row.createdAt,
+      metadata: asJsonObject(row.metadata),
+    }));
+  }
+
   async listRecentEvents(limit: number): Promise<AuditEventView[]> {
     const rows = await this.db
       .select()
@@ -3383,6 +4440,26 @@ export class RuntimeStore {
       );
     }
 
+    await this.db.insert(allocatorRebalanceBundles).values({
+      proposalId: row.id,
+      status: input.proposal.status,
+      completionState: 'open',
+      outcomeClassification: 'pending',
+      interventionRecommendation: input.proposal.status === 'proposed'
+        ? 'operator_review_required'
+        : 'wait_for_inflight_children',
+      totalChildCount: 0,
+      blockedChildCount: input.proposal.blockedReasons.length > 0 || !input.proposal.executable ? 1 : 0,
+      failedChildCount: 0,
+      completedChildCount: 0,
+      pendingChildCount: 0,
+      childRollup: {},
+      finalizationReason: null,
+      finalizedAt: null,
+      createdAt: input.createdAt,
+      updatedAt: input.createdAt,
+    });
+
     return mapRebalanceProposalRow(row);
   }
 
@@ -3406,6 +4483,21 @@ export class RuntimeStore {
       .orderBy(desc(allocatorRebalanceProposals.createdAt));
 
     return rows.map(mapRebalanceProposalRow);
+  }
+
+  async listRebalanceBundles(limit = 50): Promise<RebalanceBundleView[]> {
+    const rows = await this.db
+      .select()
+      .from(allocatorRebalanceBundles)
+      .orderBy(desc(allocatorRebalanceBundles.createdAt))
+      .limit(limit);
+
+    return (
+      await Promise.all(rows.map(async (row): Promise<RebalanceBundleView | null> => {
+        const detail = await this.getRebalanceProposal(row['proposalId']);
+        return detail === null ? null : mapRebalanceBundleRow(row, detail.proposal);
+      }))
+    ).filter((bundle): bundle is RebalanceBundleView => bundle !== null);
   }
 
   async getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null> {
@@ -3445,6 +4537,217 @@ export class RuntimeStore {
     };
   }
 
+  async syncRebalanceBundleForProposal(
+    proposalId: string,
+  ): Promise<RebalanceBundleDetailView | null> {
+    const graph = await this.getRebalanceExecutionGraph(proposalId);
+    if (graph === null) {
+      return null;
+    }
+
+    const [existingRow] = await this.db
+      .select()
+      .from(allocatorRebalanceBundles)
+      .where(eq(allocatorRebalanceBundles.proposalId, proposalId))
+      .limit(1);
+
+    const snapshot = deriveRebalanceBundleSnapshot(graph);
+    const updatedAt = new Date();
+    let bundleRow = existingRow;
+
+    if (bundleRow === undefined) {
+      const [insertedRow] = await this.db
+        .insert(allocatorRebalanceBundles)
+        .values({
+          proposalId,
+          status: snapshot.status,
+          completionState: snapshot.completionState,
+          outcomeClassification: snapshot.outcomeClassification,
+          interventionRecommendation: snapshot.interventionRecommendation,
+          totalChildCount: snapshot.totalChildCount,
+          blockedChildCount: snapshot.blockedChildCount,
+          failedChildCount: snapshot.failedChildCount,
+          completedChildCount: snapshot.completedChildCount,
+          pendingChildCount: snapshot.pendingChildCount,
+          childRollup: snapshot.childRollup,
+          finalizationReason: snapshot.finalizationReason,
+          finalizedAt: snapshot.finalizedAt === null ? null : new Date(snapshot.finalizedAt),
+          createdAt: updatedAt,
+          updatedAt,
+        })
+        .returning();
+      bundleRow = insertedRow;
+    } else {
+      const [updatedRow] = await this.db
+        .update(allocatorRebalanceBundles)
+        .set({
+          status: snapshot.status,
+          completionState: snapshot.completionState,
+          outcomeClassification: snapshot.outcomeClassification,
+          interventionRecommendation: snapshot.interventionRecommendation,
+          totalChildCount: snapshot.totalChildCount,
+          blockedChildCount: snapshot.blockedChildCount,
+          failedChildCount: snapshot.failedChildCount,
+          completedChildCount: snapshot.completedChildCount,
+          pendingChildCount: snapshot.pendingChildCount,
+          childRollup: snapshot.childRollup,
+          finalizationReason: snapshot.finalizationReason,
+          finalizedAt: snapshot.finalizedAt === null ? null : new Date(snapshot.finalizedAt),
+          updatedAt,
+        })
+        .where(eq(allocatorRebalanceBundles.id, bundleRow['id']))
+        .returning();
+      bundleRow = updatedRow;
+    }
+
+    if (bundleRow === undefined) {
+      throw new Error('RuntimeStore.syncRebalanceBundleForProposal: bundle was not persisted');
+    }
+
+    return {
+      bundle: mapRebalanceBundleRow(bundleRow, graph.detail.proposal),
+      graph,
+    };
+  }
+
+  async getRebalanceBundle(bundleId: string): Promise<RebalanceBundleDetailView | null> {
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundles)
+      .where(eq(allocatorRebalanceBundles.id, bundleId))
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return this.syncRebalanceBundleForProposal(row['proposalId']);
+  }
+
+  async getRebalanceBundleForProposal(proposalId: string): Promise<RebalanceBundleDetailView | null> {
+    return this.syncRebalanceBundleForProposal(proposalId);
+  }
+
+  async getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null> {
+    const detail = await this.getRebalanceProposal(proposalId);
+    if (detail === null) {
+      return null;
+    }
+
+    const [allocatorDecision, carryActionRows] = await Promise.all([
+      this.getAllocatorDecision(detail.proposal.allocatorRunId),
+      this.db
+        .select()
+        .from(carryActions)
+        .where(eq(carryActions.linkedRebalanceProposalId, proposalId))
+        .orderBy(desc(carryActions.createdAt)),
+    ]);
+
+    const carryNodes: RebalanceCarryActionNodeView[] = (
+      await Promise.all(carryActionRows.map(async (row): Promise<RebalanceCarryActionNodeView> => {
+        const action = mapCarryActionRow(row);
+        const executions = await this.listCarryExecutionsForAction(action.id);
+        return { action, executions };
+      }))
+    ).sort((left, right) => left.action.createdAt.localeCompare(right.action.createdAt));
+
+    const commandIds = Array.from(new Set([
+      ...(detail.proposal.linkedCommandId === null ? [] : [detail.proposal.linkedCommandId]),
+      ...detail.executions.flatMap((execution) => execution.commandId === null ? [] : [execution.commandId]),
+    ]));
+    const commands = (
+      await Promise.all(commandIds.map(async (commandId) => this.getRuntimeCommand(commandId)))
+    ).filter((command): command is RuntimeCommandView => command !== null);
+
+    const carryRollup = summariseRebalanceDownstreamRollup({
+      actionCount: carryNodes.length,
+      executionCount: carryNodes.reduce((sum, node) => sum + node.executions.length, 0),
+      blockedCount: carryNodes.filter((node) => node.action.blockedReasons.length > 0 || !node.action.executable).length,
+      failureCount: carryNodes.reduce(
+        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'failed').length,
+        0,
+      ),
+      completedCount: carryNodes.reduce(
+        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'completed').length,
+        0,
+      ),
+      simulated: carryNodes.some((node) => node.action.simulated || node.executions.some((execution) => execution.simulated)),
+      live: carryNodes.some((node) => !node.action.simulated || node.executions.some((execution) => execution.executionMode === 'live' && !execution.simulated)),
+      references: carryNodes.flatMap((node) => node.executions.flatMap((execution) => execution.venueExecutionReference === null ? [] : [execution.venueExecutionReference])),
+    });
+
+    const treasuryActionRows = await this.db
+      .select()
+      .from(treasuryActions)
+      .where(eq(treasuryActions.linkedRebalanceProposalId, proposalId))
+      .orderBy(desc(treasuryActions.createdAt));
+
+    const treasuryNodes: RebalanceTreasuryActionNodeView[] = (
+      await Promise.all(treasuryActionRows.map(async (row): Promise<RebalanceTreasuryActionNodeView> => {
+        const action = mapTreasuryActionRow(row);
+        const executions = await this.listTreasuryExecutionsForAction(action.id);
+        return { action, executions };
+      }))
+    ).sort((left, right) => left.action.createdAt.localeCompare(right.action.createdAt));
+    const treasuryRollup = summariseRebalanceDownstreamRollup({
+      actionCount: treasuryNodes.length,
+      executionCount: treasuryNodes.reduce((sum, node) => sum + node.executions.length, 0),
+      blockedCount: treasuryNodes.filter((node) => node.action.blockedReasons.length > 0 || !node.action.executable).length,
+      failureCount: treasuryNodes.reduce(
+        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'failed').length,
+        0,
+      ),
+      completedCount: treasuryNodes.reduce(
+        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'completed').length,
+        0,
+      ),
+      simulated: treasuryNodes.some((node) => node.action.simulated || node.executions.some((execution) => execution.simulated)),
+      live: treasuryNodes.some((node) => !node.action.simulated || node.executions.some((execution) => execution.executionMode === 'live' && !execution.simulated)),
+      references: treasuryNodes.flatMap((node) => node.executions.flatMap((execution) => execution.venueExecutionReference === null ? [] : [execution.venueExecutionReference])),
+    });
+
+    const timeline = createRebalanceTimeline({
+      detail,
+      commands,
+      carryActions: carryNodes,
+      treasuryActions: treasuryNodes,
+    });
+
+    return {
+      detail,
+      allocatorDecision,
+      commands,
+      downstream: {
+        carry: {
+          actions: carryNodes,
+          rollup: carryRollup,
+        },
+        treasury: {
+          actions: treasuryNodes,
+          rollup: {
+            ...treasuryRollup,
+            summary: treasuryNodes.length > 0
+              ? treasuryRollup.summary
+              : detail.currentState?.latestProposalId === detail.proposal.id
+              ? 'Treasury participation is represented by the applied approved budget state; no downstream treasury action records are persisted for this proposal.'
+              : 'No downstream treasury actions are persisted for this proposal.',
+          },
+          note: treasuryNodes.length > 0
+            ? null
+            : detail.currentState?.latestProposalId === detail.proposal.id
+              ? 'Treasury sleeve impact is currently represented by approved rebalance budget-state application, not by proposal-linked treasury action records.'
+              : 'No proposal-linked treasury action records were persisted.',
+        },
+      },
+      timeline,
+    };
+  }
+
+  async getRebalanceTimeline(proposalId: string): Promise<RebalanceExecutionTimelineEntry[]> {
+    const graph = await this.getRebalanceExecutionGraph(proposalId);
+    return graph?.timeline ?? [];
+  }
+
   async getRebalanceCurrent(): Promise<RebalanceCurrentView | null> {
     const [row] = await this.db
       .select()
@@ -3471,6 +4774,7 @@ export class RuntimeStore {
       .where(eq(allocatorRebalanceProposals.id, proposalId));
 
     const detail = await this.getRebalanceProposal(proposalId);
+    await this.syncRebalanceBundleForProposal(proposalId);
     return detail?.proposal ?? null;
   }
 
@@ -3491,6 +4795,7 @@ export class RuntimeStore {
       .where(eq(allocatorRebalanceProposals.id, proposalId));
 
     const detail = await this.getRebalanceProposal(proposalId);
+    await this.syncRebalanceBundleForProposal(proposalId);
     return detail?.proposal ?? null;
   }
 
@@ -3509,6 +4814,7 @@ export class RuntimeStore {
       .where(eq(allocatorRebalanceProposals.id, input.proposalId));
 
     const detail = await this.getRebalanceProposal(input.proposalId);
+    await this.syncRebalanceBundleForProposal(input.proposalId);
     return detail?.proposal ?? null;
   }
 
@@ -3522,6 +4828,7 @@ export class RuntimeStore {
       .where(eq(allocatorRebalanceProposals.id, proposalId));
 
     const detail = await this.getRebalanceProposal(proposalId);
+    await this.syncRebalanceBundleForProposal(proposalId);
     return detail?.proposal ?? null;
   }
 
@@ -3540,6 +4847,7 @@ export class RuntimeStore {
       .where(eq(allocatorRebalanceProposals.id, input.proposalId));
 
     const detail = await this.getRebalanceProposal(input.proposalId);
+    await this.syncRebalanceBundleForProposal(input.proposalId);
     return detail?.proposal ?? null;
   }
 
@@ -3559,6 +4867,7 @@ export class RuntimeStore {
       .where(eq(allocatorRebalanceProposals.id, input.proposalId));
 
     const detail = await this.getRebalanceProposal(input.proposalId);
+    await this.syncRebalanceBundleForProposal(input.proposalId);
     return detail?.proposal ?? null;
   }
 
@@ -3670,6 +4979,387 @@ export class RuntimeStore {
       });
   }
 
+  async persistCarryVenueSnapshots(input: {
+    strategyRunId: string;
+    venues: CarryVenueView[];
+  }): Promise<void> {
+    if (input.venues.length === 0) {
+      return;
+    }
+
+    await this.db.insert(carryVenueSnapshots).values(
+      input.venues.map((venue) => ({
+        strategyRunId: input.strategyRunId,
+        venueId: venue.venueId,
+        venueMode: venue.venueMode,
+        executionSupported: venue.executionSupported,
+        supportsIncreaseExposure: venue.supportsIncreaseExposure,
+        supportsReduceExposure: venue.supportsReduceExposure,
+        readOnly: venue.readOnly,
+        approvedForLiveUse: venue.approvedForLiveUse,
+        healthy: venue.healthy,
+        onboardingState: venue.onboardingState,
+        missingPrerequisites: venue.missingPrerequisites,
+        metadata: venue.metadata,
+        updatedAt: new Date(venue.updatedAt),
+        createdAt: new Date(venue.createdAt),
+      })),
+    );
+  }
+
+  async createCarryActions(input: {
+    strategyRunId: string | null;
+    linkedRebalanceProposalId?: string | null;
+    intents: CarryExecutionIntent[];
+    actorId: string | null;
+    createdAt: Date;
+  }): Promise<CarryActionView[]> {
+    const created: CarryActionView[] = [];
+
+    for (const intent of input.intents) {
+      const [row] = await this.db
+        .insert(carryActions)
+        .values({
+          strategyRunId: input.strategyRunId,
+          linkedRebalanceProposalId: input.linkedRebalanceProposalId ?? null,
+          actionType: intent.actionType,
+          status: 'recommended',
+          sourceKind: intent.sourceKind,
+          sourceReference: intent.sourceReference,
+          opportunityId: intent.opportunityId,
+          asset: intent.asset,
+          summary: intent.summary,
+          notionalUsd: intent.notionalUsd,
+          details: intent.details,
+          readiness: intent.readiness,
+          executable: intent.executable,
+          blockedReasons: intent.blockedReasons as unknown as Record<string, unknown>[],
+          approvalRequirement: intent.approvalRequirement,
+          executionMode: intent.executionMode,
+          simulated: intent.simulated,
+          executionPlan: {
+            effects: intent.effects,
+            plannedOrderCount: intent.plannedOrders.length,
+          },
+          actorId: input.actorId,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        })
+        .returning();
+
+      if (row === undefined) {
+        throw new Error('RuntimeStore.createCarryActions: action was not persisted');
+      }
+
+      if (intent.plannedOrders.length > 0) {
+        await this.db.insert(carryActionOrderIntents).values(
+          intent.plannedOrders.map((order) => ({
+            carryActionId: row.id,
+            intentId: order.intentId,
+            venueId: order.venueId,
+            asset: order.asset,
+            side: order.side,
+            orderType: order.type,
+            requestedSize: order.size,
+            requestedPrice: order.limitPrice,
+            reduceOnly: order.reduceOnly,
+            metadata: order.metadata,
+            createdAt: order.createdAt,
+          })),
+        );
+      }
+
+      created.push(mapCarryActionRow(row));
+    }
+
+    return created;
+  }
+
+  async approveCarryAction(actionId: string, actorId: string): Promise<CarryActionView | null> {
+    await this.db
+      .update(carryActions)
+      .set({
+        status: 'approved',
+        approvedBy: actorId,
+        approvedAt: new Date(),
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(carryActions.id, actionId));
+
+    const detail = await this.getCarryAction(actionId);
+    return detail?.action ?? null;
+  }
+
+  async queueCarryActionExecution(input: {
+    actionId: string;
+    commandId: string;
+    actorId: string;
+  }): Promise<CarryActionView | null> {
+    await this.db
+      .update(carryActions)
+      .set({
+        status: 'queued',
+        linkedCommandId: input.commandId,
+        executionRequestedBy: input.actorId,
+        executionRequestedAt: new Date(),
+        queuedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(carryActions.id, input.actionId));
+
+    const detail = await this.getCarryAction(input.actionId);
+    return detail?.action ?? null;
+  }
+
+  async markCarryActionExecuting(actionId: string): Promise<CarryActionView | null> {
+    await this.db
+      .update(carryActions)
+      .set({
+        status: 'executing',
+        executingAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(carryActions.id, actionId));
+
+    const detail = await this.getCarryAction(actionId);
+    return detail?.action ?? null;
+  }
+
+  async completeCarryAction(input: {
+    actionId: string;
+    latestExecutionId: string;
+  }): Promise<CarryActionView | null> {
+    await this.db
+      .update(carryActions)
+      .set({
+        status: 'completed',
+        latestExecutionId: input.latestExecutionId,
+        lastError: null,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(carryActions.id, input.actionId));
+
+    const detail = await this.getCarryAction(input.actionId);
+    return detail?.action ?? null;
+  }
+
+  async failCarryAction(input: {
+    actionId: string;
+    latestExecutionId?: string | null;
+    errorMessage: string;
+  }): Promise<CarryActionView | null> {
+    await this.db
+      .update(carryActions)
+      .set({
+        status: 'failed',
+        latestExecutionId: input.latestExecutionId ?? null,
+        lastError: input.errorMessage,
+        failedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(carryActions.id, input.actionId));
+
+    const detail = await this.getCarryAction(input.actionId);
+    return detail?.action ?? null;
+  }
+
+  async createCarryExecution(input: {
+    carryActionId: string;
+    strategyRunId: string | null;
+    commandId: string | null;
+    status: CarryExecutionView['status'];
+    executionMode: CarryExecutionView['executionMode'];
+    simulated: boolean;
+    requestedBy: string;
+    startedBy?: string | null;
+    blockedReasons?: CarryOperationalBlockedReason[];
+    outcomeSummary?: string | null;
+    outcome?: Record<string, unknown>;
+    venueExecutionReference?: string | null;
+    lastError?: string | null;
+  }): Promise<CarryExecutionView> {
+    const [row] = await this.db
+      .insert(carryActionExecutions)
+      .values({
+        carryActionId: input.carryActionId,
+        strategyRunId: input.strategyRunId,
+        commandId: input.commandId,
+        status: input.status,
+        executionMode: input.executionMode,
+        simulated: input.simulated,
+        requestedBy: input.requestedBy,
+        startedBy: input.startedBy ?? null,
+        blockedReasons: (input.blockedReasons ?? []) as unknown as Record<string, unknown>[],
+        outcomeSummary: input.outcomeSummary ?? null,
+        outcome: input.outcome ?? {},
+        venueExecutionReference: input.venueExecutionReference ?? null,
+        lastError: input.lastError ?? null,
+        startedAt: input.status === 'executing' ? new Date() : null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createCarryExecution: execution was not persisted');
+    }
+
+    return mapCarryExecutionRow(row);
+  }
+
+  async updateCarryExecution(
+    executionId: string,
+    patch: Partial<{
+      status: CarryExecutionView['status'];
+      blockedReasons: CarryOperationalBlockedReason[];
+      outcomeSummary: string | null;
+      outcome: Record<string, unknown>;
+      venueExecutionReference: string | null;
+      lastError: string | null;
+      startedAt: Date | null;
+      completedAt: Date | null;
+    }>,
+  ): Promise<CarryExecutionView | null> {
+    await this.db
+      .update(carryActionExecutions)
+      .set({
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.blockedReasons !== undefined ? { blockedReasons: patch.blockedReasons as unknown as Record<string, unknown>[] } : {}),
+        ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
+        ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
+        ...(patch.venueExecutionReference !== undefined ? { venueExecutionReference: patch.venueExecutionReference } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+        ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
+        ...(patch.completedAt !== undefined ? { completedAt: patch.completedAt } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(carryActionExecutions.id, executionId));
+
+    return this.getCarryExecutionViewRecord(executionId);
+  }
+
+  async createCarryExecutionStep(input: {
+    carryExecutionId: string;
+    carryActionId: string;
+    strategyRunId: string | null;
+    plannedOrderId: string | null;
+    intentId: string;
+    venueId: string;
+    venueMode: CarryExecutionStepView['venueMode'];
+    executionSupported: boolean;
+    readOnly: boolean;
+    approvedForLiveUse: boolean;
+    onboardingState: CarryExecutionStepView['onboardingState'];
+    asset: string;
+    side: CarryExecutionStepView['side'];
+    orderType: CarryExecutionStepView['orderType'];
+    requestedSize: string;
+    requestedPrice?: string | null;
+    reduceOnly: boolean;
+    clientOrderId?: string | null;
+    venueOrderId?: string | null;
+    executionReference?: string | null;
+    status: string;
+    simulated: boolean;
+    filledSize?: string | null;
+    averageFillPrice?: string | null;
+    outcomeSummary?: string | null;
+    outcome?: Record<string, unknown>;
+    lastError?: string | null;
+    metadata?: Record<string, unknown>;
+    completedAt?: Date | null;
+  }): Promise<CarryExecutionStepView> {
+    const [row] = await this.db
+      .insert(carryExecutionSteps)
+      .values({
+        carryExecutionId: input.carryExecutionId,
+        carryActionId: input.carryActionId,
+        strategyRunId: input.strategyRunId,
+        plannedOrderId: input.plannedOrderId,
+        intentId: input.intentId,
+        venueId: input.venueId,
+        venueMode: input.venueMode,
+        executionSupported: input.executionSupported,
+        readOnly: input.readOnly,
+        approvedForLiveUse: input.approvedForLiveUse,
+        onboardingState: input.onboardingState,
+        asset: input.asset,
+        side: input.side,
+        orderType: input.orderType,
+        requestedSize: input.requestedSize,
+        requestedPrice: input.requestedPrice ?? null,
+        reduceOnly: input.reduceOnly,
+        clientOrderId: input.clientOrderId ?? null,
+        venueOrderId: input.venueOrderId ?? null,
+        executionReference: input.executionReference ?? null,
+        status: input.status,
+        simulated: input.simulated,
+        filledSize: input.filledSize ?? null,
+        averageFillPrice: input.averageFillPrice ?? null,
+        outcomeSummary: input.outcomeSummary ?? null,
+        outcome: input.outcome ?? {},
+        lastError: input.lastError ?? null,
+        metadata: input.metadata ?? {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        completedAt: input.completedAt ?? null,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createCarryExecutionStep: execution step was not persisted');
+    }
+
+    return mapCarryExecutionStepRow(row);
+  }
+
+  async updateCarryExecutionStep(
+    stepId: string,
+    patch: Partial<{
+      clientOrderId: string | null;
+      venueOrderId: string | null;
+      executionReference: string | null;
+      status: string;
+      simulated: boolean;
+      filledSize: string | null;
+      averageFillPrice: string | null;
+      outcomeSummary: string | null;
+      outcome: Record<string, unknown>;
+      lastError: string | null;
+      metadata: Record<string, unknown>;
+      completedAt: Date | null;
+    }>,
+  ): Promise<CarryExecutionStepView | null> {
+    await this.db
+      .update(carryExecutionSteps)
+      .set({
+        ...(patch.clientOrderId !== undefined ? { clientOrderId: patch.clientOrderId } : {}),
+        ...(patch.venueOrderId !== undefined ? { venueOrderId: patch.venueOrderId } : {}),
+        ...(patch.executionReference !== undefined ? { executionReference: patch.executionReference } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.simulated !== undefined ? { simulated: patch.simulated } : {}),
+        ...(patch.filledSize !== undefined ? { filledSize: patch.filledSize } : {}),
+        ...(patch.averageFillPrice !== undefined ? { averageFillPrice: patch.averageFillPrice } : {}),
+        ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
+        ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+        ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
+        ...(patch.completedAt !== undefined ? { completedAt: patch.completedAt } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(carryExecutionSteps.id, stepId));
+
+    const [row] = await this.db
+      .select()
+      .from(carryExecutionSteps)
+      .where(eq(carryExecutionSteps.id, stepId))
+      .limit(1);
+
+    return row === undefined ? null : mapCarryExecutionStepRow(row);
+  }
+
   async persistTreasuryEvaluation(input: {
     treasuryRunId: string;
     sourceRunId: string | null;
@@ -3747,6 +5437,7 @@ export class RuntimeStore {
       await this.db.insert(treasuryActions).values(
         input.executionIntents.map((intent) => ({
           treasuryRunId: input.treasuryRunId,
+          linkedRebalanceProposalId: null,
           actionType: intent.actionType,
           status: 'recommended',
           venueId: intent.venueId,
@@ -3887,7 +5578,7 @@ export class RuntimeStore {
       return null;
     }
 
-    const [latestCommand, executionRows, venue, summary, policy] = await Promise.all([
+    const [latestCommand, executionRows, venue, summary, policy, linkedRebalanceProposal] = await Promise.all([
       row.linkedCommandId === null
         ? Promise.resolve<RuntimeCommandView | null>(null)
         : this.getRuntimeCommand(row.linkedCommandId),
@@ -3899,6 +5590,14 @@ export class RuntimeStore {
       row.venueId === null ? Promise.resolve<TreasuryVenueView | null>(null) : this.getTreasuryVenueView(row.venueId),
       this.getTreasurySummary(),
       this.getTreasuryPolicy(),
+      row.linkedRebalanceProposalId === null
+        ? Promise.resolve<RebalanceProposalView | null>(null)
+        : this.db
+          .select()
+          .from(allocatorRebalanceProposals)
+          .where(eq(allocatorRebalanceProposals.id, row.linkedRebalanceProposalId))
+          .limit(1)
+          .then((proposalRows) => proposalRows[0] === undefined ? null : mapRebalanceProposalRow(proposalRows[0])),
     ]);
     const action = mapTreasuryActionRow(row);
     const executions = executionRows.map(mapTreasuryExecutionRow);
@@ -3908,6 +5607,7 @@ export class RuntimeStore {
       latestCommand,
       executions,
       timeline: createTreasuryTimeline(action, executions),
+      linkedRebalanceProposal,
       venue,
       summary,
       policy,
@@ -3920,6 +5620,16 @@ export class RuntimeStore {
       .from(treasuryActionExecutions)
       .orderBy(desc(treasuryActionExecutions.createdAt))
       .limit(limit);
+
+    return rows.map(mapTreasuryExecutionRow);
+  }
+
+  async listTreasuryExecutionsForAction(actionId: string): Promise<TreasuryExecutionView[]> {
+    const rows = await this.db
+      .select()
+      .from(treasuryActionExecutions)
+      .where(eq(treasuryActionExecutions.treasuryActionId, actionId))
+      .orderBy(desc(treasuryActionExecutions.createdAt));
 
     return rows.map(mapTreasuryExecutionRow);
   }
@@ -3953,10 +5663,17 @@ export class RuntimeStore {
       execution,
       action,
       command: row.commandId === null ? null : await this.getRuntimeCommand(row.commandId),
+      linkedRebalanceProposal: actionDetail?.linkedRebalanceProposal ?? null,
+      executionKind: action?.actionType === 'rebalance_treasury_budget'
+        ? 'budget_state_application'
+        : 'venue_execution',
       venue: action?.venueId === null || action?.venueId === undefined
         ? null
         : await this.getTreasuryVenueView(action.venueId),
-      timeline: actionDetail?.timeline ?? [],
+      timeline: actionDetail?.timeline.filter((entry) => (
+        entry.linkedExecutionId === null
+        || entry.linkedExecutionId === execution.id
+      )) ?? [],
     };
   }
 
@@ -4131,6 +5848,60 @@ export class RuntimeStore {
 
     const detail = await this.getTreasuryAction(input.actionId);
     return detail?.action ?? null;
+  }
+
+  async createTreasuryAction(input: {
+    treasuryRunId: string;
+    linkedRebalanceProposalId?: string | null;
+    actionType: TreasuryActionView['actionType'];
+    venueId: string | null;
+    venueName: string | null;
+    venueMode: TreasuryActionView['venueMode'];
+    amountUsd: string;
+    reasonCode: string;
+    summary: string;
+    details: Record<string, unknown>;
+    readiness: TreasuryActionView['readiness'];
+    executable: boolean;
+    blockedReasons: TreasuryActionBlockedReason[];
+    approvalRequirement: TreasuryActionView['approvalRequirement'];
+    executionMode: TreasuryActionView['executionMode'];
+    simulated: boolean;
+    actorId: string | null;
+    createdAt: Date;
+  }): Promise<TreasuryActionView> {
+    const [row] = await this.db
+      .insert(treasuryActions)
+      .values({
+        treasuryRunId: input.treasuryRunId,
+        linkedRebalanceProposalId: input.linkedRebalanceProposalId ?? null,
+        actionType: input.actionType,
+        status: 'recommended',
+        venueId: input.venueId,
+        venueName: input.venueName,
+        venueMode: input.venueMode,
+        amountUsd: input.amountUsd,
+        reasonCode: input.reasonCode,
+        summary: input.summary,
+        details: input.details,
+        readiness: input.readiness,
+        executable: input.executable,
+        blockedReasons: input.blockedReasons,
+        approvalRequirement: input.approvalRequirement,
+        executionMode: input.executionMode,
+        simulated: input.simulated,
+        executionPlan: {},
+        actorId: input.actorId,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('Failed to persist treasury action row.');
+    }
+
+    return mapTreasuryActionRow(row);
   }
 
   async createTreasuryExecution(input: {

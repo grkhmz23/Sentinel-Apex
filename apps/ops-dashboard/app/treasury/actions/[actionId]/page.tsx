@@ -50,6 +50,10 @@ export default async function TreasuryActionDetailPage(
 
         <div className="inline-links">
           <Link href="/treasury">Back to treasury</Link>
+          <Link href="/treasury/executions">Execution history</Link>
+          {detail.linkedRebalanceProposal !== null ? (
+            <Link href={`/allocator/rebalance-proposals/${detail.linkedRebalanceProposal.id}`}>Parent rebalance proposal</Link>
+          ) : null}
           {action.venueId !== null ? <Link href={`/treasury/venues/${action.venueId}`}>Venue detail</Link> : null}
           {action.latestExecutionId !== null ? <Link href={`/treasury/executions/${action.latestExecutionId}`}>Latest execution</Link> : null}
         </div>
@@ -60,6 +64,7 @@ export default async function TreasuryActionDetailPage(
               items={[
                 { label: 'Action type', value: action.actionType },
                 { label: 'Reason code', value: action.reasonCode },
+                { label: 'Parent rebalance', value: detail.linkedRebalanceProposal === null ? 'None' : <Link href={`/allocator/rebalance-proposals/${detail.linkedRebalanceProposal.id}`}>{detail.linkedRebalanceProposal.id}</Link> },
                 { label: 'Amount', value: formatUsd(action.amountUsd) },
                 { label: 'Venue', value: action.venueName ?? action.venueId ?? 'Reserve' },
                 { label: 'Venue mode', value: <StatusBadge label={action.venueMode} tone={treasuryModeTone(action.venueMode)} /> },

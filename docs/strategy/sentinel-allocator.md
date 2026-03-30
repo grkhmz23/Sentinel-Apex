@@ -2,6 +2,37 @@
 
 Date: 2026-03-30
 
+## Phase 4.4 Addendum: Operator Execution Graph
+
+Sentinel still does not route capital autonomously.
+
+Phase 4.4 changes operator visibility, not allocator autonomy:
+
+- rebalance proposal detail now has a backend-native execution graph
+- operators can inspect proposal -> command -> downstream carry action/execution linkage directly
+- treasury participation remains explicit when it is only represented as approved budget-state application rather than proposal-linked treasury actions
+
+## Phase 4.5 Addendum: Treasury Graph Symmetry
+
+Phase 4.5 improves downstream treasury visibility, not allocator autonomy.
+
+- rebalance proposals can now link to proposal-scoped treasury actions and treasury executions when runtime persists them
+- treasury budget-state-only applications remain explicit rather than being disguised as venue-native treasury execution
+- proposal drill-through is now more symmetric across carry and treasury, while preserving the real execution boundary of each sleeve
+
+This keeps allocator semantics institutional and honest: proposal approval still drives explicit execution, and drill-through now reflects that workflow end to end.
+
+## Phase 4.6 Addendum: Rebalance Bundle Coordination
+
+Phase 4.6 adds coordinated execution semantics, not allocator autonomy.
+
+- one rebalance proposal now maps to one coordinated rebalance bundle
+- bundle status is derived from persisted proposal, carry, and treasury child truth
+- operators can now see whether a rebalance is complete, partially applied, blocked, failed, or awaiting intervention
+- bundle recommendations tell the operator whether to wait, inspect failures, or review an unresolved partial application
+
+Sentinel still does not auto-retry, auto-heal, or autonomously route capital.
+
 ## Product Role
 
 Sentinel is the portfolio allocator for Sentinel Apex.

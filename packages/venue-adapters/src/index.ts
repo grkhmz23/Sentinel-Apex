@@ -3,6 +3,10 @@
 // =============================================================================
 
 export type {
+  CarryVenueCapabilities,
+  CarryVenueMode,
+} from './interfaces/carry-venue-adapter.js';
+export type {
   MarketData,
   AccountBalance,
   VenuePosition,

@@ -6,6 +6,7 @@ export { auditEvents } from './audit.js';
 
 export {
   allocatorCurrent,
+  allocatorRebalanceBundles,
   allocatorRebalanceCurrent,
   allocatorRebalanceExecutions,
   allocatorRebalanceProposalIntents,
@@ -22,6 +23,11 @@ export { positions } from './positions.js';
 export { portfolioCurrent, portfolioSnapshots, riskBreaches } from './portfolio.js';
 
 export {
+  carryActionExecutions,
+  carryActionOrderIntents,
+  carryExecutionSteps,
+  carryActions,
+  carryVenueSnapshots,
   opsOperators,
   opsOperatorSessions,
   executionEvents,

@@ -3,6 +3,15 @@ import type {
   AllocatorRunView,
   AllocatorSleeveTargetView,
   AllocatorSummaryView,
+  CarryActionDetailView,
+  CarryActionView,
+  CarryExecutionDetailView,
+  CarryExecutionStepView,
+  CarryExecutionView,
+  CarryVenueView,
+  RebalanceBundleDetailView,
+  RebalanceBundleView,
+  RebalanceExecutionGraphView,
   RebalanceProposalDetailView,
   RebalanceProposalView,
   TreasuryActionDetailView,
@@ -286,8 +295,187 @@ export function createRebalanceProposalDetail(
       },
     ],
     latestCommand: null,
-    executions: [],
+    executions: [{
+      id: 'rebalance-execution-1',
+      proposalId: 'rebalance-proposal-1',
+      commandId: 'command-rebalance-1',
+      status: 'completed',
+      executionMode: 'dry-run',
+      simulated: true,
+      requestedBy: 'ops-user',
+      startedBy: 'runtime-worker-1',
+      outcomeSummary: 'Rebalance completed with downstream carry action.',
+      outcome: {
+        downstreamCarryActionIds: ['carry-action-1'],
+      },
+      lastError: null,
+      createdAt: '2026-03-20T12:03:00.000Z',
+      startedAt: '2026-03-20T12:03:01.000Z',
+      completedAt: '2026-03-20T12:03:02.000Z',
+      updatedAt: '2026-03-20T12:03:02.000Z',
+    }],
     currentState: null,
+    ...overrides,
+  };
+}
+
+export function createRebalanceExecutionGraph(
+  overrides: Partial<RebalanceExecutionGraphView> = {},
+): RebalanceExecutionGraphView {
+  const detail = createRebalanceProposalDetail({
+    proposal: createRebalanceProposal({
+      status: 'completed',
+      approvedBy: 'ops-user',
+      approvedAt: '2026-03-20T12:02:20.000Z',
+      linkedCommandId: 'command-rebalance-1',
+      latestExecutionId: 'rebalance-execution-1',
+    }),
+    latestCommand: createCommand({
+      commandId: 'command-rebalance-1',
+      commandType: 'execute_rebalance_proposal',
+      status: 'completed',
+      requestedBy: 'ops-user',
+      result: {
+        proposalId: 'rebalance-proposal-1',
+        downstreamCarryActionIds: ['carry-action-1'],
+      },
+    }),
+    currentState: {
+      allocatorRunId: 'allocator-run-1',
+      latestProposalId: 'rebalance-proposal-1',
+      carryTargetAllocationUsd: '600000',
+      carryTargetAllocationPct: 60,
+      treasuryTargetAllocationUsd: '400000',
+      treasuryTargetAllocationPct: 40,
+      appliedAt: '2026-03-20T12:03:02.000Z',
+      updatedAt: '2026-03-20T12:03:02.000Z',
+    },
+  });
+  const carryAction = createCarryAction({
+    status: 'completed',
+    linkedCommandId: 'command-carry-1',
+    latestExecutionId: 'carry-execution-1',
+  });
+  const carryExecution = createCarryExecution({ carryActionId: carryAction.id });
+
+  return {
+    detail,
+    allocatorDecision: createAllocatorDecisionDetail(),
+    commands: [
+      detail.latestCommand ?? createCommand({
+        commandId: 'command-rebalance-1',
+        commandType: 'execute_rebalance_proposal',
+      }),
+    ].filter((command): command is RuntimeCommandView => command !== null),
+    downstream: {
+      carry: {
+        actions: [{
+          action: carryAction,
+          executions: [carryExecution],
+        }],
+        rollup: {
+          status: 'completed',
+          actionCount: 1,
+          executionCount: 1,
+          blockedCount: 0,
+          failureCount: 0,
+          completedCount: 1,
+          simulated: true,
+          live: false,
+          references: ['sim-venue-a:carry:1'],
+          summary: '1 actions and 1 executions recorded.',
+        },
+      },
+      treasury: {
+        actions: [],
+        rollup: {
+          status: 'idle',
+          actionCount: 0,
+          executionCount: 0,
+          blockedCount: 0,
+          failureCount: 0,
+          completedCount: 0,
+          simulated: true,
+          live: false,
+          references: [],
+          summary: 'No downstream treasury actions are persisted for this proposal.',
+        },
+        note: 'Treasury sleeve impact is currently represented by approved rebalance budget-state application, not by proposal-linked treasury action records.',
+      },
+    },
+    timeline: [
+      {
+        id: 'rebalance-proposal-1:proposed',
+        eventType: 'proposed',
+        at: detail.proposal.createdAt,
+        actorId: null,
+        sleeveId: 'allocator',
+        scope: 'proposal',
+        status: 'completed',
+        summary: 'Rebalance proposal was persisted from the allocator decision.',
+        linkedCommandId: null,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: null,
+        linkedExecutionId: null,
+        details: {},
+      },
+      {
+        id: 'rebalance-proposal-1:carry-action:carry-action-1',
+        eventType: 'downstream_action_recorded',
+        at: carryAction.createdAt,
+        actorId: carryAction.actorId,
+        sleeveId: 'carry',
+        scope: 'downstream_action',
+        status: carryAction.status,
+        summary: carryAction.summary,
+        linkedCommandId: carryAction.linkedCommandId,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: carryAction.id,
+        linkedExecutionId: null,
+        details: {},
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundle(
+  overrides: Partial<RebalanceBundleView> = {},
+): RebalanceBundleView {
+  return {
+    id: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    allocatorRunId: 'allocator-run-1',
+    proposalStatus: 'completed',
+    status: 'completed',
+    completionState: 'finalized',
+    outcomeClassification: 'safe_complete',
+    interventionRecommendation: 'no_action_needed',
+    totalChildCount: 1,
+    blockedChildCount: 0,
+    failedChildCount: 0,
+    completedChildCount: 1,
+    pendingChildCount: 0,
+    childRollup: {
+      carry: { completedCount: 1 },
+      treasury: { completedCount: 0 },
+    },
+    finalizationReason: 'All downstream work recorded for the rebalance bundle completed successfully.',
+    finalizedAt: '2026-03-20T12:03:02.000Z',
+    executionMode: 'dry-run',
+    simulated: true,
+    createdAt: '2026-03-20T12:02:00.000Z',
+    updatedAt: '2026-03-20T12:03:02.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleDetail(
+  overrides: Partial<RebalanceBundleDetailView> = {},
+): RebalanceBundleDetailView {
+  return {
+    bundle: createRebalanceBundle(),
+    graph: createRebalanceExecutionGraph(),
     ...overrides,
   };
 }
@@ -501,6 +689,239 @@ export function createTreasurySummary(
   };
 }
 
+export function createCarryVenue(
+  overrides: Partial<CarryVenueView> = {},
+): CarryVenueView {
+  return {
+    strategyRunId: 'run-1',
+    venueId: 'sim-venue-a',
+    venueMode: 'simulated',
+    executionSupported: true,
+    supportsIncreaseExposure: true,
+    supportsReduceExposure: true,
+    readOnly: false,
+    approvedForLiveUse: false,
+    healthy: true,
+    onboardingState: 'simulated',
+    missingPrerequisites: ['live_connector_not_available'],
+    metadata: {},
+    updatedAt: '2026-03-20T12:01:00.000Z',
+    createdAt: '2026-03-20T12:01:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createCarryAction(
+  overrides: Partial<CarryActionView> = {},
+): CarryActionView {
+  return {
+    id: 'carry-action-1',
+    strategyRunId: 'run-1',
+    linkedRebalanceProposalId: 'rebalance-proposal-1',
+    actionType: 'increase_carry_exposure',
+    status: 'recommended',
+    sourceKind: 'rebalance',
+    sourceReference: 'rebalance-proposal-1',
+    opportunityId: 'opp-1',
+    asset: 'BTC',
+    summary: 'Increase carry exposure for BTC opportunity.',
+    notionalUsd: '15000',
+    details: {
+      confidenceScore: 0.82,
+    },
+    readiness: 'actionable',
+    executable: true,
+    blockedReasons: [],
+    approvalRequirement: 'operator',
+    executionMode: 'dry-run',
+    simulated: true,
+    executionPlan: {
+      effects: {
+        currentCarryAllocationUsd: '450000',
+        projectedCarryAllocationUsd: '465000',
+        projectedCarryAllocationPct: 46.5,
+        approvedCarryBudgetUsd: '600000',
+        projectedRemainingBudgetUsd: '135000',
+        openPositionCount: 2,
+      },
+      plannedOrderCount: 1,
+    },
+    approvedBy: null,
+    approvedAt: null,
+    executionRequestedBy: null,
+    executionRequestedAt: null,
+    queuedAt: null,
+    executingAt: null,
+    completedAt: null,
+    failedAt: null,
+    cancelledAt: null,
+    linkedCommandId: null,
+    latestExecutionId: null,
+    lastError: null,
+    actorId: 'ops-user',
+    createdAt: '2026-03-20T12:02:30.000Z',
+    updatedAt: '2026-03-20T12:02:30.000Z',
+    ...overrides,
+  };
+}
+
+export function createCarryExecution(
+  overrides: Partial<CarryExecutionView> = {},
+): CarryExecutionView {
+  return {
+    id: 'carry-execution-1',
+    carryActionId: 'carry-action-1',
+    strategyRunId: 'run-1',
+    commandId: 'command-carry-1',
+    status: 'completed',
+    executionMode: 'dry-run',
+    simulated: true,
+    requestedBy: 'ops-user',
+    startedBy: 'runtime-worker-1',
+    blockedReasons: [],
+    outcomeSummary: 'Simulated carry execution completed.',
+    outcome: {},
+    venueExecutionReference: 'sim-venue-a:carry:1',
+    lastError: null,
+    createdAt: '2026-03-20T12:03:00.000Z',
+    startedAt: '2026-03-20T12:03:01.000Z',
+    completedAt: '2026-03-20T12:03:02.000Z',
+    updatedAt: '2026-03-20T12:03:02.000Z',
+    ...overrides,
+  };
+}
+
+export function createCarryExecutionStep(
+  overrides: Partial<CarryExecutionStepView> = {},
+): CarryExecutionStepView {
+  return {
+    id: 'carry-step-1',
+    carryExecutionId: 'carry-execution-1',
+    carryActionId: 'carry-action-1',
+    strategyRunId: 'run-1',
+    plannedOrderId: 'carry-order-intent-1',
+    intentId: 'intent-1',
+    venueId: 'sim-venue-a',
+    venueMode: 'simulated',
+    executionSupported: true,
+    readOnly: false,
+    approvedForLiveUse: false,
+    onboardingState: 'simulated',
+    asset: 'BTC',
+    side: 'sell',
+    orderType: 'market',
+    requestedSize: '0.10',
+    requestedPrice: null,
+    reduceOnly: false,
+    clientOrderId: 'intent-1',
+    venueOrderId: 'sim-order-1',
+    executionReference: 'sim-order-1',
+    status: 'filled',
+    simulated: true,
+    filledSize: '0.10',
+    averageFillPrice: '62000',
+    outcomeSummary: 'Execution step completed with status filled.',
+    outcome: {
+      attemptCount: 1,
+      fillCount: 1,
+    },
+    lastError: null,
+    metadata: {},
+    createdAt: '2026-03-20T12:03:00.000Z',
+    updatedAt: '2026-03-20T12:03:02.000Z',
+    completedAt: '2026-03-20T12:03:02.000Z',
+    ...overrides,
+  };
+}
+
+export function createCarryActionDetail(
+  overrides: Partial<CarryActionDetailView> = {},
+): CarryActionDetailView {
+  const action = createCarryAction();
+  return {
+    action,
+    plannedOrders: [
+      {
+        id: 'carry-order-intent-1',
+        carryActionId: action.id,
+        intentId: 'intent-1',
+        venueId: 'sim-venue-a',
+        asset: 'BTC',
+        side: 'sell',
+        orderType: 'market',
+        requestedSize: '0.10',
+        requestedPrice: null,
+        reduceOnly: false,
+        metadata: {},
+        createdAt: '2026-03-20T12:02:30.000Z',
+      },
+    ],
+    latestCommand: createCommand({
+      commandId: 'command-carry-1',
+      commandType: 'execute_carry_action',
+      result: { carryActionId: action.id },
+    }),
+    executions: [createCarryExecution({ carryActionId: action.id })],
+    linkedRebalanceProposal: createRebalanceProposal({ id: action.linkedRebalanceProposalId ?? 'rebalance-proposal-1' }),
+    ...overrides,
+  };
+}
+
+export function createCarryExecutionDetail(
+  overrides: Partial<CarryExecutionDetailView> = {},
+): CarryExecutionDetailView {
+  const action = createCarryAction({
+    status: 'completed',
+    latestExecutionId: 'carry-execution-1',
+    linkedCommandId: 'command-carry-1',
+    executionRequestedBy: 'ops-user',
+    executionRequestedAt: '2026-03-20T12:02:55.000Z',
+    queuedAt: '2026-03-20T12:02:55.000Z',
+    approvedBy: 'ops-user',
+    approvedAt: '2026-03-20T12:02:50.000Z',
+  });
+  const execution = createCarryExecution({ carryActionId: action.id });
+  return {
+    execution,
+    action,
+    command: createCommand({
+      commandId: execution.commandId ?? 'command-carry-1',
+      commandType: 'execute_carry_action',
+      result: { carryExecutionId: execution.id, carryActionId: action.id },
+    }),
+    linkedRebalanceProposal: createRebalanceProposal({ id: action.linkedRebalanceProposalId ?? 'rebalance-proposal-1' }),
+    venueSnapshots: [createCarryVenue()],
+    steps: [createCarryExecutionStep({ carryExecutionId: execution.id, carryActionId: action.id })],
+    timeline: [
+      {
+        id: `${action.id}:recommended`,
+        eventType: 'recommended',
+        at: action.createdAt,
+        actorId: action.actorId,
+        status: 'recommended',
+        summary: 'Carry action was recommended by the latest evaluation.',
+        linkedCommandId: null,
+        linkedExecutionId: null,
+        linkedStepId: null,
+        details: {},
+      },
+      {
+        id: `${action.id}:execution:${execution.id}`,
+        eventType: 'executing',
+        at: execution.createdAt,
+        actorId: execution.requestedBy,
+        status: execution.status,
+        summary: execution.outcomeSummary ?? 'Carry execution attempt was recorded.',
+        linkedCommandId: execution.commandId,
+        linkedExecutionId: execution.id,
+        linkedStepId: null,
+        details: {},
+      },
+    ],
+    ...overrides,
+  };
+}
+
 export function createTreasuryAllocation(
   overrides: Partial<TreasuryAllocationView> = {},
 ): TreasuryAllocationView {
@@ -539,6 +960,7 @@ export function createTreasuryAction(
   return {
     id: 'treasury-action-1',
     treasuryRunId: 'treasury-run-1',
+    linkedRebalanceProposalId: null,
     actionType: 'allocate_to_venue',
     status: 'recommended',
     readiness: 'actionable',
@@ -653,6 +1075,7 @@ export function createTreasuryActionDetail(
         details: {},
       },
     ],
+    linkedRebalanceProposal: null,
     venue: createTreasuryVenue({ venueId: action.venueId ?? 'atlas-t1-sim' }),
     summary: createTreasurySummary(),
     policy: createTreasuryPolicy(),
@@ -673,6 +1096,8 @@ export function createTreasuryExecutionDetail(
       commandType: 'execute_treasury_action',
       result: { executionId: execution.id },
     }),
+    linkedRebalanceProposal: null,
+    executionKind: 'venue_execution',
     venue: createTreasuryVenue(),
     timeline: [
       {
