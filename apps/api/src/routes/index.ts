@@ -12,6 +12,7 @@ import { positionRoutes } from './positions.js';
 import { riskRoutes } from './risk.js';
 import { runtimeRoutes } from './runtime.js';
 import { treasuryRoutes } from './treasury.js';
+import { venueRoutes } from './venues.js';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -106,5 +107,6 @@ export async function registerRoutes(
   await runtimeRoutes(app, controlPlane);
   await treasuryRoutes(app, controlPlane);
   await carryRoutes(app, controlPlane);
+  await venueRoutes(app, controlPlane);
   await controlRoutes(app, controlPlane);
 }

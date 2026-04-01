@@ -12,6 +12,7 @@ import {
 
 import { StaticPriceFeed, type PriceFeed } from './price-feed.js';
 
+import type { CarryVenueCapabilities } from '../interfaces/carry-venue-adapter.js';
 import type {
   VenueAdapter,
   MarketData,
@@ -21,8 +22,10 @@ import type {
   PlaceOrderResult,
   CancelOrderResult,
 } from '../interfaces/venue-adapter.js';
-import type { CarryVenueCapabilities } from '../interfaces/carry-venue-adapter.js';
-
+import type {
+  VenueCapabilitySnapshot,
+  VenueTruthSnapshot,
+} from '../interfaces/venue-truth-adapter.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -249,6 +252,160 @@ export class SimulatedVenueAdapter implements VenueAdapter {
       missingPrerequisites: [],
       metadata: {
         venueType: this.venueType,
+      },
+    };
+  }
+
+  async getVenueCapabilitySnapshot(): Promise<VenueCapabilitySnapshot> {
+    return {
+      venueId: this.venueId,
+      venueName: this.venueId,
+      sleeveApplicability: ['carry'],
+      connectorType: 'simulated_market_adapter',
+      truthMode: 'simulated',
+      readOnlySupport: false,
+      executionSupport: true,
+      approvedForLiveUse: false,
+      onboardingState: 'simulated',
+      missingPrerequisites: [],
+      authRequirementsSummary: [],
+      healthy: true,
+      healthState: 'healthy',
+      degradedReason: null,
+      metadata: {
+        venueType: this.venueType,
+      },
+    };
+  }
+
+  async getVenueTruthSnapshot(): Promise<VenueTruthSnapshot> {
+    const [balances, positions, status] = await Promise.all([
+      this.getBalances(),
+      this.getPositions(),
+      this.getStatus(),
+    ]);
+
+    return {
+      venueId: this.venueId,
+      venueName: this.venueId,
+      snapshotType: 'simulated_account_state',
+      snapshotSuccessful: true,
+      healthy: status.healthy,
+      healthState: status.healthy ? 'healthy' : 'degraded',
+      summary: `${balances.length} balance rows and ${positions.length} open positions in simulated state.`,
+      errorMessage: null,
+      capturedAt: new Date().toISOString(),
+      snapshotCompleteness: 'complete',
+      truthCoverage: {
+        accountState: {
+          status: 'unsupported',
+          reason: 'Simulated carry connectors do not expose a stable venue account identity.',
+          limitations: [],
+        },
+        balanceState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        capacityState: {
+          status: 'unsupported',
+          reason: 'Carry market adapters do not expose treasury-style liquidity capacity.',
+          limitations: [],
+        },
+        exposureState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        derivativeAccountState: {
+          status: 'unsupported',
+          reason: 'Simulated carry connectors do not expose venue-native derivative account metadata.',
+          limitations: [],
+        },
+        derivativePositionState: {
+          status: 'unsupported',
+          reason: 'Simulated carry connectors do not expose venue-native derivative position state.',
+          limitations: [],
+        },
+        derivativeHealthState: {
+          status: 'unsupported',
+          reason: 'Simulated carry connectors do not expose venue-native derivative margin or health state.',
+          limitations: [],
+        },
+        orderState: {
+          status: 'unsupported',
+          reason: 'Simulated carry connectors do not expose venue-native open order state.',
+          limitations: [],
+        },
+        executionReferences: {
+          status: 'unsupported',
+          reason: 'Simulated venue truth does not include external execution references.',
+          limitations: [],
+        },
+      },
+      sourceMetadata: {
+        sourceKind: 'simulation',
+        sourceName: 'simulated_market_adapter',
+        observedScope: ['balances', 'positions', 'status'],
+      },
+      accountState: null,
+      balanceState: {
+        balances: balances.map((balance) => ({
+          assetKey: balance.asset,
+          assetSymbol: balance.asset,
+          assetType: 'unknown',
+          accountAddress: null,
+          amountAtomic: balance.total,
+          amountDisplay: balance.total,
+          decimals: null,
+          observedSlot: null,
+        })),
+        totalTrackedBalances: balances.length,
+        observedSlot: null,
+      },
+      capacityState: null,
+      exposureState: {
+        exposures: positions.map((position) => ({
+          exposureKey: `${position.asset}:${position.side}`,
+          exposureType: 'position',
+          assetKey: position.asset,
+          quantity: position.size,
+          quantityDisplay: position.size,
+          accountAddress: null,
+        })),
+        methodology: 'venue_positions',
+      },
+      derivativeAccountState: null,
+      derivativePositionState: null,
+      derivativeHealthState: null,
+      orderState: null,
+      executionReferenceState: null,
+      payload: {
+        balances: balances.map((balance) => ({
+          asset: balance.asset,
+          available: balance.available,
+          locked: balance.locked,
+          total: balance.total,
+          updatedAt: balance.updatedAt.toISOString(),
+        })),
+        positions: positions.map((position) => ({
+          asset: position.asset,
+          side: position.side,
+          size: position.size,
+          entryPrice: position.entryPrice,
+          markPrice: position.markPrice,
+          unrealizedPnl: position.unrealizedPnl,
+          updatedAt: position.updatedAt.toISOString(),
+        })),
+        status: {
+          healthy: status.healthy,
+          latencyMs: status.latencyMs,
+          message: status.message ?? null,
+        },
+      },
+      metadata: {
+        venueType: this.venueType,
+        simulated: true,
       },
     };
   }

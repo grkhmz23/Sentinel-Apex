@@ -1,63 +1,57 @@
 import { defineWorkspace } from 'vitest/config';
 
-// =============================================================================
-// Sentinel Apex — Root Vitest Workspace Configuration
-// =============================================================================
-// This file wires together all package-level test suites so that running
-// `vitest` (or `pnpm test`) at the repo root discovers every test.
-//
-// Each workspace entry can either point to a directory containing its own
-// vitest.config.ts, or inline the config here. We use inline configs so that
-// coverage is aggregated across the entire monorepo in a single report.
-// =============================================================================
+function nodeProject(
+  name: string,
+  root: string,
+  include = ['src/**/*.{spec,test}.ts'],
+  overrides?: Partial<{
+    testTimeout: number;
+    hookTimeout: number;
+  }>,
+): {
+  extends: string;
+  test: {
+    name: string;
+    root: string;
+    include: string[];
+    environment: 'node';
+    testTimeout?: number;
+    hookTimeout?: number;
+  };
+} {
+  return {
+    extends: './vitest.shared.ts',
+    test: {
+      name,
+      root,
+      include,
+      environment: 'node',
+      ...overrides,
+    },
+  };
+}
 
 export default defineWorkspace([
-  // ── Packages ───────────────────────────────────────────────────────────────
-  {
-    extends: './vitest.shared.ts',
-    test: {
-      name: 'config',
-      root: './packages/config',
-      include: ['src/**/*.{spec,test}.ts'],
-      environment: 'node',
-    },
-  },
-  {
-    extends: './vitest.shared.ts',
-    test: {
-      name: 'domain',
-      root: './packages/domain',
-      include: ['src/**/*.{spec,test}.ts'],
-      environment: 'node',
-    },
-  },
-  {
-    extends: './vitest.shared.ts',
-    test: {
-      name: 'observability',
-      root: './packages/observability',
-      include: ['src/**/*.{spec,test}.ts'],
-      environment: 'node',
-    },
-  },
-  {
-    extends: './vitest.shared.ts',
-    test: {
-      name: 'shared',
-      root: './packages/shared',
-      include: ['src/**/*.{spec,test}.ts'],
-      environment: 'node',
-    },
-  },
-
-  // ── Apps ───────────────────────────────────────────────────────────────────
-  {
-    extends: './vitest.shared.ts',
-    test: {
-      name: 'api',
-      root: './apps/api',
-      include: ['src/**/*.{spec,test}.ts'],
-      environment: 'node',
-    },
-  },
+  nodeProject('allocator', './packages/allocator'),
+  nodeProject('carry', './packages/carry'),
+  nodeProject('config', './packages/config'),
+  nodeProject('db', './packages/db'),
+  nodeProject('domain', './packages/domain'),
+  nodeProject('execution', './packages/execution'),
+  nodeProject('observability', './packages/observability'),
+  nodeProject('risk-engine', './packages/risk-engine'),
+  nodeProject('runtime', './packages/runtime', ['src/**/*.{spec,test}.ts'], {
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+  }),
+  nodeProject('shared', './packages/shared'),
+  nodeProject('strategy-engine', './packages/strategy-engine'),
+  nodeProject('treasury', './packages/treasury'),
+  nodeProject('venue-adapters', './packages/venue-adapters'),
+  nodeProject('api', './apps/api', ['src/**/*.{spec,test}.ts'], {
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+  }),
+  './apps/ops-dashboard/vitest.config.ts',
+  nodeProject('runtime-worker', './apps/runtime-worker'),
 ]);

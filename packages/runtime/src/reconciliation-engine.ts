@@ -2,7 +2,7 @@ import Decimal from 'decimal.js';
 
 import { createId } from '@sentinel-apex/domain';
 import type { Logger } from '@sentinel-apex/observability';
-import type { VenueAdapter, VenuePosition } from '@sentinel-apex/venue-adapters';
+import type { VenueAdapter, VenuePosition, VenueTruthAdapter } from '@sentinel-apex/venue-adapters';
 
 import { RuntimeStore } from './store.js';
 
@@ -103,6 +103,7 @@ export class RuntimeReconciliationEngine {
   constructor(
     private readonly store: RuntimeStore,
     private readonly adapters: Map<string, VenueAdapter>,
+    private readonly truthAdapters: Map<string, VenueTruthAdapter>,
     private readonly logger: Logger,
   ) {}
 
@@ -121,6 +122,7 @@ export class RuntimeReconciliationEngine {
         ...(await this.detectCommandOutcomeFindings(input.sourceComponent, detectedAt)),
         ...(await this.detectOrderStateFindings(input.sourceComponent, detectedAt)),
         ...(await this.detectPositionExposureFindings(input.sourceComponent, detectedAt)),
+        ...(await this.detectVenueTruthFindings(input.sourceComponent, detectedAt)),
       ];
 
       const linkedMismatchIds = new Set<string>();
@@ -684,6 +686,251 @@ export class RuntimeReconciliationEngine {
         if (candidate !== null) {
           results.push(candidate);
         }
+      }
+    }
+
+    return results;
+  }
+
+  private async detectVenueTruthFindings(
+    sourceComponent: string,
+    detectedAt: Date,
+  ): Promise<ReconciliationCandidateFinding[]> {
+    const results: ReconciliationCandidateFinding[] = [];
+    const venues = await this.store.listVenues(500);
+    const venueById = new Map(venues.map((venue) => [venue.venueId, venue] as const));
+
+    for (const adapter of this.truthAdapters.values()) {
+      const capability = await adapter.getVenueCapabilitySnapshot();
+      if (capability.truthMode !== 'real') {
+        continue;
+      }
+
+      const venue = venueById.get(capability.venueId);
+      const missingSuccessfulSnapshot = venue === undefined || venue.lastSuccessfulSnapshotAt === null;
+      const missingSnapshot = await this.toCandidateFinding({
+        dedupeKey: `missing_venue_truth_snapshot:${capability.venueId}`,
+        findingType: 'missing_venue_truth_snapshot',
+        active: missingSuccessfulSnapshot,
+        severity: 'high',
+        sourceComponent,
+        subsystem: 'venue_truth_inventory',
+        venueId: capability.venueId,
+        entityType: 'venue_connector',
+        entityId: capability.venueId,
+        summaryActive: `Configured real connector ${capability.venueId} has no successful persisted venue truth snapshot yet.`,
+        summaryResolved: `Configured real connector ${capability.venueId} now has a successful persisted venue truth snapshot.`,
+        expectedState: {
+          truthMode: 'real',
+          connectorType: capability.connectorType,
+          lastSuccessfulSnapshotAt: 'present',
+        },
+        actualState: venue === undefined
+          ? {
+            snapshotFreshness: 'missing',
+            lastSuccessfulSnapshotAt: null,
+          }
+          : {
+            truthMode: venue.truthMode,
+            connectorType: venue.connectorType,
+            snapshotFreshness: venue.snapshotFreshness,
+            lastSnapshotAt: venue.lastSnapshotAt,
+            lastSuccessfulSnapshotAt: venue.lastSuccessfulSnapshotAt,
+            healthState: venue.healthState,
+          },
+        delta: {
+          onboardingState: capability.onboardingState,
+          missingPrerequisites: capability.missingPrerequisites,
+        },
+        details: {
+          venueName: capability.venueName,
+          authRequirementsSummary: capability.authRequirementsSummary,
+        },
+        detectedAt,
+      });
+      if (missingSnapshot !== null) {
+        results.push(missingSnapshot);
+      }
+    }
+
+    for (const venue of venues) {
+      if (venue.truthMode !== 'real') {
+        continue;
+      }
+
+      const staleSnapshot = await this.toCandidateFinding({
+        dedupeKey: `stale_venue_truth_snapshot:${venue.venueId}`,
+        findingType: 'stale_venue_truth_snapshot',
+        active: venue.snapshotFreshness === 'stale',
+        severity: 'medium',
+        sourceComponent,
+        subsystem: 'venue_truth_inventory',
+        venueId: venue.venueId,
+        entityType: 'venue_connector',
+        entityId: venue.venueId,
+        summaryActive: `Latest real venue truth snapshot for ${venue.venueId} is stale.`,
+        summaryResolved: `Latest real venue truth snapshot for ${venue.venueId} is fresh.`,
+        expectedState: {
+          snapshotFreshness: 'fresh',
+          healthState: 'healthy',
+        },
+        actualState: {
+          snapshotFreshness: venue.snapshotFreshness,
+          healthState: venue.healthState,
+          truthProfile: venue.truthProfile,
+          lastSnapshotAt: venue.lastSnapshotAt,
+          lastSuccessfulSnapshotAt: venue.lastSuccessfulSnapshotAt,
+        },
+        delta: {
+          latestSnapshotType: venue.latestSnapshotType,
+        },
+        details: {
+          venueName: venue.venueName,
+          latestSnapshotSummary: venue.latestSnapshotSummary,
+        },
+        detectedAt,
+      });
+      if (staleSnapshot !== null) {
+        results.push(staleSnapshot);
+      }
+
+      const unavailableSnapshot = await this.toCandidateFinding({
+        dedupeKey: `venue_truth_unavailable:${venue.venueId}`,
+        findingType: 'venue_truth_unavailable',
+        active: venue.healthState === 'unavailable',
+        severity: 'high',
+        sourceComponent,
+        subsystem: 'venue_truth_inventory',
+        venueId: venue.venueId,
+        entityType: 'venue_connector',
+        entityId: venue.venueId,
+        summaryActive: `Real venue truth for ${venue.venueId} is currently unavailable.`,
+        summaryResolved: `Real venue truth for ${venue.venueId} is available again.`,
+        expectedState: {
+          healthState: 'healthy',
+          snapshotSuccessful: true,
+        },
+        actualState: {
+          healthState: venue.healthState,
+          truthProfile: venue.truthProfile,
+          latestSnapshotType: venue.latestSnapshotType,
+          latestErrorMessage: venue.latestErrorMessage,
+          lastSnapshotAt: venue.lastSnapshotAt,
+        },
+        delta: {
+          degradedReason: venue.degradedReason,
+        },
+        details: {
+          venueName: venue.venueName,
+          latestSnapshotSummary: venue.latestSnapshotSummary,
+        },
+        detectedAt,
+      });
+      if (unavailableSnapshot !== null) {
+        results.push(unavailableSnapshot);
+      }
+
+      const partialCoverage = await this.toCandidateFinding({
+        dedupeKey: `venue_truth_partial_coverage:${venue.venueId}`,
+        findingType: 'venue_truth_partial_coverage',
+        active: venue.snapshotCompleteness !== 'complete'
+          || venue.truthCoverage.derivativeAccountState.status === 'partial'
+          || venue.truthCoverage.derivativePositionState.status === 'partial'
+          || venue.truthCoverage.derivativeHealthState.status === 'partial'
+          || venue.truthCoverage.orderState.status === 'partial',
+        severity: 'low',
+        sourceComponent,
+        subsystem: 'venue_truth_inventory',
+        venueId: venue.venueId,
+        entityType: 'venue_connector',
+        entityId: venue.venueId,
+        summaryActive: `Real venue truth for ${venue.venueId} is only ${venue.snapshotCompleteness}.`,
+        summaryResolved: `Real venue truth for ${venue.venueId} now covers its supported depth completely.`,
+        expectedState: {
+          snapshotCompleteness: 'complete',
+          derivativeAccountState: 'available_or_unsupported',
+          derivativePositionState: 'available_or_unsupported',
+          derivativeHealthState: 'available_or_unsupported',
+          orderState: 'available_or_unsupported',
+        },
+        actualState: {
+          truthProfile: venue.truthProfile,
+          snapshotCompleteness: venue.snapshotCompleteness,
+          truthCoverage: venue.truthCoverage,
+          lastSnapshotAt: venue.lastSnapshotAt,
+        },
+        delta: {
+          onboardingState: venue.onboardingState,
+          missingPrerequisites: venue.missingPrerequisites,
+        },
+        details: {
+          venueName: venue.venueName,
+          latestSnapshotSummary: venue.latestSnapshotSummary,
+          sourceMetadata: venue.sourceMetadata,
+          derivativeCoverage: {
+            derivativeAccountState: venue.truthCoverage.derivativeAccountState,
+            derivativePositionState: venue.truthCoverage.derivativePositionState,
+            derivativeHealthState: venue.truthCoverage.derivativeHealthState,
+            orderState: venue.truthCoverage.orderState,
+          },
+        },
+        detectedAt,
+      });
+      if (partialCoverage !== null) {
+        results.push(partialCoverage);
+      }
+
+      if (venue.truthCoverage.executionReferences.status !== 'available') {
+        continue;
+      }
+
+      const [expectedReferences, latestSnapshot] = await Promise.all([
+        this.store.listExpectedVenueExecutionReferences(venue.venueId, 100),
+        this.store.listVenueSnapshots(venue.venueId, 1),
+      ]);
+      if (expectedReferences.length === 0) {
+        continue;
+      }
+
+      const observedReferences = new Set(
+        latestSnapshot[0]?.executionReferenceState?.references.map((reference) => reference.reference) ?? [],
+      );
+      const missingReferences = expectedReferences.filter((reference) => !observedReferences.has(reference));
+
+      const executionReferenceMismatch = await this.toCandidateFinding({
+        dedupeKey: `venue_execution_reference_mismatch:${venue.venueId}`,
+        findingType: 'venue_execution_reference_mismatch',
+        active: missingReferences.length > 0,
+        severity: 'medium',
+        sourceComponent,
+        subsystem: 'venue_truth_inventory',
+        venueId: venue.venueId,
+        entityType: 'venue_connector',
+        entityId: venue.venueId,
+        summaryActive: `Real venue truth for ${venue.venueId} is missing ${missingReferences.length} internal execution references.`,
+        summaryResolved: `Real venue truth for ${venue.venueId} now includes the internal execution references currently persisted.`,
+        expectedState: {
+          executionReferences: expectedReferences,
+        },
+        actualState: {
+          observedExecutionReferences: Array.from(observedReferences),
+          truthProfile: venue.truthProfile,
+          snapshotCompleteness: venue.snapshotCompleteness,
+          lastSnapshotAt: venue.lastSnapshotAt,
+        },
+        delta: {
+          missingExecutionReferences: missingReferences,
+        },
+        details: {
+          venueName: venue.venueName,
+          latestSnapshotSummary: venue.latestSnapshotSummary,
+          orderReferenceMode: latestSnapshot[0]?.orderState?.referenceMode ?? 'none',
+          orderCoverage: latestSnapshot[0]?.truthCoverage.orderState ?? null,
+        },
+        detectedAt,
+      });
+      if (executionReferenceMismatch !== null) {
+        results.push(executionReferenceMismatch);
       }
     }
 

@@ -91,6 +91,8 @@ const envSchema = z
 
     // ── Drift / on-chain ─────────────────────────────────────────────────────
     DRIFT_RPC_ENDPOINT: z.string().optional(),
+    DRIFT_READONLY_ACCOUNT_ADDRESS: z.string().optional(),
+    DRIFT_READONLY_ACCOUNT_LABEL: z.string().optional(),
 
     DRIFT_PRIVATE_KEY: z.string().optional(),
   })

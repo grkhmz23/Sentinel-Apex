@@ -65,6 +65,8 @@ export interface TreasuryVenueAdapter {
   getVenueState(): Promise<TreasuryVenueState>;
   getPosition(): Promise<TreasuryVenuePosition>;
   getCapabilities(): Promise<TreasuryVenueCapabilities>;
+  getVenueCapabilitySnapshot?(): Promise<import('./venue-truth-adapter.js').VenueCapabilitySnapshot>;
+  getVenueTruthSnapshot?(): Promise<import('./venue-truth-adapter.js').VenueTruthSnapshot>;
   executeTreasuryAction(
     request: TreasuryVenueExecutionRequest,
   ): Promise<TreasuryVenueExecutionResult>;

@@ -10,6 +10,8 @@ import type {
   CarryVenueView,
   RebalanceBundleDetailView,
   RebalanceBundleView,
+  RebalanceEscalationQueueItemView,
+  RebalanceEscalationQueueSummaryView,
   RebalanceExecutionGraphView,
   RebalanceProposalView,
   RuntimeCommandView,
@@ -27,6 +29,11 @@ import type {
   TreasuryAllocationView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  VenueDetailView,
+  VenueInventoryItemView,
+  VenueInventorySummaryView,
+  VenueSnapshotView,
+  VenueTruthSummaryView,
   TreasuryVenueDetailView,
   TreasuryVenueView,
 } from '@sentinel-apex/runtime';
@@ -41,6 +48,7 @@ import type {
   CarryExecutionDetailPageData,
   CarryExecutionsPageData,
   CarryPageData,
+  EscalationsPageData,
   DashboardPageState,
   MismatchListFilters,
   OperationsPageData,
@@ -53,6 +61,8 @@ import type {
   TreasuryPageData,
   RebalanceProposalPageData,
   RebalanceBundlePageData,
+  VenuesPageData,
+  VenueDetailPageData,
   TreasuryVenueDetailPageData,
   TreasuryVenuesPageData,
 } from './types';
@@ -61,6 +71,7 @@ const ALLOCATOR_API_PREFIX = '/api/v1/allocator';
 const CARRY_API_PREFIX = '/api/v1/carry';
 const API_PREFIX = '/api/v1/runtime';
 const TREASURY_API_PREFIX = '/api/v1/treasury';
+const VENUES_API_PREFIX = '/api/v1/venues';
 
 async function fetchRuntimeApi<T>(
   path: string,
@@ -162,6 +173,31 @@ async function fetchCarryApi<T>(
   return payload.data;
 }
 
+async function fetchVenuesApi<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${VENUES_API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Venues API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
 function buildSearchParams(params: Record<string, string | number | undefined>): string {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -224,6 +260,56 @@ export async function getRebalanceBundleForProposal(
 
 export async function getRebalanceBundleDetail(bundleId: string): Promise<RebalanceBundleDetailView> {
   return fetchAllocatorApi<RebalanceBundleDetailView>(`/rebalance-bundles/${bundleId}`);
+}
+
+export async function listRebalanceEscalations(
+  filters: {
+    status?: 'open' | 'acknowledged' | 'in_review' | 'resolved';
+    ownerId?: string;
+    openState?: 'open' | 'closed';
+    queueState?: 'overdue' | 'due_soon' | 'unassigned';
+    sortBy?: 'due_at' | 'latest_activity' | 'created_at' | 'updated_at';
+    sortDirection?: 'asc' | 'desc';
+    limit?: number;
+  } = {},
+): Promise<RebalanceEscalationQueueItemView[]> {
+  return fetchAllocatorApi<RebalanceEscalationQueueItemView[]>(`/escalations${buildSearchParams({
+    status: filters.status,
+    ownerId: filters.ownerId,
+    openState: filters.openState,
+    queueState: filters.queueState,
+    sortBy: filters.sortBy,
+    sortDirection: filters.sortDirection,
+    limit: filters.limit ?? 100,
+  })}`);
+}
+
+export async function getRebalanceEscalationSummary(): Promise<RebalanceEscalationQueueSummaryView> {
+  return fetchAllocatorApi<RebalanceEscalationQueueSummaryView>('/escalations/summary');
+}
+
+export async function listVenues(limit = 100): Promise<VenueInventoryItemView[]> {
+  return fetchVenuesApi<VenueInventoryItemView[]>(`${buildSearchParams({ limit })}`);
+}
+
+export async function getVenueSummary(): Promise<VenueInventorySummaryView> {
+  return fetchVenuesApi<VenueInventorySummaryView>('/summary');
+}
+
+export async function getVenueTruthSummary(): Promise<VenueTruthSummaryView> {
+  return fetchVenuesApi<VenueTruthSummaryView>('/truth-summary');
+}
+
+export async function listVenueReadiness(limit = 100): Promise<VenueInventoryItemView[]> {
+  return fetchVenuesApi<VenueInventoryItemView[]>(`/readiness${buildSearchParams({ limit })}`);
+}
+
+export async function getVenueDetail(venueId: string): Promise<VenueDetailView> {
+  return fetchVenuesApi<VenueDetailView>(`/${venueId}`);
+}
+
+export async function listVenueSnapshots(venueId: string, limit = 20): Promise<VenueSnapshotView[]> {
+  return fetchVenuesApi<VenueSnapshotView[]>(`/${venueId}/snapshots${buildSearchParams({ limit })}`);
 }
 
 export async function listCarryRecommendations(limit = 20): Promise<CarryActionView[]> {
@@ -451,6 +537,74 @@ export async function loadRebalanceBundlePageData(
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load rebalance proposal.',
+    };
+  }
+}
+
+export async function loadEscalationsPageData(
+  filters: {
+    status?: 'open' | 'acknowledged' | 'in_review' | 'resolved';
+    ownerId?: string;
+    openState?: 'open' | 'closed';
+    queueState?: 'overdue' | 'due_soon' | 'unassigned';
+    sortBy?: 'due_at' | 'latest_activity' | 'created_at' | 'updated_at';
+    sortDirection?: 'asc' | 'desc';
+    limit?: number;
+  } = {},
+): Promise<DashboardPageState<EscalationsPageData>> {
+  try {
+    const [escalations, summary] = await Promise.all([
+      listRebalanceEscalations(filters),
+      getRebalanceEscalationSummary(),
+    ]);
+
+    return {
+      data: {
+        escalations,
+        summary,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load escalations queue.',
+    };
+  }
+}
+
+export async function loadVenuesPageData(): Promise<DashboardPageState<VenuesPageData>> {
+  try {
+    const [venues, summary, truthSummary] = await Promise.all([
+      listVenues(100),
+      getVenueSummary(),
+      getVenueTruthSummary(),
+    ]);
+    return {
+      data: { venues, summary, truthSummary },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load venue inventory.',
+    };
+  }
+}
+
+export async function loadVenueDetailPageData(
+  venueId: string,
+): Promise<DashboardPageState<VenueDetailPageData>> {
+  try {
+    const detail = await getVenueDetail(venueId);
+    return {
+      data: { detail },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load venue detail.',
     };
   }
 }

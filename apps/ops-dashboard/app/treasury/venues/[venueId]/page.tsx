@@ -47,6 +47,7 @@ export default async function TreasuryVenueDetailPage(
         <div className="inline-links">
           <Link href="/treasury">Back to treasury</Link>
           <Link href="/treasury/venues">Venue inventory</Link>
+          <Link href={`/venues/${venue.venueId}`}>Global venue detail</Link>
         </div>
 
         <div className="grid grid--two-column">

@@ -5,11 +5,20 @@
     "LOG_LEVEL",
     "EXECUTION_MODE"
   ],
-  "globalDependencies": [".env"],
+  "globalDependencies": [
+    ".env",
+    ".eslintrc.cjs",
+    "package.json",
+    "pnpm-lock.yaml",
+    "tsconfig.base.json",
+    "tsconfig.json",
+    "vitest.config.ts",
+    "vitest.shared.ts"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "tsconfig.json", "tsconfig.build.json", "package.json"],
+      "inputs": ["$TURBO_DEFAULT$"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
       "env": ["NODE_ENV"]
     },
@@ -28,8 +37,8 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "test/**", "vitest.config.ts", "tsconfig.json", "package.json"],
-      "outputs": ["coverage/**"],
+      "inputs": ["$TURBO_DEFAULT$"],
+      "outputs": [],
       "env": ["NODE_ENV", "DATABASE_URL", "EXECUTION_MODE"]
     },
     "test:watch": {
@@ -37,19 +46,12 @@
       "persistent": true
     },
     "lint": {
-      "inputs": [
-        "src/**",
-        ".eslintrc.cjs",
-        ".eslintrc.js",
-        ".eslintignore",
-        "tsconfig.json",
-        "package.json"
-      ],
+      "inputs": ["$TURBO_DEFAULT$"],
       "outputs": []
     },
     "typecheck": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "tsconfig.json", "tsconfig.build.json", "package.json"],
+      "inputs": ["$TURBO_DEFAULT$"],
       "outputs": []
     },
     "clean": {

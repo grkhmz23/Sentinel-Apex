@@ -4,6 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import { applyMigrations, createDatabaseConnection } from '@sentinel-apex/db';
 import { createId } from '@sentinel-apex/domain';
+import type {
+  VenueCapabilitySnapshot,
+  VenueTruthAdapter,
+  VenueTruthSnapshot,
+} from '@sentinel-apex/venue-adapters';
 
 import { RuntimeControlPlane } from '../control-plane.js';
 import { SentinelRuntime } from '../runtime.js';
@@ -26,6 +31,224 @@ function asPositionFingerprint(position: {
   size: string;
 }): string {
   return `${position.venueId}:${position.asset}:${position.side}:${position.size}`;
+}
+
+class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
+  readonly venueId = 'drift-solana-readonly';
+  readonly venueName = 'Drift Solana Read-Only';
+  private connected = false;
+
+  async connect(): Promise<void> {
+    this.connected = true;
+  }
+
+  async disconnect(): Promise<void> {
+    this.connected = false;
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  async getVenueCapabilitySnapshot(): Promise<VenueCapabilitySnapshot> {
+    return {
+      venueId: this.venueId,
+      venueName: this.venueName,
+      sleeveApplicability: ['carry'],
+      connectorType: 'solana_rpc_readonly',
+      truthMode: 'real' as const,
+      readOnlySupport: true,
+      executionSupport: false,
+      approvedForLiveUse: false,
+      onboardingState: 'read_only' as const,
+      missingPrerequisites: [],
+      authRequirementsSummary: ['DRIFT_RPC_ENDPOINT', 'DRIFT_READONLY_ACCOUNT_ADDRESS'],
+      healthy: true,
+      healthState: 'healthy' as const,
+      degradedReason: null,
+      metadata: {
+        endpointConfigured: true,
+      },
+    };
+  }
+
+  async getVenueTruthSnapshot(): Promise<VenueTruthSnapshot> {
+    return {
+      venueId: this.venueId,
+      venueName: this.venueName,
+      snapshotType: 'solana_rpc_account_state',
+      snapshotSuccessful: true,
+      healthy: true,
+      healthState: 'healthy' as const,
+      summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+      errorMessage: null,
+      capturedAt: '2026-03-31T12:00:00.000Z',
+      snapshotCompleteness: 'partial',
+      truthCoverage: {
+        accountState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        balanceState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        capacityState: {
+          status: 'unsupported',
+          reason: 'Generic Solana RPC does not expose venue capacity.',
+          limitations: [],
+        },
+        exposureState: {
+          status: 'available',
+          reason: null,
+          limitations: ['Exposure is balance-derived and does not include venue-native derivatives.'],
+        },
+        derivativeAccountState: {
+          status: 'partial',
+          reason: 'Program-owned account metadata is visible, but venue-native derivative decoding is not implemented.',
+          limitations: ['Authority, subaccount, positions, and health require a venue SDK or IDL-backed decoder.'],
+        },
+        derivativePositionState: {
+          status: 'unsupported',
+          reason: 'Generic Solana RPC does not decode venue-native derivative positions.',
+          limitations: [],
+        },
+        derivativeHealthState: {
+          status: 'unsupported',
+          reason: 'Generic Solana RPC does not decode venue-native margin or health state.',
+          limitations: [],
+        },
+        orderState: {
+          status: 'partial',
+          reason: 'Order context is reference-only and derived from recent account signatures.',
+          limitations: ['Order state is limited to reference-only recent signatures and not venue-native open orders.'],
+        },
+        executionReferences: {
+          status: 'available',
+          reason: null,
+          limitations: ['Execution references are limited to recent account signatures.'],
+        },
+      },
+      sourceMetadata: {
+        sourceKind: 'json_rpc',
+        sourceName: 'solana_rpc_readonly',
+        observedScope: [
+          'account_identity',
+          'native_balance',
+          'recent_signatures',
+          'derivative_account_metadata',
+          'order_reference_context',
+        ],
+      },
+      accountState: {
+        accountAddress: 'readonly-account',
+        accountLabel: 'Runtime test wallet',
+        accountExists: true,
+        ownerProgram: 'drift-program',
+        executable: false,
+        lamports: '12000000000',
+        nativeBalanceDisplay: '12.000000000',
+        observedSlot: '123',
+        rentEpoch: '0',
+        dataLength: 0,
+      },
+      balanceState: {
+        balances: [{
+          assetKey: 'SOL',
+          assetSymbol: 'SOL',
+          assetType: 'native',
+          accountAddress: 'readonly-account',
+          amountAtomic: '12000000000',
+          amountDisplay: '12.000000000',
+          decimals: 9,
+          observedSlot: '123',
+        }],
+        totalTrackedBalances: 1,
+        observedSlot: '123',
+      },
+      capacityState: null,
+      exposureState: {
+        exposures: [{
+          exposureKey: 'SOL:readonly-account',
+          exposureType: 'balance_derived_spot',
+          assetKey: 'SOL',
+          quantity: '12000000000',
+          quantityDisplay: '12.000000000',
+          accountAddress: 'readonly-account',
+        }],
+        methodology: 'balance_derived_spot_exposure',
+      },
+      derivativeAccountState: {
+        venue: this.venueId,
+        accountAddress: 'readonly-account',
+        accountLabel: 'Runtime test wallet',
+        accountExists: true,
+        ownerProgram: 'drift-program',
+        accountModel: 'program_account',
+        venueAccountType: null,
+        decoded: false,
+        authorityAddress: null,
+        subaccountId: null,
+        observedSlot: '123',
+        rpcVersion: '1.18.0',
+        dataLength: 512,
+        rawDiscriminatorHex: '0102030405060708',
+        notes: [
+          'Program-owned account metadata was captured from raw RPC.',
+          'Venue-native decode is unavailable in the current repo because no Drift or Anchor decoder is present.',
+        ],
+      },
+      derivativePositionState: null,
+      derivativeHealthState: null,
+      orderState: {
+        openOrderCount: null,
+        openOrders: [{
+          venueOrderId: null,
+          reference: 'sig-runtime-test-1',
+          marketKey: null,
+          marketSymbol: null,
+          side: 'unknown',
+          status: 'confirmed',
+          orderType: null,
+          price: null,
+          quantity: null,
+          reduceOnly: null,
+          accountAddress: 'readonly-account',
+          slot: '123',
+          placedAt: '2026-03-31T11:59:00.000Z',
+          metadata: {
+            referenceOnly: true,
+          },
+        }],
+        referenceMode: 'recent_account_signatures',
+        methodology: 'recent_account_signatures_reference_context',
+        notes: [
+          'This section is reference-only context derived from recent account signatures.',
+          'It is not a venue-native open-orders decode and may include non-order transactions.',
+        ],
+      },
+      executionReferenceState: {
+        referenceLookbackLimit: 10,
+        references: [{
+          referenceType: 'solana_signature',
+          reference: 'sig-runtime-test-1',
+          accountAddress: 'readonly-account',
+          slot: '123',
+          blockTime: '2026-03-31T11:59:00.000Z',
+          confirmationStatus: 'confirmed',
+          errored: false,
+          memo: null,
+        }],
+        oldestReferenceAt: '2026-03-31T11:59:00.000Z',
+      },
+      payload: {
+        balanceSol: '12.000000000',
+      },
+      metadata: {},
+    };
+  }
 }
 
 describe('SentinelRuntime', () => {
@@ -211,6 +434,28 @@ describe('SentinelRuntime', () => {
     expect(venues[0]?.venueMode).toBe('simulated');
     expect(detail?.plannedOrders.length).toBeGreaterThan(0);
     expect(executionDetail).toBeNull();
+
+    await runtime.close();
+  });
+
+  it('persists generic venue truth inventory and real read-only snapshots', async () => {
+    const runtime = await createRuntime({
+      truthAdapters: [new StubReadonlyVenueTruthAdapter()],
+    });
+
+    const venues = await runtime.listVenues(20);
+    const summary = await runtime.getVenueSummary();
+    const detail = await runtime.getVenue('drift-solana-readonly');
+
+    expect(venues.some((venue) => venue.venueId === 'drift-solana-readonly')).toBe(true);
+    expect(venues.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthMode).toBe('real');
+    expect(venues.find((venue) => venue.venueId === 'drift-solana-readonly')?.readOnlySupport).toBe(true);
+    expect(venues.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthProfile).toBe('derivative_aware');
+    expect(summary.realReadOnly).toBeGreaterThan(0);
+    expect(summary.derivativeAware).toBeGreaterThan(0);
+    expect(detail?.venue.truthCoverage.derivativeAccountState.status).toBe('partial');
+    expect(detail?.snapshots[0]?.snapshotType).toBe('solana_rpc_account_state');
+    expect(detail?.snapshots[0]?.orderState?.referenceMode).toBe('recent_account_signatures');
 
     await runtime.close();
   });

@@ -18,6 +18,8 @@ import {
   createMismatchDetail,
   createOverview,
   createRebalanceBundleDetail,
+  createRebalanceEscalationQueueItem,
+  createRebalanceEscalationQueueSummary,
   createRebalanceProposal,
   createRecoveryEvent,
   createReconciliationFinding,
@@ -29,10 +31,15 @@ import {
   createTreasuryExecutionDetail,
   createTreasuryPolicy,
   createTreasurySummary,
+  createVenueDetail,
+  createVenueInventoryItem,
+  createVenueInventorySummary,
+  createVenueTruthSummary,
   createTreasuryVenue,
   createTreasuryVenueDetail,
 } from './test/fixtures';
 import AllocatorDecisionPage from '../app/allocator/decisions/[allocatorRunId]/page';
+import EscalationsPage from '../app/allocator/escalations/page';
 import AllocatorPage from '../app/allocator/page';
 import RebalanceBundlePage from '../app/allocator/rebalance-bundles/[bundleId]/page';
 import RebalanceProposalPage from '../app/allocator/rebalance-proposals/[proposalId]/page';
@@ -50,6 +57,8 @@ import TreasuryExecutionsPage from '../app/treasury/executions/page';
 import TreasuryPage from '../app/treasury/page';
 import TreasuryVenueDetailPage from '../app/treasury/venues/[venueId]/page';
 import TreasuryVenuesPage from '../app/treasury/venues/page';
+import VenueDetailPage from '../app/venues/[venueId]/page';
+import VenuesPage from '../app/venues/page';
 
 import type { ReactNode } from 'react';
 
@@ -79,6 +88,22 @@ vi.mock('./components/carry-actions', () => ({
 
 vi.mock('./components/rebalance-proposal-actions', () => ({
   RebalanceProposalActions: () => <div>Rebalance proposal actions</div>,
+}));
+
+vi.mock('./components/rebalance-bundle-recovery-actions', () => ({
+  RebalanceBundleRecoveryActions: () => <div>Rebalance bundle recovery actions</div>,
+}));
+
+vi.mock('./components/rebalance-bundle-resolution-actions', () => ({
+  RebalanceBundleResolutionActions: () => <div>Rebalance bundle resolution actions</div>,
+}));
+
+vi.mock('./components/rebalance-bundle-escalation-actions', () => ({
+  RebalanceBundleEscalationActions: () => <div>Rebalance bundle escalation actions</div>,
+}));
+
+vi.mock('./components/rebalance-escalation-queue-actions', () => ({
+  RebalanceEscalationQueueActions: () => <div>Rebalance escalation queue actions</div>,
 }));
 
 vi.mock('./components/mismatch-action-panel', () => ({
@@ -130,6 +155,27 @@ vi.mock('./lib/runtime-api.server', () => ({
   loadRebalanceBundlePageData: vi.fn(async () => ({
     data: {
       bundle: createRebalanceBundleDetail(),
+    },
+    error: null,
+  })),
+  loadEscalationsPageData: vi.fn(async () => ({
+    data: {
+      escalations: [createRebalanceEscalationQueueItem()],
+      summary: createRebalanceEscalationQueueSummary(),
+    },
+    error: null,
+  })),
+  loadVenuesPageData: vi.fn(async () => ({
+    data: {
+      venues: [createVenueInventoryItem()],
+      summary: createVenueInventorySummary(),
+      truthSummary: createVenueTruthSummary(),
+    },
+    error: null,
+  })),
+  loadVenueDetailPageData: vi.fn(async () => ({
+    data: {
+      detail: createVenueDetail(),
     },
     error: null,
   })),
@@ -261,6 +307,21 @@ describe('ops dashboard pages', () => {
 
     expect(screen.getByText('Rebalance Bundle Detail')).toBeInTheDocument();
     expect(screen.getByText('Child Rollup')).toBeInTheDocument();
+    expect(screen.getByText('Partial Progress')).toBeInTheDocument();
+    expect(screen.getByText('Recovery Candidates')).toBeInTheDocument();
+    expect(screen.getByText('Recovery History')).toBeInTheDocument();
+    expect(screen.getByText('Escalation Ownership')).toBeInTheDocument();
+    expect(screen.getByText('Escalation Workflow')).toBeInTheDocument();
+    expect(screen.getByText('Escalation History')).toBeInTheDocument();
+    expect(screen.getByText('Resolution Options')).toBeInTheDocument();
+    expect(screen.getByText('Resolution History')).toBeInTheDocument();
+
+    render(await EscalationsPage({ searchParams: {} }));
+
+    expect(screen.getByText('Escalations Queue')).toBeInTheDocument();
+    expect(screen.getByText('Queue Summary')).toBeInTheDocument();
+    expect(screen.getByText('Triage Board')).toBeInTheDocument();
+    expect(screen.getByText('Rebalance escalation queue actions')).toBeInTheDocument();
   });
 
   it('renders carry overview and carry action detail views', async () => {
@@ -328,6 +389,21 @@ describe('ops dashboard pages', () => {
     render(await TreasuryVenueDetailPage({ params: { venueId: 'atlas-t1-sim' } }));
     expect(screen.getByText('Treasury Venue Detail')).toBeInTheDocument();
     expect(screen.getByText('Onboarding Readiness')).toBeInTheDocument();
+  });
+
+  it('renders generic venue inventory and venue detail workflows', async () => {
+    render(await VenuesPage());
+    expect(screen.getByText('Connector Inventory')).toBeInTheDocument();
+    expect(screen.getByText('Drift Solana Read-Only')).toBeInTheDocument();
+    expect(screen.getByText('Derivative-aware venues')).toBeInTheDocument();
+    expect(screen.getAllByText('derivative_aware').length).toBeGreaterThan(0);
+
+    render(await VenueDetailPage({ params: { venueId: 'drift-solana-readonly' } }));
+    expect(screen.getByText('Capability Overview')).toBeInTheDocument();
+    expect(screen.getByText('Derivative Account State')).toBeInTheDocument();
+    expect(screen.getByText('Derivative Positions And Health')).toBeInTheDocument();
+    expect(screen.getByText('Order And References')).toBeInTheDocument();
+    expect(screen.getByText('Snapshot History')).toBeInTheDocument();
   });
 
   it('renders error and empty states when data is unavailable', async () => {

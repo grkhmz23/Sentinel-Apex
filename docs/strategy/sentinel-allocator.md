@@ -135,6 +135,85 @@ The first implementation is intentionally budget-first:
 - dry-run execution records outcomes without changing current approved budget state
 - live execution applies the approved current sleeve-budget state but still does not silently route venue actions
 
+## Phase 4.7 Bundle Recovery
+
+Allocator bundle coordination now also includes explicit operator recovery actions.
+
+This pass adds:
+
+- backend-computed bundle recovery candidates
+- durable bundle recovery action history
+- explicit child-scoped requeue requests for eligible carry and treasury children
+- command linkage from recovery action to the real execution rail
+
+This still does not add:
+
+- autonomous healing
+- generic proposal replay
+- hidden child recreation
+- silent venue retries
+
+The operator remains responsible for deciding when recovery should be requested.
+
+Sentinel only tells the truth about whether the currently persisted child state is safely retryable.
+
+## Phase 4.8 Partial Application And Manual Resolution
+
+Bundle coordination now also includes explicit operator closure semantics for partial and non-retryable outcomes.
+
+This pass adds:
+
+- inspect-first partial-progress summaries
+- retryable vs non-retryable child breakdown
+- explicit manual bundle resolution actions
+- explicit partial-application acceptance and escalation history
+
+This still does not add:
+
+- autonomous closure
+- automatic acceptance of partial progress
+- hidden conversion of partial bundles into completed bundles
+
+Manual resolution is a durable operator-authored overlay on top of the existing bundle execution truth.
+
+## Phase 4.9 Escalation Ownership And Follow-Up
+
+Escalated bundle outcomes now also create a first-class escalation workflow.
+
+This pass adds:
+
+- escalation ownership and assignee tracking
+- acknowledgement and review-status transitions
+- due-at follow-up metadata
+- durable escalation handoff and close history
+
+This still does not add:
+
+- hidden automation after escalation
+- implicit bundle closure when an escalation is resolved
+- any mutation of the underlying child execution truth
+
+Escalation remains a process overlay on top of bundle execution and resolution state.
+
+## Phase 5.0 Escalations Queue And Triage
+
+Escalation workflow now also has a cross-bundle triage layer.
+
+This pass adds:
+
+- a backend-native escalations queue across bundles
+- queue summary counts for open, overdue, due-soon, unassigned, and mine
+- operator filters by status, owner, open-vs-closed, and triage state
+- queue-level quick actions for assign, acknowledge, and start review
+
+This still does not add:
+
+- hidden escalation automation
+- queue-driven bundle closure
+- any change to the underlying bundle execution or manual-resolution truth
+
+The queue is an operator work-management surface over the existing escalation workflow, not a generic ticketing system.
+
 ## Deliberate Non-Goals In This Phase
 
 This phase does not include:

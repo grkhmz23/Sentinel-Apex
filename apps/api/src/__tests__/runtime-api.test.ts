@@ -1,7 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createDatabaseConnection } from '@sentinel-apex/db';
+import {
+  allocatorRebalanceExecutions,
+  allocatorRebalanceProposals,
+  carryActions,
+  createDatabaseConnection,
+  treasuryActionExecutions,
+  treasuryActions,
+} from '@sentinel-apex/db';
 import type { RuntimeControlPlane, RuntimeWorker } from '@sentinel-apex/runtime';
+import type {
+  VenueCapabilitySnapshot,
+  VenueTruthAdapter,
+  VenueTruthSnapshot,
+} from '@sentinel-apex/venue-adapters';
 
 import { createApp } from '../app.js';
 import {
@@ -19,18 +31,283 @@ import type { FastifyInstance } from 'fastify';
 const TEST_API_KEY = 'test-secret-key-for-vitest-suite-32chars!!';
 const TEST_SHARED_SECRET = 'ops-auth-shared-secret-for-tests-32chars';
 
+async function waitFor<T>(
+  fn: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  timeoutMs = 5_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const value = await fn();
+    if (predicate(value)) {
+      return value;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error('Timed out waiting for condition');
+}
+
+function freshCapturedAt(): string {
+  return new Date(Date.now() - 60_000).toISOString();
+}
+
+function createStubVenueTruthSnapshot(
+  venueId: string,
+  venueName: string,
+  overrides: Partial<VenueTruthSnapshot> = {},
+): VenueTruthSnapshot {
+  return {
+    venueId,
+    venueName,
+    snapshotType: 'solana_rpc_account_state',
+    snapshotSuccessful: true,
+    healthy: true,
+    healthState: 'healthy',
+    summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+    errorMessage: null,
+    capturedAt: freshCapturedAt(),
+    snapshotCompleteness: 'partial',
+    truthCoverage: {
+      accountState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      balanceState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      capacityState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not expose venue capacity.',
+        limitations: [],
+      },
+      exposureState: {
+        status: 'available',
+        reason: null,
+        limitations: ['Exposure is balance-derived and does not include venue-native derivatives.'],
+      },
+      derivativeAccountState: {
+        status: 'partial',
+        reason: 'Program-owned account metadata is visible, but venue-native derivative decoding is not implemented.',
+        limitations: ['Authority, subaccount, positions, and health require a venue SDK or IDL-backed decoder.'],
+      },
+      derivativePositionState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not decode venue-native derivative positions.',
+        limitations: [],
+      },
+      derivativeHealthState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not decode venue-native margin or health state.',
+        limitations: [],
+      },
+      orderState: {
+        status: 'partial',
+        reason: 'Order context is reference-only and derived from recent account signatures.',
+        limitations: ['Order state is limited to reference-only recent signatures and not venue-native open orders.'],
+      },
+      executionReferences: {
+        status: 'available',
+        reason: null,
+        limitations: ['Execution references are limited to recent account signatures.'],
+      },
+    },
+    sourceMetadata: {
+      sourceKind: 'json_rpc',
+      sourceName: 'solana_rpc_readonly',
+      observedScope: [
+        'account_identity',
+        'native_balance',
+        'recent_signatures',
+        'derivative_account_metadata',
+        'order_reference_context',
+      ],
+    },
+    accountState: {
+      accountAddress: `${venueId}-account`,
+      accountLabel: venueName,
+      accountExists: true,
+      ownerProgram: 'drift-program',
+      executable: false,
+      lamports: '12000000000',
+      nativeBalanceDisplay: '12.000000000',
+      observedSlot: '123',
+      rentEpoch: '0',
+      dataLength: 0,
+    },
+    balanceState: {
+      balances: [{
+        assetKey: 'SOL',
+        assetSymbol: 'SOL',
+        assetType: 'native',
+        accountAddress: `${venueId}-account`,
+        amountAtomic: '12000000000',
+        amountDisplay: '12.000000000',
+        decimals: 9,
+        observedSlot: '123',
+      }],
+      totalTrackedBalances: 1,
+      observedSlot: '123',
+    },
+    capacityState: null,
+    exposureState: {
+      exposures: [{
+        exposureKey: `SOL:${venueId}-account`,
+        exposureType: 'balance_derived_spot',
+        assetKey: 'SOL',
+        quantity: '12000000000',
+        quantityDisplay: '12.000000000',
+        accountAddress: `${venueId}-account`,
+      }],
+      methodology: 'balance_derived_spot_exposure',
+    },
+    derivativeAccountState: {
+      venue: venueId,
+      accountAddress: `${venueId}-account`,
+      accountLabel: venueName,
+      accountExists: true,
+      ownerProgram: 'drift-program',
+      accountModel: 'program_account',
+      venueAccountType: null,
+      decoded: false,
+      authorityAddress: null,
+      subaccountId: null,
+      observedSlot: '123',
+      rpcVersion: '1.18.0',
+      dataLength: 512,
+      rawDiscriminatorHex: '0102030405060708',
+      notes: [
+        'Program-owned account metadata was captured from raw RPC.',
+        'Venue-native decode is unavailable in the current repo because no Drift or Anchor decoder is present.',
+      ],
+    },
+    derivativePositionState: null,
+    derivativeHealthState: null,
+    orderState: {
+      openOrderCount: null,
+      openOrders: [{
+        venueOrderId: null,
+        reference: `${venueId}-sig-1`,
+        marketKey: null,
+        marketSymbol: null,
+        side: 'unknown',
+        status: 'confirmed',
+        orderType: null,
+        price: null,
+        quantity: null,
+        reduceOnly: null,
+        accountAddress: `${venueId}-account`,
+        slot: '123',
+        placedAt: '2026-03-31T11:59:00.000Z',
+        metadata: {
+          referenceOnly: true,
+        },
+      }],
+      referenceMode: 'recent_account_signatures',
+      methodology: 'recent_account_signatures_reference_context',
+      notes: [
+        'This section is reference-only context derived from recent account signatures.',
+        'It is not a venue-native open-orders decode and may include non-order transactions.',
+      ],
+    },
+    executionReferenceState: {
+      referenceLookbackLimit: 10,
+      references: [{
+        referenceType: 'solana_signature',
+        reference: `${venueId}-sig-1`,
+        accountAddress: `${venueId}-account`,
+        slot: '123',
+        blockTime: '2026-03-31T11:59:00.000Z',
+        confirmationStatus: 'confirmed',
+        errored: false,
+        memo: null,
+      }],
+      oldestReferenceAt: '2026-03-31T11:59:00.000Z',
+    },
+    payload: {
+      balanceSol: '12.000000000',
+    },
+    metadata: {},
+    ...overrides,
+  };
+}
+
 function operatorHeaders(
   role: 'viewer' | 'operator' | 'admin',
   method: string,
   path: string,
+  operatorId?: string,
 ): Record<string, string> {
   return createOperatorHeaders({
     role,
+    ...(operatorId === undefined ? {} : { operatorId }),
     method,
     path,
     apiKey: TEST_API_KEY,
     sharedSecret: TEST_SHARED_SECRET,
   });
+}
+
+class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
+  private connected = false;
+  private snapshotOverrides: Partial<VenueTruthSnapshot>;
+
+  constructor(
+    readonly venueId = 'drift-solana-readonly',
+    readonly venueName = 'Drift Solana Read-Only',
+    snapshotOverrides: Partial<VenueTruthSnapshot> = {},
+    private readonly capabilityOverrides: Partial<VenueCapabilitySnapshot> = {},
+  ) {
+    this.snapshotOverrides = snapshotOverrides;
+  }
+
+  async connect(): Promise<void> {
+    this.connected = true;
+  }
+
+  async disconnect(): Promise<void> {
+    this.connected = false;
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  async getVenueCapabilitySnapshot(): Promise<VenueCapabilitySnapshot> {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    return {
+      venueId: this.venueId,
+      venueName: this.venueName,
+      sleeveApplicability: ['carry'],
+      connectorType: 'solana_rpc_readonly',
+      truthMode: 'real' as const,
+      readOnlySupport: true,
+      executionSupport: false,
+      approvedForLiveUse: false,
+      onboardingState: 'read_only' as const,
+      missingPrerequisites: [],
+      authRequirementsSummary: ['DRIFT_RPC_ENDPOINT', 'DRIFT_READONLY_ACCOUNT_ADDRESS'],
+      healthy: true,
+      healthState: 'healthy' as const,
+      degradedReason: null,
+      metadata: {},
+      ...this.capabilityOverrides,
+    } as VenueCapabilitySnapshot;
+  }
+
+  async getVenueTruthSnapshot(): Promise<VenueTruthSnapshot> {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    return createStubVenueTruthSnapshot(this.venueId, this.venueName, this.snapshotOverrides);
+  }
+
+  setSnapshotOverrides(snapshotOverrides: Partial<VenueTruthSnapshot>): void {
+    this.snapshotOverrides = snapshotOverrides;
+  }
 }
 
 describe('runtime-backed API routes', () => {
@@ -349,6 +626,366 @@ describe('runtime-backed API routes', () => {
     expect(completedExecutionBody.data.command?.commandId).toBeTruthy();
     expect(completedExecutionBody.data.venue?.executionSupported).toBe(true);
     expect(completedExecutionBody.data.timeline.length).toBeGreaterThan(0);
+  });
+
+  it('exposes generic venue inventory, readiness, summary, and snapshot detail through the API', async () => {
+    await app.close();
+    await worker.stop();
+
+    const harness = await createApiHarness({
+      truthAdapters: [new StubReadonlyVenueTruthAdapter()],
+    });
+    connectionString = harness.connectionString;
+    controlPlane = harness.controlPlane;
+    worker = harness.worker;
+    app = await createApp({ controlPlane });
+    await app.ready();
+
+    const [
+      venuesResponse,
+      summaryResponse,
+      truthSummaryResponse,
+      readinessResponse,
+      detailResponse,
+      snapshotsResponse,
+    ] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/venues',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/venues/summary',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/venues/truth-summary',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/venues/readiness',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/venues/drift-solana-readonly',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/venues/drift-solana-readonly/snapshots',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(venuesResponse.statusCode).toBe(200);
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(truthSummaryResponse.statusCode).toBe(200);
+    expect(readinessResponse.statusCode).toBe(200);
+    expect(detailResponse.statusCode).toBe(200);
+    expect(snapshotsResponse.statusCode).toBe(200);
+
+    const venuesBody = venuesResponse.json<{
+      data: Array<{
+        venueId: string;
+        truthMode: string;
+        truthProfile: string;
+        readOnlySupport: boolean;
+        snapshotCompleteness: string;
+        truthCoverage: {
+          accountState: { status: string };
+          derivativeAccountState: { status: string };
+          orderState: { status: string };
+          balanceState: { status: string };
+          executionReferences: { status: string };
+        };
+      }>;
+    }>();
+    const summaryBody = summaryResponse.json<{ data: { realReadOnly: number; derivativeAware: number } }>();
+    const truthSummaryBody = truthSummaryResponse.json<{
+      data: {
+        partialSnapshots: number;
+        derivativeAwareVenues: number;
+        accountState: { available: number };
+        derivativeAccountState: { partial: number };
+        orderState: { partial: number };
+        executionReferences: { available: number };
+      };
+    }>();
+    const detailBody = detailResponse.json<{
+      data: {
+        venue: {
+          venueId: string;
+          truthProfile: string;
+          snapshotCompleteness: string;
+          truthCoverage: {
+            accountState: { status: string };
+            derivativeAccountState: { status: string };
+            orderState: { status: string };
+            executionReferences: { status: string };
+          };
+        };
+        snapshots: Array<{
+          snapshotType: string;
+          truthProfile: string;
+          accountState: { accountAddress: string | null } | null;
+          derivativeAccountState: { accountModel: string; rawDiscriminatorHex: string | null } | null;
+          balanceState: { balances: Array<{ assetKey: string }> } | null;
+          orderState: { referenceMode: string; openOrders: Array<{ reference: string | null }> } | null;
+          executionReferenceState: { references: Array<{ reference: string }> } | null;
+        }>;
+      };
+    }>();
+    const snapshotsBody = snapshotsResponse.json<{
+      data: Array<{
+        snapshotType: string;
+        snapshotCompleteness: string;
+        truthCoverage: { balanceState: { status: string } };
+      }>;
+    }>();
+
+    expect(venuesBody.data.some((venue) => venue.venueId === 'drift-solana-readonly')).toBe(true);
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthMode).toBe('real');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthProfile).toBe('derivative_aware');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.readOnlySupport).toBe(true);
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.snapshotCompleteness).toBe('partial');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.accountState.status).toBe('available');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.derivativeAccountState.status).toBe('partial');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.orderState.status).toBe('partial');
+    expect(summaryBody.data.realReadOnly).toBeGreaterThan(0);
+    expect(summaryBody.data.derivativeAware).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.partialSnapshots).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.derivativeAwareVenues).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.accountState.available).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.derivativeAccountState.partial).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.orderState.partial).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.executionReferences.available).toBeGreaterThan(0);
+    expect(detailBody.data.venue.venueId).toBe('drift-solana-readonly');
+    expect(detailBody.data.venue.truthProfile).toBe('derivative_aware');
+    expect(detailBody.data.venue.snapshotCompleteness).toBe('partial');
+    expect(detailBody.data.venue.truthCoverage.derivativeAccountState.status).toBe('partial');
+    expect(detailBody.data.venue.truthCoverage.orderState.status).toBe('partial');
+    expect(detailBody.data.venue.truthCoverage.executionReferences.status).toBe('available');
+    expect(detailBody.data.snapshots[0]?.snapshotType).toBe('solana_rpc_account_state');
+    expect(detailBody.data.snapshots[0]?.truthProfile).toBe('derivative_aware');
+    expect(detailBody.data.snapshots[0]?.accountState?.accountAddress).toContain('drift-solana-readonly-account');
+    expect(detailBody.data.snapshots[0]?.derivativeAccountState?.accountModel).toBe('program_account');
+    expect(detailBody.data.snapshots[0]?.derivativeAccountState?.rawDiscriminatorHex).toBe('0102030405060708');
+    expect(detailBody.data.snapshots[0]?.balanceState?.balances.length).toBeGreaterThan(0);
+    expect(detailBody.data.snapshots[0]?.orderState?.referenceMode).toBe('recent_account_signatures');
+    expect(detailBody.data.snapshots[0]?.orderState?.openOrders.length).toBeGreaterThan(0);
+    expect(detailBody.data.snapshots[0]?.executionReferenceState?.references.length).toBeGreaterThan(0);
+    expect(snapshotsBody.data[0]?.snapshotType).toBe('solana_rpc_account_state');
+    expect(snapshotsBody.data[0]?.snapshotCompleteness).toBe('partial');
+    expect(snapshotsBody.data[0]?.truthCoverage.balanceState.status).toBe('available');
+  });
+
+  it('surfaces missing, stale, and unavailable real venue truth through the reconciliation API', async () => {
+    await app.close();
+    await worker.stop();
+
+    const missingAdapter = new StubReadonlyVenueTruthAdapter(
+      'drift-solana-missing',
+      'Drift Solana Missing',
+      {
+        snapshotType: 'solana_rpc_error',
+        snapshotSuccessful: false,
+        healthy: false,
+        healthState: 'degraded',
+        summary: 'Read-only balance snapshot is not available yet.',
+        errorMessage: 'Account balance has not been captured yet.',
+        capturedAt: freshCapturedAt(),
+        payload: {},
+      },
+      {
+        healthy: false,
+        healthState: 'degraded',
+        degradedReason: 'Account balance has not been captured yet.',
+      },
+    );
+
+    const harness = await createApiHarness({
+      truthAdapters: [
+        missingAdapter,
+        new StubReadonlyVenueTruthAdapter(
+          'drift-solana-stale',
+          'Drift Solana Stale',
+          {
+            capturedAt: '2020-01-01T00:00:00.000Z',
+            payload: { balanceSol: '6.500000000' },
+          },
+        ),
+        new StubReadonlyVenueTruthAdapter(
+          'drift-solana-unavailable',
+          'Drift Solana Unavailable',
+          {
+            snapshotType: 'solana_rpc_error',
+            snapshotSuccessful: false,
+            healthy: false,
+            healthState: 'unavailable',
+            summary: 'Read-only RPC snapshot failed.',
+            errorMessage: 'RPC getVersion failed with status 503.',
+            capturedAt: freshCapturedAt(),
+            payload: {},
+          },
+          {
+            healthy: false,
+            healthState: 'unavailable',
+            degradedReason: 'RPC getVersion failed with status 503.',
+          },
+        ),
+      ],
+    }, {
+      cycleIntervalMs: 60_000,
+      pollIntervalMs: 25,
+    });
+    connectionString = harness.connectionString;
+    controlPlane = harness.controlPlane;
+    worker = harness.worker;
+    app = await createApp({ controlPlane });
+    await app.ready();
+
+    const firstReconciliationCommandRecord = await controlPlane.enqueueReconciliationRun('operator-user', {
+      trigger: 'api-phase-5-2-missing-venue-truth',
+      triggeredBy: 'operator-user',
+    });
+    const firstReconciliationCommand = await waitForCommand(
+      controlPlane,
+      firstReconciliationCommandRecord.commandId,
+    );
+    expect(firstReconciliationCommand.status).toBe('completed');
+    await waitFor(
+      async () => controlPlane.listReconciliationFindings({
+        findingType: 'missing_venue_truth_snapshot',
+        limit: 20,
+      }),
+      (findings) => findings.some(
+        (finding) => finding.venueId === 'drift-solana-missing' && finding.status === 'active',
+      ),
+    );
+
+    const missingFindingsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/runtime/reconciliation/findings?findingType=missing_venue_truth_snapshot',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(missingFindingsResponse.statusCode).toBe(200);
+    const missingFindingsBody = missingFindingsResponse.json<{
+      data: Array<{ venueId: string | null; status: string }>;
+    }>();
+    expect(
+      missingFindingsBody.data.some(
+        (finding) => finding.venueId === 'drift-solana-missing' && finding.status === 'active',
+      ),
+    ).toBe(true);
+
+    missingAdapter.setSnapshotOverrides({
+      snapshotType: 'solana_rpc_account_state',
+      snapshotSuccessful: true,
+      healthy: true,
+      healthState: 'healthy',
+      summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+      errorMessage: null,
+      capturedAt: freshCapturedAt(),
+      payload: { balanceSol: '12.000000000' },
+    });
+
+    const cycleCommandRecord = await controlPlane.enqueueCommand('run_cycle', 'operator-user', {
+      triggerSource: 'api-phase-5-2-seed-venue-truth',
+    });
+    const cycleCommand = await waitForCommand(controlPlane, cycleCommandRecord.commandId, 20_000);
+    expect(cycleCommand.status).toBe('completed');
+
+    const secondReconciliationCommandRecord = await controlPlane.enqueueReconciliationRun('operator-user', {
+      trigger: 'api-phase-5-2-venue-truth-after-ingest',
+      triggeredBy: 'operator-user',
+    });
+    const secondReconciliationCommand = await waitForCommand(
+      controlPlane,
+      secondReconciliationCommandRecord.commandId,
+      20_000,
+    );
+    expect(secondReconciliationCommand.status).toBe('completed');
+    await waitFor(
+      async () => controlPlane.listReconciliationFindings({
+        findingType: 'stale_venue_truth_snapshot',
+        limit: 20,
+      }),
+      (findings) => findings.some(
+        (finding) => finding.venueId === 'drift-solana-stale' && finding.status === 'active',
+      ),
+      20_000,
+    );
+    await waitFor(
+      async () => controlPlane.listReconciliationFindings({
+        findingType: 'venue_truth_unavailable',
+        limit: 20,
+      }),
+      (findings) => findings.some(
+        (finding) => finding.venueId === 'drift-solana-unavailable' && finding.status === 'active',
+      ),
+      20_000,
+    );
+
+    const staleFindingsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/runtime/reconciliation/findings?findingType=stale_venue_truth_snapshot',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(staleFindingsResponse.statusCode).toBe(200);
+    const staleFindingsBody = staleFindingsResponse.json<{
+      data: Array<{ venueId: string | null; status: string }>;
+    }>();
+    expect(
+      staleFindingsBody.data.some(
+        (finding) => finding.venueId === 'drift-solana-stale' && finding.status === 'active',
+      ),
+    ).toBe(true);
+
+    const unavailableFindingsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/runtime/reconciliation/findings?findingType=venue_truth_unavailable',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(unavailableFindingsResponse.statusCode).toBe(200);
+    const unavailableFindingsBody = unavailableFindingsResponse.json<{
+      data: Array<{ mismatchId: string | null; venueId: string | null; findingType: string; status: string }>;
+    }>();
+    const unavailableFinding = unavailableFindingsBody.data.find(
+      (finding) => finding.venueId === 'drift-solana-unavailable' && finding.status === 'active',
+    );
+    expect(unavailableFinding).toBeTruthy();
+
+    const mismatchDetailResponse = await app.inject({
+      method: 'GET',
+      url: `/api/v1/runtime/mismatches/${unavailableFinding?.mismatchId}`,
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(mismatchDetailResponse.statusCode).toBe(200);
+    const mismatchDetailBody = mismatchDetailResponse.json<{
+      data: {
+        latestReconciliationFinding: { findingType: string } | null;
+      };
+    }>();
+    expect(mismatchDetailBody.data.latestReconciliationFinding?.findingType).toBe('venue_truth_unavailable');
+
+    const summaryResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/runtime/reconciliation/summary',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(summaryResponse.statusCode).toBe(200);
+    const summaryBody = summaryResponse.json<{
+      data: {
+        latestTypeCounts: Record<string, number>;
+      } | null;
+    }>();
+    expect(summaryBody.data?.latestTypeCounts['missing_venue_truth_snapshot']).toBeGreaterThan(0);
+    expect(summaryBody.data?.latestTypeCounts['stale_venue_truth_snapshot']).toBeGreaterThan(0);
+    expect(summaryBody.data?.latestTypeCounts['venue_truth_unavailable']).toBeGreaterThan(0);
   });
 
   it('exposes carry recommendations, execution history, venue state, and approval-driven execution through the API', async () => {
@@ -1250,6 +1887,772 @@ describe('runtime-backed API routes', () => {
     expect(bundlesBody.data.some((bundle) => bundle.proposalId === actionable?.id)).toBe(true);
     expect(Array.isArray(command.result['downstreamCarryActionIds'])).toBe(true);
     expect(Array.isArray(command.result['downstreamTreasuryActionIds'])).toBe(true);
+  });
+
+  it('exposes bundle recovery candidates and records explicit recovery requests through the allocator API', async () => {
+    const connection = await createDatabaseConnection(connectionString);
+
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/allocator/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/allocator/evaluate'),
+    });
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, evaluateBody.data.commandId);
+
+    const proposal = await waitFor(
+      async () => {
+        const proposals = await controlPlane.listRebalanceProposals(10);
+        return proposals[0] ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (proposal === null) {
+      throw new Error('Expected rebalance proposal.');
+    }
+
+    const [rebalanceExecution] = await connection.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: proposal.id,
+        commandId: 'api-bundle-recovery-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        simulated: proposal.simulated,
+        requestedBy: 'operator-user',
+        startedBy: 'worker-test',
+        outcomeSummary: 'Manual failed-child setup for API recovery test.',
+        outcome: {},
+        createdAt: new Date('2026-03-21T13:00:00.000Z'),
+        startedAt: new Date('2026-03-21T13:00:01.000Z'),
+        completedAt: new Date('2026-03-21T13:00:02.000Z'),
+        updatedAt: new Date('2026-03-21T13:00:02.000Z'),
+      })
+      .returning();
+
+    const [carryAction] = await connection.db
+      .insert(carryActions)
+      .values({
+        strategyRunId: null,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'reduce_carry_exposure',
+        status: 'failed',
+        sourceKind: 'rebalance',
+        sourceReference: proposal.id,
+        opportunityId: null,
+        asset: null,
+        summary: 'Carry child failed before any venue-side progress was recorded.',
+        notionalUsd: '5000.00',
+        details: {},
+        readiness: 'actionable',
+        executable: true,
+        blockedReasons: [],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        executionPlan: {},
+        approvedBy: 'operator-user',
+        approvedAt: new Date('2026-03-21T13:00:03.000Z'),
+        failedAt: new Date('2026-03-21T13:00:04.000Z'),
+        linkedCommandId: 'command-carry-old-failure',
+        actorId: 'operator-user',
+        createdAt: new Date('2026-03-21T13:00:03.000Z'),
+        updatedAt: new Date('2026-03-21T13:00:04.000Z'),
+        lastError: 'Simulated failure without external side effects.',
+      })
+      .returning();
+
+    await connection.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: rebalanceExecution.id,
+        linkedCommandId: 'api-bundle-recovery-setup',
+        updatedAt: new Date('2026-03-21T13:00:04.000Z'),
+      });
+
+    await connection.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        outcome: {
+          applied: false,
+          downstreamCarryActionIds: [carryAction.id],
+          downstreamTreasuryActionIds: [],
+        },
+        updatedAt: new Date('2026-03-21T13:00:04.000Z'),
+      });
+
+    const bundle = await waitFor(
+      () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'failed',
+    );
+    if (bundle === null) {
+      throw new Error('Expected rebalance bundle.');
+    }
+
+    const candidatesResponse = await app.inject({
+      method: 'GET',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-candidates`,
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(candidatesResponse.statusCode).toBe(200);
+    const candidatesBody = candidatesResponse.json<{
+      data: Array<{
+        targetChildType: string;
+        targetChildId: string;
+        eligibilityState: string;
+      }>;
+    }>();
+    const carryCandidate = candidatesBody.data.find((item) =>
+      item.targetChildType === 'carry_action' && item.targetChildId === carryAction.id,
+    );
+    expect(carryCandidate?.eligibilityState).toBe('eligible');
+
+    const requestResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-actions`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-actions`),
+      payload: {
+        recoveryActionType: 'requeue_child_execution',
+        targetChildType: 'carry_action',
+        targetChildId: carryAction.id,
+        note: 'Retry the failed carry child safely.',
+      },
+    });
+    expect(requestResponse.statusCode).toBe(202);
+    const requestBody = requestResponse.json<{ data: { id: string; linkedCommandId: string | null; status: string } }>();
+    expect(requestBody.data.status).toBe('queued');
+    expect(requestBody.data.linkedCommandId).toBeTruthy();
+
+    const recoveryCommand = await waitForCommand(controlPlane, String(requestBody.data.linkedCommandId));
+    expect(recoveryCommand.status).toBe('completed');
+
+    const [historyResponse, actionDetailResponse, bundleResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-actions`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-actions/${requestBody.data.id}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-proposals/${proposal.id}/bundle`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(historyResponse.statusCode).toBe(200);
+    expect(actionDetailResponse.statusCode).toBe(200);
+    expect(bundleResponse.statusCode).toBe(200);
+
+    const historyBody = historyResponse.json<{ data: Array<{ id: string; status: string; linkedCommandId: string | null }> }>();
+    const actionDetailBody = actionDetailResponse.json<{ data: { id: string; status: string; targetChildId: string } }>();
+    const bundleBody = bundleResponse.json<{
+      data: {
+        bundle: { status: string; failedChildCount: number };
+        recoveryActions: Array<{ id: string; status: string }>;
+      };
+    }>();
+
+    expect(historyBody.data.some((item) => item.id === requestBody.data.id)).toBe(true);
+    expect(actionDetailBody.data.status).toBe('completed');
+    expect(actionDetailBody.data.targetChildId).toBe(carryAction.id);
+    expect(bundleBody.data.bundle.status).toBe('completed');
+    expect(bundleBody.data.bundle.failedChildCount).toBe(0);
+    expect(bundleBody.data.recoveryActions.some((item) => item.id === requestBody.data.id && item.status === 'completed')).toBe(true);
+
+    await connection.close();
+  });
+
+  it('exposes bundle manual resolution options and records explicit partial-application closure through the allocator API', async () => {
+    const connection = await createDatabaseConnection(connectionString);
+
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/allocator/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/allocator/evaluate'),
+    });
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, evaluateBody.data.commandId);
+
+    const proposal = await waitFor(
+      async () => {
+        const proposals = await controlPlane.listRebalanceProposals(10);
+        return proposals[0] ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    const treasurySummaryResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/treasury/summary',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    const treasurySummaryBody = treasurySummaryResponse.json<{ data: { treasuryRunId: string } | null }>();
+    if (treasurySummaryBody.data === null) {
+      throw new Error('Expected treasury summary.');
+    }
+
+    const [rebalanceExecution] = await connection.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: proposal.id,
+        commandId: 'api-manual-resolution-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        simulated: proposal.simulated,
+        requestedBy: 'operator-user',
+        startedBy: 'worker-test',
+        outcomeSummary: 'Manual partial bundle setup for API resolution test.',
+        outcome: {
+          applied: true,
+        },
+        createdAt: new Date('2026-03-22T13:00:00.000Z'),
+        startedAt: new Date('2026-03-22T13:00:01.000Z'),
+        completedAt: new Date('2026-03-22T13:00:02.000Z'),
+        updatedAt: new Date('2026-03-22T13:00:02.000Z'),
+      })
+      .returning();
+
+    const [carryAction] = await connection.db
+      .insert(carryActions)
+      .values({
+        strategyRunId: null,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'increase_carry_exposure',
+        status: 'recommended',
+        sourceKind: 'rebalance',
+        sourceReference: proposal.id,
+        opportunityId: null,
+        asset: null,
+        summary: 'Carry child remained blocked before application.',
+        notionalUsd: '5000.00',
+        details: {},
+        readiness: 'blocked',
+        executable: false,
+        blockedReasons: [{
+          code: 'venue_execution_unsupported',
+          category: 'venue_capability',
+          message: 'Carry venue remains unsupported for execution.',
+          operatorAction: 'Inspect venue readiness before retrying.',
+          details: {},
+        }],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        executionPlan: {},
+        actorId: 'operator-user',
+        createdAt: new Date('2026-03-22T13:00:03.000Z'),
+        updatedAt: new Date('2026-03-22T13:00:03.000Z'),
+      })
+      .returning();
+
+    const [treasuryAction] = await connection.db
+      .insert(treasuryActions)
+      .values({
+        treasuryRunId: treasurySummaryBody.data.treasuryRunId,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'rebalance_treasury_budget',
+        status: 'completed',
+        venueId: null,
+        venueName: null,
+        venueMode: 'reserve',
+        amountUsd: '5000.00',
+        reasonCode: 'rebalance_budget_application',
+        summary: 'Treasury child completed budget-state application.',
+        details: {
+          rebalanceProposalId: proposal.id,
+        },
+        readiness: 'actionable',
+        executable: true,
+        blockedReasons: [],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        approvedBy: 'operator-user',
+        approvedAt: new Date('2026-03-22T13:00:04.000Z'),
+        completedAt: new Date('2026-03-22T13:00:06.000Z'),
+        actorId: 'operator-user',
+        createdAt: new Date('2026-03-22T13:00:04.000Z'),
+        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+      })
+      .returning();
+
+    const [treasuryExecution] = await connection.db
+      .insert(treasuryActionExecutions)
+      .values({
+        treasuryActionId: treasuryAction?.id ?? '',
+        treasuryRunId: treasurySummaryBody.data.treasuryRunId,
+        commandId: 'api-manual-resolution-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        venueMode: 'reserve',
+        simulated: true,
+        requestedBy: 'operator-user',
+        startedBy: 'worker-test',
+        blockedReasons: [],
+        outcomeSummary: 'Budget-state treasury application completed.',
+        outcome: {
+          executionKind: 'budget_state_application',
+          rebalanceProposalId: proposal.id,
+        },
+        createdAt: new Date('2026-03-22T13:00:05.000Z'),
+        startedAt: new Date('2026-03-22T13:00:05.000Z'),
+        completedAt: new Date('2026-03-22T13:00:06.000Z'),
+        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+      })
+      .returning();
+
+    await connection.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: rebalanceExecution?.id ?? null,
+        linkedCommandId: 'api-manual-resolution-setup',
+        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+      });
+
+    await connection.db
+      .update(treasuryActions)
+      .set({
+        latestExecutionId: treasuryExecution?.id ?? null,
+        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+      });
+
+    await connection.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        outcome: {
+          applied: true,
+          downstreamCarryActionIds: [carryAction?.id],
+          downstreamTreasuryActionIds: [treasuryAction?.id],
+        },
+        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+      });
+
+    const bundle = await waitFor(
+      () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'requires_intervention',
+    );
+    if (bundle === null || carryAction === undefined) {
+      throw new Error('Expected requires_intervention bundle.');
+    }
+
+    const optionsResponse = await app.inject({
+      method: 'GET',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-options`,
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(optionsResponse.statusCode).toBe(200);
+    const optionsBody = optionsResponse.json<{ data: Array<{ resolutionActionType: string; eligibilityState: string }> }>();
+    const acceptPartial = optionsBody.data.find((item) => item.resolutionActionType === 'accept_partial_application');
+    expect(acceptPartial?.eligibilityState).toBe('eligible');
+
+    const requestResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`),
+      payload: {
+        resolutionActionType: 'accept_partial_application',
+        note: 'Treasury budget-state application is acceptable; carry remains intentionally non-retryable.',
+      },
+    });
+    expect(requestResponse.statusCode).toBe(200);
+    const requestBody = requestResponse.json<{ data: { id: string; status: string; resolutionState: string } }>();
+    expect(requestBody.data.status).toBe('completed');
+    expect(requestBody.data.resolutionState).toBe('accepted_partial');
+
+    const [historyResponse, detailResponse, bundleResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions/${requestBody.data.id}`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-proposals/${proposal.id}/bundle`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(historyResponse.statusCode).toBe(200);
+    expect(detailResponse.statusCode).toBe(200);
+    expect(bundleResponse.statusCode).toBe(200);
+
+    const historyBody = historyResponse.json<{ data: Array<{ id: string; status: string }> }>();
+    const detailBody = detailResponse.json<{ data: { id: string; status: string; resolutionState: string; note: string } }>();
+    const bundleBody = bundleResponse.json<{
+      data: {
+        bundle: { status: string; resolutionState: string; interventionRecommendation: string };
+        partialProgress: { appliedChildren: number; nonRetryableChildren: number };
+        resolutionActions: Array<{ id: string; status: string }>;
+      };
+    }>();
+
+    expect(historyBody.data.some((item) => item.id === requestBody.data.id)).toBe(true);
+    expect(detailBody.data.status).toBe('completed');
+    expect(detailBody.data.resolutionState).toBe('accepted_partial');
+    expect(detailBody.data.note).toContain('Treasury budget-state application');
+    expect(bundleBody.data.bundle.status).toBe('requires_intervention');
+    expect(bundleBody.data.bundle.resolutionState).toBe('accepted_partial');
+    expect(bundleBody.data.bundle.interventionRecommendation).toBe('accepted_partial_application');
+    expect(bundleBody.data.partialProgress.appliedChildren).toBe(1);
+    expect(bundleBody.data.partialProgress.nonRetryableChildren).toBe(1);
+    expect(bundleBody.data.resolutionActions.some((item) => item.id === requestBody.data.id && item.status === 'completed')).toBe(true);
+
+    await connection.close();
+  });
+
+  it('exposes escalation detail and enforces assign, acknowledge, review, and close transitions through the allocator API', async () => {
+    const connection = await createDatabaseConnection(connectionString);
+
+    const evaluateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/allocator/evaluate',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/allocator/evaluate'),
+    });
+    const evaluateBody = evaluateResponse.json<{ data: { commandId: string } }>();
+    await waitForCommand(controlPlane, evaluateBody.data.commandId);
+
+    const proposal = await waitFor(
+      async () => {
+        const proposals = await controlPlane.listRebalanceProposals(10);
+        return proposals[0] ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    const treasurySummaryResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/treasury/summary',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    const treasurySummaryBody = treasurySummaryResponse.json<{ data: { treasuryRunId: string } | null }>();
+    if (treasurySummaryBody.data === null) {
+      throw new Error('Expected treasury summary.');
+    }
+
+    const [rebalanceExecution] = await connection.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: proposal.id,
+        commandId: 'api-escalation-workflow-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        simulated: proposal.simulated,
+        requestedBy: 'operator-user',
+        startedBy: 'worker-test',
+        outcomeSummary: 'Manual partial bundle setup for API escalation test.',
+        outcome: { applied: true },
+        createdAt: new Date('2026-03-23T13:00:00.000Z'),
+        startedAt: new Date('2026-03-23T13:00:01.000Z'),
+        completedAt: new Date('2026-03-23T13:00:02.000Z'),
+        updatedAt: new Date('2026-03-23T13:00:02.000Z'),
+      })
+      .returning();
+
+    const [carryAction] = await connection.db
+      .insert(carryActions)
+      .values({
+        strategyRunId: null,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'increase_carry_exposure',
+        status: 'recommended',
+        sourceKind: 'rebalance',
+        sourceReference: proposal.id,
+        opportunityId: null,
+        asset: null,
+        summary: 'Carry child remained blocked pending venue-side follow-up.',
+        notionalUsd: '5000.00',
+        details: {},
+        readiness: 'blocked',
+        executable: false,
+        blockedReasons: [{
+          code: 'venue_execution_unsupported',
+          category: 'venue_capability',
+          message: 'Carry venue remains unsupported for execution.',
+          operatorAction: 'Inspect venue readiness before retrying.',
+          details: {},
+        }],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        executionPlan: {},
+        actorId: 'operator-user',
+        createdAt: new Date('2026-03-23T13:00:03.000Z'),
+        updatedAt: new Date('2026-03-23T13:00:03.000Z'),
+      })
+      .returning();
+
+    const [treasuryAction] = await connection.db
+      .insert(treasuryActions)
+      .values({
+        treasuryRunId: treasurySummaryBody.data.treasuryRunId,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'rebalance_treasury_budget',
+        status: 'completed',
+        venueId: null,
+        venueName: null,
+        venueMode: 'reserve',
+        amountUsd: '5000.00',
+        reasonCode: 'rebalance_budget_application',
+        summary: 'Treasury child completed budget-state application.',
+        details: {
+          rebalanceProposalId: proposal.id,
+        },
+        readiness: 'actionable',
+        executable: true,
+        blockedReasons: [],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        approvedBy: 'operator-user',
+        approvedAt: new Date('2026-03-23T13:00:04.000Z'),
+        completedAt: new Date('2026-03-23T13:00:06.000Z'),
+        actorId: 'operator-user',
+        createdAt: new Date('2026-03-23T13:00:04.000Z'),
+        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+      })
+      .returning();
+
+    const [treasuryExecution] = await connection.db
+      .insert(treasuryActionExecutions)
+      .values({
+        treasuryActionId: treasuryAction?.id ?? '',
+        treasuryRunId: treasurySummaryBody.data.treasuryRunId,
+        commandId: 'api-escalation-workflow-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        venueMode: 'reserve',
+        simulated: true,
+        requestedBy: 'operator-user',
+        startedBy: 'worker-test',
+        blockedReasons: [],
+        outcomeSummary: 'Budget-state treasury application completed.',
+        outcome: {
+          executionKind: 'budget_state_application',
+          rebalanceProposalId: proposal.id,
+        },
+        createdAt: new Date('2026-03-23T13:00:05.000Z'),
+        startedAt: new Date('2026-03-23T13:00:05.000Z'),
+        completedAt: new Date('2026-03-23T13:00:06.000Z'),
+        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+      })
+      .returning();
+
+    await connection.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: rebalanceExecution?.id ?? null,
+        linkedCommandId: 'api-escalation-workflow-setup',
+        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+      });
+
+    await connection.db
+      .update(treasuryActions)
+      .set({
+        latestExecutionId: treasuryExecution?.id ?? null,
+        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+      });
+
+    await connection.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        outcome: {
+          applied: true,
+          downstreamCarryActionIds: [carryAction?.id],
+          downstreamTreasuryActionIds: [treasuryAction?.id],
+        },
+        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+      });
+
+    const bundle = await waitFor(
+      () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'requires_intervention',
+    );
+    if (bundle === null) {
+      throw new Error('Expected requires_intervention bundle.');
+    }
+
+    const escalateResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`),
+      payload: {
+        resolutionActionType: 'escalate_bundle_for_review',
+        note: 'Escalating bundle for explicit operator handoff and venue-side follow-up.',
+      },
+    });
+    expect(escalateResponse.statusCode).toBe(200);
+
+    const [
+      escalationResponse,
+      openQueueResponse,
+      summaryResponse,
+      mineResponse,
+      assignResponse,
+    ] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/escalations?openState=open&sortBy=due_at&sortDirection=asc',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/escalations/summary',
+        headers: operatorHeaders('operator', 'GET', '/api/v1/allocator/escalations/summary', 'operator-user'),
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/escalations/mine',
+        headers: operatorHeaders('operator', 'GET', '/api/v1/allocator/escalations/mine', 'operator-user'),
+      }),
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/assign`,
+        headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/assign`),
+        payload: {
+          ownerId: 'review-owner',
+          note: 'Assigning to the reviewer responsible for venue-side follow-up.',
+          dueAt: '2026-03-24T13:00:00.000Z',
+        },
+      }),
+    ]);
+    expect(escalationResponse.statusCode).toBe(200);
+    expect(openQueueResponse.statusCode).toBe(200);
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(mineResponse.statusCode).toBe(200);
+    expect(assignResponse.statusCode).toBe(200);
+
+    const acknowledgeResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/acknowledge`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/acknowledge`, 'review-owner'),
+      payload: {
+        note: 'Acknowledged by the assigned reviewer.',
+      },
+    });
+    expect(acknowledgeResponse.statusCode).toBe(200);
+
+    const reviewResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`, 'review-owner'),
+      payload: {
+        note: 'Active review started for venue-side discrepancy investigation.',
+      },
+    });
+    expect(reviewResponse.statusCode).toBe(200);
+
+    const closeResponse = await app.inject({
+      method: 'POST',
+      url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/close`,
+      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/close`, 'review-owner'),
+      payload: {
+        note: 'Resolved after operator handoff and venue-side follow-up were completed.',
+      },
+    });
+    expect(closeResponse.statusCode).toBe(200);
+
+    const [historyResponse, bundleResponse, invalidReviewResponse, resolvedQueueResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/history`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/allocator/rebalance-proposals/${proposal.id}/bundle`,
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`,
+        headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`, 'review-owner'),
+        payload: {
+          note: 'This should fail because the escalation is already resolved.',
+        },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/allocator/escalations?status=resolved&openState=closed',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
+    ]);
+
+    expect(historyResponse.statusCode).toBe(200);
+    expect(bundleResponse.statusCode).toBe(200);
+    expect(invalidReviewResponse.statusCode).toBe(409);
+    expect(resolvedQueueResponse.statusCode).toBe(200);
+
+    const escalationBody = escalationResponse.json<{
+      data: {
+        escalation: { status: string; ownerId: string | null } | null;
+        transitions: Array<{ transitionType: string }>;
+      };
+    }>();
+    const openQueueBody = openQueueResponse.json<{
+      data: Array<{ bundleId: string; escalationStatus: string; escalationQueueState: string; ownerId: string | null }>;
+    }>();
+    const summaryBody = summaryResponse.json<{
+      data: { open: number; overdue: number; mine: number };
+    }>();
+    const mineBody = mineResponse.json<{
+      data: Array<{ bundleId: string; ownerId: string | null }>;
+    }>();
+    const historyBody = historyResponse.json<{ data: Array<{ eventType: string; ownerId: string | null }> }>();
+    const resolvedQueueBody = resolvedQueueResponse.json<{
+      data: Array<{ bundleId: string; escalationStatus: string; ownerId: string | null }>;
+    }>();
+    const bundleBody = bundleResponse.json<{
+      data: {
+        bundle: {
+          resolutionState: string;
+          escalationStatus: string | null;
+          escalationOwnerId: string | null;
+        };
+        escalation: { status: string; ownerId: string | null; closedBy: string | null } | null;
+        escalationHistory: Array<{ eventType: string }>;
+      };
+    }>();
+
+    expect(escalationBody.data.escalation?.status).toBe('open');
+    expect(escalationBody.data.transitions.some((item) => item.transitionType === 'assign')).toBe(true);
+    expect(openQueueBody.data.some((item) =>
+      item.bundleId === bundle.bundle.id
+      && item.escalationStatus === 'open'
+      && item.escalationQueueState === 'on_track',
+    )).toBe(true);
+    expect(summaryBody.data.open).toBeGreaterThanOrEqual(1);
+    expect(mineBody.data.some((item) => item.bundleId === bundle.bundle.id && item.ownerId === 'operator-user')).toBe(true);
+    expect(historyBody.data.map((item) => item.eventType)).toEqual(
+      expect.arrayContaining(['created', 'assigned', 'acknowledged', 'review_started', 'resolved']),
+    );
+    expect(resolvedQueueBody.data.some((item) =>
+      item.bundleId === bundle.bundle.id
+      && item.escalationStatus === 'resolved'
+      && item.ownerId === 'review-owner',
+    )).toBe(true);
+    expect(bundleBody.data.bundle.resolutionState).toBe('escalated');
+    expect(bundleBody.data.bundle.escalationStatus).toBe('resolved');
+    expect(bundleBody.data.bundle.escalationOwnerId).toBe('review-owner');
+    expect(bundleBody.data.escalation?.closedBy).toBe('review-owner');
+    expect(bundleBody.data.escalationHistory.some((item) => item.eventType === 'resolved')).toBe(true);
+
+    await connection.close();
   });
 
   it('requires operator authorization for allocator evaluation', async () => {

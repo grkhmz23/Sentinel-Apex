@@ -10,6 +10,10 @@ import type {
 import type { CarryExecutionIntent, CarryOperationalBlockedReason } from '@sentinel-apex/carry';
 import {
   allocatorCurrent,
+  allocatorRebalanceBundleEscalationEvents,
+  allocatorRebalanceBundleEscalations,
+  allocatorRebalanceBundleRecoveryActions,
+  allocatorRebalanceBundleResolutionActions,
   allocatorRebalanceBundles,
   allocatorRebalanceCurrent,
   allocatorRebalanceExecutions,
@@ -49,6 +53,7 @@ import {
   treasuryCurrent,
   treasuryRuns,
   treasuryVenueSnapshots,
+  venueConnectorSnapshots,
   type Database,
 } from '@sentinel-apex/db';
 import type { OrderFill, OrderIntent, OrderStatus, RiskAssessment } from '@sentinel-apex/domain';
@@ -86,11 +91,37 @@ import type {
   PositionView,
   RebalanceCurrentView,
   RebalanceBundleCompletionState,
+  RebalanceBundleRecoveryActionType,
+  RebalanceBundleRecoveryActionView,
+  RebalanceBundleRecoveryBlockedReason,
+  RebalanceBundleRecoveryCandidateView,
+  RebalanceBundleRecoveryEligibilityState,
+  RebalanceBundleRecoveryStatus,
+  RebalanceBundleEscalationBlockedReason,
+  RebalanceBundleEscalationEventType,
+  RebalanceBundleEscalationEventView,
+  RebalanceEscalationQueueFilters,
+  RebalanceEscalationQueueItemView,
+  RebalanceEscalationQueueState,
+  RebalanceEscalationQueueSummaryView,
+  RebalanceBundleEscalationTransitionView,
+  RebalanceBundleEscalationStatus,
+  RebalanceBundleEscalationTransitionType,
+  RebalanceBundleEscalationView,
+  RebalanceBundleResolutionActionStatus,
+  RebalanceBundleResolutionActionType,
+  RebalanceBundleResolutionActionView,
+  RebalanceBundleResolutionBlockedReason,
+  RebalanceBundleResolutionOptionView,
+  RebalanceBundleResolutionState,
   RebalanceBundleDetailView,
   RebalanceBundleInterventionRecommendation,
   RebalanceBundleOutcomeClassification,
   RebalanceBundleStatus,
   RebalanceBundleView,
+  RebalanceBundlePartialProgressView,
+  RebalanceBundlePartialProgressSleeveView,
+  RebalanceBundleChildInspectionView,
   RebalanceDownstreamStatusRollupView,
   RebalanceExecutionView,
   RebalanceExecutionGraphView,
@@ -134,6 +165,27 @@ import type {
   TreasuryExecutionView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  VenueAccountStateSnapshot,
+  VenueDerivativeAccountStateSnapshot,
+  VenueDerivativeHealthStateSnapshot,
+  VenueDerivativePositionStateSnapshot,
+  VenueDetailView,
+  VenueExecutionReferenceStateSnapshot,
+  VenueExposureStateSnapshot,
+  VenueHealthState,
+  VenueInventoryItemView,
+  VenueInventorySummaryView,
+  VenueOnboardingState,
+  VenueOrderStateSnapshot,
+  VenueSnapshotFreshness,
+  VenueSnapshotView,
+  VenueTruthCoverage,
+  VenueTruthSnapshotCompleteness,
+  VenueTruthProfile,
+  VenueTruthSummaryView,
+  VenueTruthSourceMetadata,
+  VenueTruthMode,
+  VenueTruthSleeve,
   TreasuryVenueDetailView,
   TreasuryVenueView,
   WorkerLifecycleState,
@@ -153,6 +205,201 @@ function toIsoString(value: Date | string | null | undefined): string | null {
   }
 
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+const VENUE_SNAPSHOT_STALE_AFTER_MS = 15 * 60 * 1000;
+
+interface PersistedVenueSnapshotPayload {
+  rawPayload: Record<string, unknown>;
+  snapshotCompleteness: VenueTruthSnapshotCompleteness;
+  truthCoverage: VenueTruthCoverage;
+  sourceMetadata: VenueTruthSourceMetadata;
+  accountState: VenueAccountStateSnapshot | null;
+  balanceState: VenueSnapshotView['balanceState'];
+  capacityState: VenueSnapshotView['capacityState'];
+  exposureState: VenueExposureStateSnapshot | null;
+  derivativeAccountState: VenueDerivativeAccountStateSnapshot | null;
+  derivativePositionState: VenueDerivativePositionStateSnapshot | null;
+  derivativeHealthState: VenueDerivativeHealthStateSnapshot | null;
+  orderState: VenueOrderStateSnapshot | null;
+  executionReferenceState: VenueExecutionReferenceStateSnapshot | null;
+}
+
+function classifyVenueSnapshotFreshness(capturedAt: Date): VenueSnapshotFreshness {
+  const ageMs = Date.now() - capturedAt.getTime();
+  return ageMs > VENUE_SNAPSHOT_STALE_AFTER_MS ? 'stale' : 'fresh';
+}
+
+function createEmptyVenueTruthCoverage(): VenueTruthCoverage {
+  return {
+    accountState: {
+      status: 'unsupported',
+      reason: 'No account identity coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    balanceState: {
+      status: 'unsupported',
+      reason: 'No balance coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    capacityState: {
+      status: 'unsupported',
+      reason: 'No capacity coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    exposureState: {
+      status: 'unsupported',
+      reason: 'No exposure coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    derivativeAccountState: {
+      status: 'unsupported',
+      reason: 'No derivative account coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    derivativePositionState: {
+      status: 'unsupported',
+      reason: 'No derivative position coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    derivativeHealthState: {
+      status: 'unsupported',
+      reason: 'No derivative health coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    orderState: {
+      status: 'unsupported',
+      reason: 'No order-state coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+    executionReferences: {
+      status: 'unsupported',
+      reason: 'No execution-reference coverage was recorded for this snapshot.',
+      limitations: [],
+    },
+  };
+}
+
+function defaultVenueTruthSourceMetadata(
+  connectorType: string,
+  truthMode: VenueTruthMode,
+): VenueTruthSourceMetadata {
+  return {
+    sourceKind: truthMode === 'simulated' ? 'simulation' : 'adapter',
+    sourceName: connectorType,
+    observedScope: [],
+  };
+}
+
+function deserialiseVenueSnapshotPayload(
+  snapshotPayload: unknown,
+  connectorType: string,
+  truthMode: VenueTruthMode,
+): PersistedVenueSnapshotPayload {
+  const payload = asJsonObject(snapshotPayload);
+  const rawPayload = asJsonObject(payload['rawPayload']);
+  const coverage = payload['truthCoverage'];
+  const sourceMetadata = payload['sourceMetadata'];
+
+  return {
+    rawPayload: Object.keys(rawPayload).length === 0 ? payload : rawPayload,
+    snapshotCompleteness: payload['snapshotCompleteness'] === 'complete'
+      || payload['snapshotCompleteness'] === 'partial'
+      || payload['snapshotCompleteness'] === 'minimal'
+      ? payload['snapshotCompleteness']
+      : 'minimal',
+    truthCoverage: asJsonObject(coverage)['accountState'] !== undefined
+      ? coverage as VenueTruthCoverage
+      : createEmptyVenueTruthCoverage(),
+    sourceMetadata: asJsonObject(sourceMetadata)['sourceName'] !== undefined
+      ? sourceMetadata as VenueTruthSourceMetadata
+      : defaultVenueTruthSourceMetadata(connectorType, truthMode),
+    accountState: asJsonObject(payload['accountState'])['accountAddress'] !== undefined
+      || asJsonObject(payload['accountState'])['accountExists'] !== undefined
+      ? payload['accountState'] as VenueAccountStateSnapshot
+      : null,
+    balanceState: Array.isArray(asJsonObject(payload['balanceState'])['balances'])
+      ? payload['balanceState'] as VenueSnapshotView['balanceState']
+      : null,
+    capacityState: asJsonObject(payload['capacityState'])['availableCapacityUsd'] !== undefined
+      ? payload['capacityState'] as VenueSnapshotView['capacityState']
+      : null,
+    exposureState: Array.isArray(asJsonObject(payload['exposureState'])['exposures'])
+      ? payload['exposureState'] as VenueExposureStateSnapshot
+      : null,
+    derivativeAccountState: asJsonObject(payload['derivativeAccountState'])['accountModel'] !== undefined
+      || asJsonObject(payload['derivativeAccountState'])['venueAccountType'] !== undefined
+      ? payload['derivativeAccountState'] as VenueDerivativeAccountStateSnapshot
+      : null,
+    derivativePositionState: Array.isArray(asJsonObject(payload['derivativePositionState'])['positions'])
+      ? payload['derivativePositionState'] as VenueDerivativePositionStateSnapshot
+      : null,
+    derivativeHealthState: asJsonObject(payload['derivativeHealthState'])['healthStatus'] !== undefined
+      || asJsonObject(payload['derivativeHealthState'])['methodology'] !== undefined
+      ? payload['derivativeHealthState'] as VenueDerivativeHealthStateSnapshot
+      : null,
+    orderState: Array.isArray(asJsonObject(payload['orderState'])['openOrders'])
+      || asJsonObject(payload['orderState'])['referenceMode'] !== undefined
+      ? payload['orderState'] as VenueOrderStateSnapshot
+      : null,
+    executionReferenceState: Array.isArray(asJsonObject(payload['executionReferenceState'])['references'])
+      ? payload['executionReferenceState'] as VenueExecutionReferenceStateSnapshot
+      : null,
+  };
+}
+
+function serialiseVenueSnapshotPayload(snapshot: VenueSnapshotView): Record<string, unknown> {
+  return {
+    rawPayload: snapshot.snapshotPayload,
+    snapshotCompleteness: snapshot.snapshotCompleteness,
+    truthCoverage: snapshot.truthCoverage,
+    sourceMetadata: snapshot.sourceMetadata,
+    accountState: snapshot.accountState,
+    balanceState: snapshot.balanceState,
+    capacityState: snapshot.capacityState,
+    exposureState: snapshot.exposureState,
+    derivativeAccountState: snapshot.derivativeAccountState,
+    derivativePositionState: snapshot.derivativePositionState,
+    derivativeHealthState: snapshot.derivativeHealthState,
+    orderState: snapshot.orderState,
+    executionReferenceState: snapshot.executionReferenceState,
+  };
+}
+
+function createVenueTruthCoverageAggregate(): VenueTruthSummaryView['accountState'] {
+  return {
+    available: 0,
+    partial: 0,
+    unsupported: 0,
+  };
+}
+
+function deriveVenueTruthProfile(
+  snapshotData: PersistedVenueSnapshotPayload,
+): VenueTruthProfile {
+  if (
+    snapshotData.truthCoverage.derivativeAccountState.status !== 'unsupported'
+    || snapshotData.truthCoverage.derivativePositionState.status !== 'unsupported'
+    || snapshotData.truthCoverage.derivativeHealthState.status !== 'unsupported'
+    || snapshotData.truthCoverage.orderState.status !== 'unsupported'
+  ) {
+    return 'derivative_aware';
+  }
+
+  if (snapshotData.truthCoverage.capacityState.status === 'available') {
+    return 'capacity_only';
+  }
+
+  if (
+    snapshotData.truthCoverage.accountState.status === 'available'
+    || snapshotData.truthCoverage.balanceState.status === 'available'
+    || snapshotData.truthCoverage.exposureState.status === 'available'
+    || snapshotData.truthCoverage.executionReferences.status === 'available'
+  ) {
+    return 'generic_wallet';
+  }
+
+  return 'minimal';
 }
 
 function serialiseMap(map: Map<string, string>): Record<string, string> {
@@ -226,6 +473,76 @@ function asCarryBlockedReasons(value: unknown): CarryOperationalBlockedReason[] 
     return [{
       code: code as CarryOperationalBlockedReason['code'],
       category: category as CarryOperationalBlockedReason['category'],
+      message,
+      operatorAction,
+      details: asJsonObject(record['details']),
+    }];
+  });
+}
+
+function asBundleRecoveryBlockedReasons(value: unknown): RebalanceBundleRecoveryBlockedReason[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const code = record['code'];
+    const category = record['category'];
+    const message = record['message'];
+    const operatorAction = record['operatorAction'];
+
+    if (
+      typeof code !== 'string'
+      || typeof category !== 'string'
+      || typeof message !== 'string'
+      || typeof operatorAction !== 'string'
+    ) {
+      return [];
+    }
+
+    return [{
+      code: code as RebalanceBundleRecoveryBlockedReason['code'],
+      category: category as RebalanceBundleRecoveryBlockedReason['category'],
+      message,
+      operatorAction,
+      details: asJsonObject(record['details']),
+    }];
+  });
+}
+
+function asBundleResolutionBlockedReasons(value: unknown): RebalanceBundleResolutionBlockedReason[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const code = record['code'];
+    const category = record['category'];
+    const message = record['message'];
+    const operatorAction = record['operatorAction'];
+
+    if (
+      typeof code !== 'string'
+      || typeof category !== 'string'
+      || typeof message !== 'string'
+      || typeof operatorAction !== 'string'
+    ) {
+      return [];
+    }
+
+    return [{
+      code: code as RebalanceBundleResolutionBlockedReason['code'],
+      category: category as RebalanceBundleResolutionBlockedReason['category'],
       message,
       operatorAction,
       details: asJsonObject(record['details']),
@@ -369,6 +686,11 @@ function createFindingTypeCounts(): Record<RuntimeReconciliationFindingType, num
     projection_state_mismatch: 0,
     stale_projection_state: 0,
     command_outcome_mismatch: 0,
+    missing_venue_truth_snapshot: 0,
+    stale_venue_truth_snapshot: 0,
+    venue_truth_unavailable: 0,
+    venue_truth_partial_coverage: 0,
+    venue_execution_reference_mismatch: 0,
   };
 }
 
@@ -718,6 +1040,93 @@ function mapCarryVenueRow(
   };
 }
 
+function mapVenueSnapshotRow(
+  row: typeof venueConnectorSnapshots.$inferSelect,
+): VenueSnapshotView {
+  const snapshotData = deserialiseVenueSnapshotPayload(
+    row.snapshotPayload,
+    row.connectorType,
+    row.truthMode as VenueTruthMode,
+  );
+
+  return {
+    id: row.id,
+    venueId: row.venueId,
+    venueName: row.venueName,
+    connectorType: row.connectorType,
+    sleeveApplicability: asStringArray(row.sleeveApplicability) as VenueTruthSleeve[],
+    truthMode: row.truthMode as VenueTruthMode,
+    readOnlySupport: row.readOnlySupport,
+    executionSupport: row.executionSupport,
+    approvedForLiveUse: row.approvedForLiveUse,
+    onboardingState: row.onboardingState as VenueOnboardingState,
+    missingPrerequisites: asStringArray(row.missingPrerequisites),
+    authRequirementsSummary: asStringArray(row.authRequirementsSummary),
+    healthy: row.healthy,
+    healthState: row.healthState as VenueHealthState,
+    degradedReason: row.degradedReason ?? null,
+    truthProfile: deriveVenueTruthProfile(snapshotData),
+    snapshotType: row.snapshotType,
+    snapshotSuccessful: row.snapshotSuccessful,
+    snapshotSummary: row.snapshotSummary,
+    snapshotPayload: snapshotData.rawPayload,
+    errorMessage: row.errorMessage ?? null,
+    capturedAt: row.capturedAt.toISOString(),
+    snapshotCompleteness: snapshotData.snapshotCompleteness,
+    truthCoverage: snapshotData.truthCoverage,
+    sourceMetadata: snapshotData.sourceMetadata,
+    accountState: snapshotData.accountState,
+    balanceState: snapshotData.balanceState,
+    capacityState: snapshotData.capacityState,
+    exposureState: snapshotData.exposureState,
+    derivativeAccountState: snapshotData.derivativeAccountState,
+    derivativePositionState: snapshotData.derivativePositionState,
+    derivativeHealthState: snapshotData.derivativeHealthState,
+    orderState: snapshotData.orderState,
+    executionReferenceState: snapshotData.executionReferenceState,
+    metadata: asJsonObject(row.metadata),
+  };
+}
+
+function mapVenueInventoryItem(
+  latest: typeof venueConnectorSnapshots.$inferSelect,
+  lastSuccessfulSnapshotAt: Date | null,
+): VenueInventoryItemView {
+  const snapshotData = deserialiseVenueSnapshotPayload(
+    latest.snapshotPayload,
+    latest.connectorType,
+    latest.truthMode as VenueTruthMode,
+  );
+
+  return {
+    venueId: latest.venueId,
+    venueName: latest.venueName,
+    connectorType: latest.connectorType,
+    sleeveApplicability: asStringArray(latest.sleeveApplicability) as VenueTruthSleeve[],
+    truthMode: latest.truthMode as VenueTruthMode,
+    readOnlySupport: latest.readOnlySupport,
+    executionSupport: latest.executionSupport,
+    approvedForLiveUse: latest.approvedForLiveUse,
+    onboardingState: latest.onboardingState as VenueOnboardingState,
+    missingPrerequisites: asStringArray(latest.missingPrerequisites),
+    authRequirementsSummary: asStringArray(latest.authRequirementsSummary),
+    healthy: latest.healthy,
+    healthState: latest.healthState as VenueHealthState,
+    degradedReason: latest.degradedReason ?? null,
+    truthProfile: deriveVenueTruthProfile(snapshotData),
+    latestSnapshotType: latest.snapshotType,
+    latestSnapshotSummary: latest.snapshotSummary,
+    latestErrorMessage: latest.errorMessage ?? null,
+    snapshotFreshness: classifyVenueSnapshotFreshness(latest.capturedAt),
+    snapshotCompleteness: snapshotData.snapshotCompleteness,
+    lastSnapshotAt: latest.capturedAt.toISOString(),
+    lastSuccessfulSnapshotAt: lastSuccessfulSnapshotAt?.toISOString() ?? null,
+    truthCoverage: snapshotData.truthCoverage,
+    sourceMetadata: snapshotData.sourceMetadata,
+    metadata: asJsonObject(latest.metadata),
+  };
+}
+
 function mapCarryActionRow(
   row: typeof carryActions.$inferSelect,
 ): CarryActionView {
@@ -1016,11 +1425,193 @@ function mapRebalanceBundleRow(
     childRollup: asJsonObject(row.childRollup),
     finalizationReason: row.finalizationReason ?? null,
     finalizedAt: toIsoString(row.finalizedAt),
+    resolutionState: row.resolutionState as RebalanceBundleResolutionState,
+    latestResolutionActionId: row.latestResolutionActionId ?? null,
+    resolutionSummary: row.resolutionSummary ?? null,
+    resolvedBy: row.resolvedBy ?? null,
+    resolvedAt: toIsoString(row.resolvedAt),
+    latestEscalationId: row.latestEscalationId ?? null,
+    escalationStatus: row.escalationStatus as RebalanceBundleEscalationStatus | null,
+    escalationOwnerId: row.escalationOwnerId ?? null,
+    escalationAssignedAt: toIsoString(row.escalationAssignedAt),
+    escalationDueAt: toIsoString(row.escalationDueAt),
+    escalationSummary: row.escalationSummary ?? null,
     executionMode: proposal.executionMode,
     simulated: proposal.simulated,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function mapRebalanceBundleRecoveryActionRow(
+  row: typeof allocatorRebalanceBundleRecoveryActions.$inferSelect,
+): RebalanceBundleRecoveryActionView {
+  return {
+    id: row.id,
+    bundleId: row.bundleId,
+    proposalId: row.proposalId,
+    recoveryActionType: row.recoveryActionType as RebalanceBundleRecoveryActionType,
+    targetChildType: row.targetChildType as RebalanceBundleRecoveryActionView['targetChildType'],
+    targetChildId: row.targetChildId,
+    targetChildStatus: row.targetChildStatus,
+    targetChildSummary: row.targetChildSummary,
+    eligibilityState: row.eligibilityState as RebalanceBundleRecoveryEligibilityState,
+    blockedReasons: asBundleRecoveryBlockedReasons(row.blockedReasons),
+    approvalRequirement: row.approvalRequirement as RebalanceBundleRecoveryActionView['approvalRequirement'],
+    status: row.status as RebalanceBundleRecoveryStatus,
+    requestedBy: row.requestedBy,
+    requestedAt: row.requestedAt.toISOString(),
+    note: row.note ?? null,
+    linkedCommandId: row.linkedCommandId ?? null,
+    targetCommandType: row.targetCommandType as RebalanceBundleRecoveryActionView['targetCommandType'],
+    linkedCarryActionId: row.linkedCarryActionId ?? null,
+    linkedTreasuryActionId: row.linkedTreasuryActionId ?? null,
+    outcomeSummary: row.outcomeSummary ?? null,
+    outcome: asJsonObject(row.outcome),
+    lastError: row.lastError ?? null,
+    executionMode: row.executionMode as RebalanceBundleRecoveryActionView['executionMode'],
+    simulated: row.simulated,
+    queuedAt: toIsoString(row.queuedAt),
+    startedAt: toIsoString(row.startedAt),
+    completedAt: toIsoString(row.completedAt),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapRebalanceBundleResolutionActionRow(
+  row: typeof allocatorRebalanceBundleResolutionActions.$inferSelect,
+): RebalanceBundleResolutionActionView {
+  return {
+    id: row.id,
+    bundleId: row.bundleId,
+    proposalId: row.proposalId,
+    resolutionActionType: row.resolutionActionType as RebalanceBundleResolutionActionType,
+    status: row.status as RebalanceBundleResolutionActionStatus,
+    resolutionState: row.resolutionState as RebalanceBundleResolutionState,
+    note: row.note,
+    acknowledgedPartialApplication: row.acknowledgedPartialApplication,
+    escalated: row.escalated,
+    affectedChildSummary: asJsonObject(row.affectedChildSummary),
+    linkedRecoveryActionIds: asStringArray(row.linkedRecoveryActionIds),
+    requestedBy: row.requestedBy,
+    requestedAt: row.requestedAt.toISOString(),
+    completedBy: row.completedBy ?? null,
+    completedAt: toIsoString(row.completedAt),
+    outcomeSummary: row.outcomeSummary ?? null,
+    blockedReasons: asBundleResolutionBlockedReasons(row.blockedReasons),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapRebalanceBundleEscalationRow(
+  row: typeof allocatorRebalanceBundleEscalations.$inferSelect,
+): RebalanceBundleEscalationView {
+  return {
+    id: row.id,
+    bundleId: row.bundleId,
+    proposalId: row.proposalId,
+    sourceResolutionActionId: row.sourceResolutionActionId ?? null,
+    status: row.status as RebalanceBundleEscalationStatus,
+    isOpen: row.status !== 'resolved',
+    ownerId: row.ownerId ?? null,
+    assignedBy: row.assignedBy ?? null,
+    assignedAt: toIsoString(row.assignedAt),
+    acknowledgedBy: row.acknowledgedBy ?? null,
+    acknowledgedAt: toIsoString(row.acknowledgedAt),
+    dueAt: toIsoString(row.dueAt),
+    handoffNote: row.handoffNote ?? null,
+    reviewNote: row.reviewNote ?? null,
+    resolutionNote: row.resolutionNote ?? null,
+    closedBy: row.closedBy ?? null,
+    closedAt: toIsoString(row.closedAt),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapRebalanceBundleEscalationEventRow(
+  row: typeof allocatorRebalanceBundleEscalationEvents.$inferSelect,
+): RebalanceBundleEscalationEventView {
+  return {
+    id: row.id,
+    escalationId: row.escalationId,
+    bundleId: row.bundleId,
+    proposalId: row.proposalId,
+    eventType: row.eventType as RebalanceBundleEscalationEventView['eventType'],
+    fromStatus: row.fromStatus as RebalanceBundleEscalationStatus | null,
+    toStatus: row.toStatus as RebalanceBundleEscalationStatus,
+    actorId: row.actorId,
+    ownerId: row.ownerId ?? null,
+    note: row.note ?? null,
+    dueAt: toIsoString(row.dueAt),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function deriveEscalationQueueState(input: {
+  status: RebalanceBundleEscalationStatus;
+  ownerId: string | null;
+  dueAt: string | null;
+  now: Date;
+}): RebalanceEscalationQueueState {
+  if (input.status === 'resolved') {
+    return 'resolved';
+  }
+  if (input.ownerId === null) {
+    return 'unassigned';
+  }
+  if (input.dueAt !== null) {
+    const dueAt = new Date(input.dueAt).getTime();
+    const now = input.now.getTime();
+    if (dueAt < now) {
+      return 'overdue';
+    }
+    if (dueAt - now <= 24 * 60 * 60 * 1000) {
+      return 'due_soon';
+    }
+  }
+
+  return 'on_track';
+}
+
+function sortEscalationQueueItems(
+  items: RebalanceEscalationQueueItemView[],
+  sortBy: NonNullable<RebalanceEscalationQueueFilters['sortBy']>,
+  sortDirection: NonNullable<RebalanceEscalationQueueFilters['sortDirection']>,
+): RebalanceEscalationQueueItemView[] {
+  const direction = sortDirection === 'asc' ? 1 : -1;
+  const toTime = (value: string | null): number => {
+    if (value === null) {
+      return sortDirection === 'asc' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    }
+
+    return new Date(value).getTime();
+  };
+
+  return [...items].sort((left, right) => {
+    let comparison = 0;
+    switch (sortBy) {
+      case 'due_at':
+        comparison = toTime(left.dueAt) - toTime(right.dueAt);
+        break;
+      case 'created_at':
+        comparison = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+        break;
+      case 'updated_at':
+        comparison = new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime();
+        break;
+      case 'latest_activity':
+      default:
+        comparison = new Date(left.latestActivityAt).getTime() - new Date(right.latestActivityAt).getTime();
+        break;
+    }
+
+    if (comparison !== 0) {
+      return comparison * direction;
+    }
+
+    return left.escalationId.localeCompare(right.escalationId) * direction;
+  });
 }
 
 function summariseRebalanceDownstreamRollup(input: {
@@ -1207,7 +1798,10 @@ function deriveRebalanceBundleSnapshot(
   }
 
   const terminalTimestamp = graph.timeline
-    .filter((entry) => entry.status === 'completed' || entry.status === 'failed' || entry.status === 'rejected')
+    .filter((entry) =>
+      entry.scope !== 'recovery_action'
+      && (entry.status === 'completed' || entry.status === 'failed' || entry.status === 'rejected')
+    )
     .map((entry) => entry.at)
     .sort()
     .at(-1) ?? null;
@@ -1246,11 +1840,29 @@ function deriveRebalanceBundleSnapshot(
   };
 }
 
+function recommendationForResolutionState(
+  resolutionState: RebalanceBundleResolutionState,
+): RebalanceBundleInterventionRecommendation | null {
+  switch (resolutionState) {
+    case 'accepted_partial':
+      return 'accepted_partial_application';
+    case 'manually_resolved':
+      return 'manually_resolved';
+    case 'escalated':
+      return 'escalated_for_review';
+    case 'unresolved':
+      return null;
+  }
+}
+
 function createRebalanceTimeline(input: {
   detail: RebalanceProposalDetailView;
   commands: RuntimeCommandView[];
   carryActions: RebalanceCarryActionNodeView[];
   treasuryActions: RebalanceTreasuryActionNodeView[];
+  recoveryActions: RebalanceBundleRecoveryActionView[];
+  resolutionActions: RebalanceBundleResolutionActionView[];
+  escalationHistory: RebalanceBundleEscalationEventView[];
 }): RebalanceExecutionTimelineEntry[] {
   const entries: RebalanceExecutionTimelineEntry[] = [{
     id: `${input.detail.proposal.id}:proposed`,
@@ -1265,6 +1877,9 @@ function createRebalanceTimeline(input: {
     linkedRebalanceExecutionId: null,
     linkedActionId: null,
     linkedExecutionId: null,
+    linkedRecoveryActionId: null,
+    linkedResolutionActionId: null,
+    linkedEscalationId: null,
     details: {
       allocatorRunId: input.detail.proposal.allocatorRunId,
       actionType: input.detail.proposal.actionType,
@@ -1285,6 +1900,9 @@ function createRebalanceTimeline(input: {
       linkedRebalanceExecutionId: null,
       linkedActionId: null,
       linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
       details: {
         approvalRequirement: input.detail.proposal.approvalRequirement,
       },
@@ -1305,6 +1923,9 @@ function createRebalanceTimeline(input: {
       linkedRebalanceExecutionId: null,
       linkedActionId: null,
       linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
       details: {
         rejectionReason: input.detail.proposal.rejectionReason,
       },
@@ -1325,6 +1946,9 @@ function createRebalanceTimeline(input: {
       linkedRebalanceExecutionId: null,
       linkedActionId: null,
       linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
       details: {
         commandType: command.commandType,
       },
@@ -1345,6 +1969,9 @@ function createRebalanceTimeline(input: {
       linkedRebalanceExecutionId: execution.id,
       linkedActionId: null,
       linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
       details: execution.outcome,
     });
 
@@ -1362,6 +1989,9 @@ function createRebalanceTimeline(input: {
         linkedRebalanceExecutionId: execution.id,
         linkedActionId: null,
         linkedExecutionId: null,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
         details: {},
       });
     }
@@ -1381,6 +2011,9 @@ function createRebalanceTimeline(input: {
         linkedRebalanceExecutionId: execution.id,
         linkedActionId: null,
         linkedExecutionId: null,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
         details: execution.outcome,
       });
 
@@ -1398,6 +2031,9 @@ function createRebalanceTimeline(input: {
           linkedRebalanceExecutionId: execution.id,
           linkedActionId: null,
           linkedExecutionId: null,
+          linkedRecoveryActionId: null,
+          linkedResolutionActionId: null,
+          linkedEscalationId: null,
           details: {
             carryTargetAllocationUsd: execution.outcome['carryTargetAllocationUsd'],
             treasuryTargetAllocationUsd: execution.outcome['treasuryTargetAllocationUsd'],
@@ -1421,6 +2057,9 @@ function createRebalanceTimeline(input: {
       linkedRebalanceExecutionId: null,
       linkedActionId: node.action.id,
       linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
       details: {
         actionType: node.action.actionType,
         blockedReasons: node.action.blockedReasons,
@@ -1441,6 +2080,9 @@ function createRebalanceTimeline(input: {
         linkedRebalanceExecutionId: null,
         linkedActionId: node.action.id,
         linkedExecutionId: execution.id,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
         details: {
           blockedReasons: execution.blockedReasons,
           venueExecutionReference: execution.venueExecutionReference,
@@ -1463,6 +2105,9 @@ function createRebalanceTimeline(input: {
       linkedRebalanceExecutionId: null,
       linkedActionId: node.action.id,
       linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
       details: {
         actionType: node.action.actionType,
         blockedReasons: node.action.blockedReasons,
@@ -1483,12 +2128,172 @@ function createRebalanceTimeline(input: {
         linkedRebalanceExecutionId: null,
         linkedActionId: node.action.id,
         linkedExecutionId: execution.id,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
         details: {
           blockedReasons: execution.blockedReasons,
           venueExecutionReference: execution.venueExecutionReference,
         },
       });
     }
+  }
+
+  for (const recoveryAction of input.recoveryActions) {
+    const sleeveId: RebalanceExecutionTimelineEntry['sleeveId'] = recoveryAction.targetChildType === 'carry_action'
+      ? 'carry'
+      : recoveryAction.targetChildType === 'treasury_action'
+        ? 'treasury'
+        : 'allocator';
+
+    entries.push({
+      id: `${recoveryAction.id}:requested`,
+      eventType: 'recovery_requested',
+      at: recoveryAction.requestedAt,
+      actorId: recoveryAction.requestedBy,
+      sleeveId,
+      scope: 'recovery_action',
+      status: recoveryAction.status,
+      summary: `Recovery requested for ${recoveryAction.targetChildType} ${recoveryAction.targetChildId}.`,
+      linkedCommandId: recoveryAction.linkedCommandId,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: recoveryAction.targetChildType === 'carry_action' || recoveryAction.targetChildType === 'treasury_action'
+        ? recoveryAction.targetChildId
+        : null,
+      linkedExecutionId: null,
+      linkedRecoveryActionId: recoveryAction.id,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
+      details: {
+        recoveryActionType: recoveryAction.recoveryActionType,
+        eligibilityState: recoveryAction.eligibilityState,
+        blockedReasons: recoveryAction.blockedReasons,
+        note: recoveryAction.note,
+      },
+    });
+
+    if (recoveryAction.queuedAt !== null) {
+      entries.push({
+        id: `${recoveryAction.id}:queued`,
+        eventType: 'recovery_queued',
+        at: recoveryAction.queuedAt,
+        actorId: recoveryAction.requestedBy,
+        sleeveId,
+        scope: 'recovery_action',
+        status: 'queued',
+        summary: `Recovery action queued ${recoveryAction.targetCommandType ?? 'command'} for ${recoveryAction.targetChildId}.`,
+        linkedCommandId: recoveryAction.linkedCommandId,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: recoveryAction.targetChildType === 'carry_action' || recoveryAction.targetChildType === 'treasury_action'
+          ? recoveryAction.targetChildId
+          : null,
+        linkedExecutionId: null,
+        linkedRecoveryActionId: recoveryAction.id,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
+        details: {
+          targetCommandType: recoveryAction.targetCommandType,
+        },
+      });
+    }
+
+    if (recoveryAction.completedAt !== null) {
+      const eventType = recoveryAction.status === 'completed'
+        ? 'recovery_completed'
+        : recoveryAction.status === 'blocked'
+          ? 'recovery_blocked'
+          : 'recovery_failed';
+      entries.push({
+        id: `${recoveryAction.id}:${recoveryAction.status}`,
+        eventType,
+        at: recoveryAction.completedAt,
+        actorId: recoveryAction.requestedBy,
+        sleeveId,
+        scope: 'recovery_action',
+        status: recoveryAction.status,
+        summary: recoveryAction.outcomeSummary
+          ?? recoveryAction.lastError
+          ?? `Recovery action ${recoveryAction.status}.`,
+        linkedCommandId: recoveryAction.linkedCommandId,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: recoveryAction.targetChildType === 'carry_action' || recoveryAction.targetChildType === 'treasury_action'
+          ? recoveryAction.targetChildId
+          : null,
+        linkedExecutionId: null,
+        linkedRecoveryActionId: recoveryAction.id,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
+        details: recoveryAction.outcome,
+      });
+    }
+  }
+
+  for (const resolutionAction of input.resolutionActions) {
+    entries.push({
+      id: `${resolutionAction.id}:${resolutionAction.status}`,
+      eventType: resolutionAction.status === 'blocked' ? 'resolution_blocked' : 'resolution_completed',
+      at: resolutionAction.completedAt ?? resolutionAction.requestedAt,
+      actorId: resolutionAction.completedBy ?? resolutionAction.requestedBy,
+      sleeveId: 'allocator',
+      scope: 'resolution_action',
+      status: resolutionAction.status,
+      summary: resolutionAction.outcomeSummary
+        ?? resolutionAction.note
+        ?? `Bundle resolution recorded as ${resolutionAction.resolutionState}.`,
+      linkedCommandId: null,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: null,
+      linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: resolutionAction.id,
+      linkedEscalationId: null,
+      details: {
+        resolutionActionType: resolutionAction.resolutionActionType,
+        resolutionState: resolutionAction.resolutionState,
+        acknowledgedPartialApplication: resolutionAction.acknowledgedPartialApplication,
+        escalated: resolutionAction.escalated,
+        linkedRecoveryActionIds: resolutionAction.linkedRecoveryActionIds,
+        blockedReasons: resolutionAction.blockedReasons,
+      },
+    });
+  }
+
+  for (const escalationEvent of input.escalationHistory) {
+    const eventType = escalationEvent.eventType === 'created'
+      ? 'escalation_created'
+      : escalationEvent.eventType === 'assigned'
+        ? 'escalation_assigned'
+        : escalationEvent.eventType === 'acknowledged'
+          ? 'escalation_acknowledged'
+          : escalationEvent.eventType === 'review_started'
+            ? 'escalation_review_started'
+            : 'escalation_resolved';
+    entries.push({
+      id: `${escalationEvent.escalationId}:${escalationEvent.eventType}:${escalationEvent.id}`,
+      eventType,
+      at: escalationEvent.createdAt,
+      actorId: escalationEvent.actorId,
+      sleeveId: 'allocator',
+      scope: 'escalation',
+      status: escalationEvent.toStatus,
+      summary: escalationEvent.note
+        ?? `Bundle escalation transitioned to ${escalationEvent.toStatus}.`,
+      linkedCommandId: null,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: null,
+      linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: escalationEvent.escalationId,
+      details: {
+        eventType: escalationEvent.eventType,
+        fromStatus: escalationEvent.fromStatus,
+        toStatus: escalationEvent.toStatus,
+        ownerId: escalationEvent.ownerId,
+        dueAt: escalationEvent.dueAt,
+        note: escalationEvent.note,
+      },
+    });
   }
 
   return entries.sort((left, right) => left.at.localeCompare(right.at));
@@ -2198,6 +3003,169 @@ export class RuntimeStore {
       .limit(limit);
 
     return rows.map(mapCarryVenueRow);
+  }
+
+  async listVenues(limit = 100): Promise<VenueInventoryItemView[]> {
+    const rows = await this.db
+      .select()
+      .from(venueConnectorSnapshots)
+      .orderBy(desc(venueConnectorSnapshots.capturedAt));
+
+    const latestByVenue = new Map<string, typeof venueConnectorSnapshots.$inferSelect>();
+    const lastSuccessfulByVenue = new Map<string, Date>();
+
+    for (const row of rows) {
+      if (!latestByVenue.has(row['venueId'])) {
+        latestByVenue.set(row['venueId'], row);
+      }
+      if (row['snapshotSuccessful'] && !lastSuccessfulByVenue.has(row['venueId'])) {
+        lastSuccessfulByVenue.set(row['venueId'], row['capturedAt']);
+      }
+    }
+
+    return Array.from(latestByVenue.values())
+      .slice(0, limit)
+      .map((row) => mapVenueInventoryItem(row, lastSuccessfulByVenue.get(row.venueId) ?? null));
+  }
+
+  async getVenueSummary(): Promise<VenueInventorySummaryView> {
+    const venues = await this.listVenues(500);
+
+    return {
+      totalVenues: venues.length,
+      simulatedOnly: venues.filter((venue) => venue.truthMode === 'simulated').length,
+      realReadOnly: venues.filter((venue) => venue.truthMode === 'real' && venue.readOnlySupport).length,
+      realExecutionCapable: venues.filter((venue) => venue.truthMode === 'real' && venue.executionSupport).length,
+      derivativeAware: venues.filter((venue) => venue.truthProfile === 'derivative_aware').length,
+      genericWallet: venues.filter((venue) => venue.truthProfile === 'generic_wallet').length,
+      capacityOnly: venues.filter((venue) => venue.truthProfile === 'capacity_only').length,
+      approvedForLiveUse: venues.filter((venue) => venue.approvedForLiveUse).length,
+      degraded: venues.filter((venue) => venue.healthState === 'degraded').length,
+      unavailable: venues.filter((venue) => venue.healthState === 'unavailable').length,
+      stale: venues.filter((venue) => venue.snapshotFreshness === 'stale').length,
+      missingPrerequisites: venues.filter((venue) => venue.missingPrerequisites.length > 0).length,
+    };
+  }
+
+  async getVenueTruthSummary(): Promise<VenueTruthSummaryView> {
+    const venues = await this.listVenues(500);
+    const summary: VenueTruthSummaryView = {
+      totalVenues: venues.length,
+      derivativeAwareVenues: 0,
+      genericWalletVenues: 0,
+      capacityOnlyVenues: 0,
+      completeSnapshots: 0,
+      partialSnapshots: 0,
+      minimalSnapshots: 0,
+      accountState: createVenueTruthCoverageAggregate(),
+      balanceState: createVenueTruthCoverageAggregate(),
+      capacityState: createVenueTruthCoverageAggregate(),
+      exposureState: createVenueTruthCoverageAggregate(),
+      derivativeAccountState: createVenueTruthCoverageAggregate(),
+      derivativePositionState: createVenueTruthCoverageAggregate(),
+      derivativeHealthState: createVenueTruthCoverageAggregate(),
+      orderState: createVenueTruthCoverageAggregate(),
+      executionReferences: createVenueTruthCoverageAggregate(),
+    };
+
+    for (const venue of venues) {
+      if (venue.truthProfile === 'derivative_aware') {
+        summary.derivativeAwareVenues += 1;
+      } else if (venue.truthProfile === 'generic_wallet') {
+        summary.genericWalletVenues += 1;
+      } else if (venue.truthProfile === 'capacity_only') {
+        summary.capacityOnlyVenues += 1;
+      }
+
+      if (venue.snapshotCompleteness === 'complete') {
+        summary.completeSnapshots += 1;
+      } else if (venue.snapshotCompleteness === 'partial') {
+        summary.partialSnapshots += 1;
+      } else {
+        summary.minimalSnapshots += 1;
+      }
+
+      summary.accountState[venue.truthCoverage.accountState.status] += 1;
+      summary.balanceState[venue.truthCoverage.balanceState.status] += 1;
+      summary.capacityState[venue.truthCoverage.capacityState.status] += 1;
+      summary.exposureState[venue.truthCoverage.exposureState.status] += 1;
+      summary.derivativeAccountState[venue.truthCoverage.derivativeAccountState.status] += 1;
+      summary.derivativePositionState[venue.truthCoverage.derivativePositionState.status] += 1;
+      summary.derivativeHealthState[venue.truthCoverage.derivativeHealthState.status] += 1;
+      summary.orderState[venue.truthCoverage.orderState.status] += 1;
+      summary.executionReferences[venue.truthCoverage.executionReferences.status] += 1;
+    }
+
+    return summary;
+  }
+
+  async listVenueReadiness(limit = 100): Promise<VenueInventoryItemView[]> {
+    return this.listVenues(limit);
+  }
+
+  async listVenueSnapshots(venueId: string, limit = 20): Promise<VenueSnapshotView[]> {
+    const rows = await this.db
+      .select()
+      .from(venueConnectorSnapshots)
+      .where(eq(venueConnectorSnapshots.venueId, venueId))
+      .orderBy(desc(venueConnectorSnapshots.capturedAt))
+      .limit(limit);
+
+    return rows.map(mapVenueSnapshotRow);
+  }
+
+  async getVenue(venueId: string): Promise<VenueDetailView | null> {
+    const [inventory, snapshots] = await Promise.all([
+      this.listVenues(500),
+      this.listVenueSnapshots(venueId, 20),
+    ]);
+    const venue = inventory.find((item) => item.venueId === venueId) ?? null;
+    if (venue === null) {
+      return null;
+    }
+
+    return {
+      venue,
+      snapshots,
+    };
+  }
+
+  async listExpectedVenueExecutionReferences(venueId: string, limit = 100): Promise<string[]> {
+    const [carryRows, treasuryRows] = await Promise.all([
+      this.db
+        .select({
+          reference: carryExecutionSteps.executionReference,
+        })
+        .from(carryExecutionSteps)
+        .where(eq(carryExecutionSteps.venueId, venueId))
+        .orderBy(desc(carryExecutionSteps.updatedAt))
+        .limit(limit),
+      this.db
+        .select({
+          reference: treasuryActionExecutions.venueExecutionReference,
+        })
+        .from(treasuryActionExecutions)
+        .innerJoin(treasuryActions, eq(treasuryActions.id, treasuryActionExecutions.treasuryActionId))
+        .where(eq(treasuryActions.venueId, venueId))
+        .orderBy(desc(treasuryActionExecutions.updatedAt))
+        .limit(limit),
+    ]);
+
+    const references = new Set<string>();
+
+    for (const row of carryRows) {
+      if (row.reference !== null) {
+        references.add(row.reference);
+      }
+    }
+
+    for (const row of treasuryRows) {
+      if (row.reference !== null) {
+        references.add(row.reference);
+      }
+    }
+
+    return Array.from(references);
   }
 
   async updateRuntimeStatus(
@@ -4500,6 +5468,172 @@ export class RuntimeStore {
     ).filter((bundle): bundle is RebalanceBundleView => bundle !== null);
   }
 
+  async listRebalanceEscalations(
+    filters: RebalanceEscalationQueueFilters = {},
+  ): Promise<RebalanceEscalationQueueItemView[]> {
+    const limit = Math.min(filters.limit ?? 100, 200);
+    const sortBy = filters.sortBy ?? 'latest_activity';
+    const sortDirection = filters.sortDirection ?? 'desc';
+    const now = new Date();
+
+    const [escalationRows, bundleRows, proposalRows, eventRows] = await Promise.all([
+      this.db
+        .select()
+        .from(allocatorRebalanceBundleEscalations)
+        .orderBy(desc(allocatorRebalanceBundleEscalations.updatedAt))
+        .limit(400),
+      this.db.select().from(allocatorRebalanceBundles),
+      this.db.select().from(allocatorRebalanceProposals),
+      this.db
+        .select()
+        .from(allocatorRebalanceBundleEscalationEvents)
+        .orderBy(desc(allocatorRebalanceBundleEscalationEvents.createdAt)),
+    ]);
+
+    const bundleById = new Map(bundleRows.map((row) => [row.id, row] as const));
+    const proposalById = new Map(proposalRows.map((row) => [row.id, row] as const));
+    const latestEventByEscalationId = new Map<string, typeof allocatorRebalanceBundleEscalationEvents.$inferSelect>();
+    const acknowledgedAtByEscalationId = new Map<string, string>();
+    const inReviewAtByEscalationId = new Map<string, string>();
+
+    for (const row of eventRows) {
+      if (!latestEventByEscalationId.has(row.escalationId)) {
+        latestEventByEscalationId.set(row.escalationId, row);
+      }
+      if (row.eventType === 'acknowledged' && !acknowledgedAtByEscalationId.has(row.escalationId)) {
+        acknowledgedAtByEscalationId.set(row.escalationId, row.createdAt.toISOString());
+      }
+      if (row.eventType === 'review_started' && !inReviewAtByEscalationId.has(row.escalationId)) {
+        inReviewAtByEscalationId.set(row.escalationId, row.createdAt.toISOString());
+      }
+    }
+
+    const items = escalationRows.flatMap((escalationRow): RebalanceEscalationQueueItemView[] => {
+      const bundleRow = bundleById.get(escalationRow.bundleId);
+      const proposalRow = proposalById.get(escalationRow.proposalId);
+      if (bundleRow === undefined || proposalRow === undefined) {
+        return [];
+      }
+
+      const latestEvent = latestEventByEscalationId.get(escalationRow.id);
+      const queueState = deriveEscalationQueueState({
+        status: escalationRow.status as RebalanceBundleEscalationStatus,
+        ownerId: escalationRow.ownerId ?? null,
+        dueAt: toIsoString(escalationRow.dueAt),
+        now,
+      });
+      const childRollup = asJsonObject(bundleRow.childRollup);
+      const childSleeves = ['carry', 'treasury'].filter((sleeve): sleeve is 'carry' | 'treasury' => {
+        const rollup = childRollup[sleeve];
+        return typeof rollup === 'object' && rollup !== null;
+      });
+      const latestEventSummary = latestEvent === undefined
+        ? escalationRow.handoffNote ?? escalationRow.reviewNote ?? escalationRow.resolutionNote ?? null
+        : latestEvent.note ?? `${latestEvent.eventType} -> ${latestEvent.toStatus}`;
+      const item: RebalanceEscalationQueueItemView = {
+        escalationId: escalationRow.id,
+        bundleId: bundleRow.id,
+        proposalId: proposalRow.id,
+        allocatorRunId: proposalRow.allocatorRunId,
+        escalationStatus: escalationRow.status as RebalanceBundleEscalationStatus,
+        escalationQueueState: queueState,
+        isOpen: escalationRow.status !== 'resolved',
+        ownerId: escalationRow.ownerId ?? null,
+        assignedBy: escalationRow.assignedBy ?? null,
+        assignedAt: toIsoString(escalationRow.assignedAt),
+        acknowledgedAt: acknowledgedAtByEscalationId.get(escalationRow.id) ?? toIsoString(escalationRow.acknowledgedAt),
+        inReviewAt: inReviewAtByEscalationId.get(escalationRow.id) ?? null,
+        dueAt: toIsoString(escalationRow.dueAt),
+        latestActivityAt: latestEvent?.createdAt.toISOString() ?? escalationRow.updatedAt.toISOString(),
+        latestEventType: latestEvent?.eventType as RebalanceBundleEscalationEventType | null ?? null,
+        latestEventSummary,
+        bundleStatus: bundleRow.status as RebalanceBundleStatus,
+        interventionRecommendation: bundleRow.interventionRecommendation as RebalanceBundleInterventionRecommendation,
+        resolutionState: bundleRow.resolutionState as RebalanceBundleResolutionState,
+        outcomeClassification: bundleRow.outcomeClassification as RebalanceBundleOutcomeClassification,
+        failedChildCount: bundleRow.failedChildCount,
+        blockedChildCount: bundleRow.blockedChildCount,
+        pendingChildCount: bundleRow.pendingChildCount,
+        totalChildCount: bundleRow.totalChildCount,
+        childSleeves,
+        executionMode: proposalRow.executionMode as RebalanceProposalView['executionMode'],
+        simulated: proposalRow.simulated,
+        createdAt: escalationRow.createdAt.toISOString(),
+        updatedAt: escalationRow.updatedAt.toISOString(),
+      };
+
+      return [item];
+    });
+
+    const filtered = items.filter((item) => {
+      if (filters.status !== undefined && item.escalationStatus !== filters.status) {
+        return false;
+      }
+      if (filters.ownerId !== undefined && item.ownerId !== filters.ownerId) {
+        return false;
+      }
+      if (filters.openState === 'open' && !item.isOpen) {
+        return false;
+      }
+      if (filters.openState === 'closed' && item.isOpen) {
+        return false;
+      }
+      if (filters.queueState !== undefined && item.escalationQueueState !== filters.queueState) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return sortEscalationQueueItems(filtered, sortBy, sortDirection).slice(0, limit);
+  }
+
+  async getRebalanceEscalationSummary(
+    actorId?: string | null,
+  ): Promise<RebalanceEscalationQueueSummaryView> {
+    const items = await this.listRebalanceEscalations({ limit: 200 });
+
+    return items.reduce<RebalanceEscalationQueueSummaryView>((summary, item) => {
+      summary.total += 1;
+      if (item.isOpen) {
+        summary.open += 1;
+      }
+      if (item.escalationStatus === 'acknowledged') {
+        summary.acknowledged += 1;
+      }
+      if (item.escalationStatus === 'in_review') {
+        summary.inReview += 1;
+      }
+      if (item.escalationStatus === 'resolved') {
+        summary.resolved += 1;
+      }
+      if (item.escalationQueueState === 'overdue') {
+        summary.overdue += 1;
+      }
+      if (item.escalationQueueState === 'due_soon') {
+        summary.dueSoon += 1;
+      }
+      if (item.ownerId === null && item.isOpen) {
+        summary.unassigned += 1;
+      }
+      if (actorId !== undefined && actorId !== null && item.ownerId === actorId && item.isOpen) {
+        summary.mine += 1;
+      }
+
+      return summary;
+    }, {
+      total: 0,
+      open: 0,
+      acknowledged: 0,
+      inReview: 0,
+      resolved: 0,
+      overdue: 0,
+      dueSoon: 0,
+      unassigned: 0,
+      mine: 0,
+    });
+  }
+
   async getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null> {
     const [proposalRow] = await this.db
       .select()
@@ -4554,6 +5688,10 @@ export class RuntimeStore {
     const snapshot = deriveRebalanceBundleSnapshot(graph);
     const updatedAt = new Date();
     let bundleRow = existingRow;
+    const resolvedRecommendation = existingRow === undefined
+      ? null
+      : recommendationForResolutionState(existingRow.resolutionState as RebalanceBundleResolutionState);
+    const nextRecommendation = resolvedRecommendation ?? snapshot.interventionRecommendation;
 
     if (bundleRow === undefined) {
       const [insertedRow] = await this.db
@@ -4563,7 +5701,7 @@ export class RuntimeStore {
           status: snapshot.status,
           completionState: snapshot.completionState,
           outcomeClassification: snapshot.outcomeClassification,
-          interventionRecommendation: snapshot.interventionRecommendation,
+          interventionRecommendation: nextRecommendation,
           totalChildCount: snapshot.totalChildCount,
           blockedChildCount: snapshot.blockedChildCount,
           failedChildCount: snapshot.failedChildCount,
@@ -4572,6 +5710,17 @@ export class RuntimeStore {
           childRollup: snapshot.childRollup,
           finalizationReason: snapshot.finalizationReason,
           finalizedAt: snapshot.finalizedAt === null ? null : new Date(snapshot.finalizedAt),
+          resolutionState: 'unresolved',
+          latestResolutionActionId: null,
+          resolutionSummary: null,
+          resolvedBy: null,
+          resolvedAt: null,
+          latestEscalationId: null,
+          escalationStatus: null,
+          escalationOwnerId: null,
+          escalationAssignedAt: null,
+          escalationDueAt: null,
+          escalationSummary: null,
           createdAt: updatedAt,
           updatedAt,
         })
@@ -4584,7 +5733,7 @@ export class RuntimeStore {
           status: snapshot.status,
           completionState: snapshot.completionState,
           outcomeClassification: snapshot.outcomeClassification,
-          interventionRecommendation: snapshot.interventionRecommendation,
+          interventionRecommendation: nextRecommendation,
           totalChildCount: snapshot.totalChildCount,
           blockedChildCount: snapshot.blockedChildCount,
           failedChildCount: snapshot.failedChildCount,
@@ -4604,9 +5753,56 @@ export class RuntimeStore {
       throw new Error('RuntimeStore.syncRebalanceBundleForProposal: bundle was not persisted');
     }
 
-    return {
-      bundle: mapRebalanceBundleRow(bundleRow, graph.detail.proposal),
+    const bundle = mapRebalanceBundleRow(bundleRow, graph.detail.proposal);
+    const detail: RebalanceBundleDetailView = {
+      bundle,
       graph,
+      partialProgress: {
+        totalChildren: 0,
+        appliedChildren: 0,
+        progressRecordedChildren: 0,
+        retryableChildren: 0,
+        nonRetryableChildren: 0,
+        blockedBeforeApplicationChildren: 0,
+        inflightChildren: 0,
+        sleeves: [],
+        children: [],
+      },
+      recoveryCandidates: [],
+      recoveryActions: [],
+      resolutionOptions: [],
+      resolutionActions: [],
+      escalation: null,
+      escalationHistory: [],
+      escalationTransitions: [],
+    };
+    const [recoveryActions, recoveryCandidates, resolutionActions, escalation, escalationHistory] = await Promise.all([
+      this.listRebalanceBundleRecoveryActions(bundle.id),
+      this.buildRebalanceBundleRecoveryCandidatesForBundle(detail),
+      this.listRebalanceBundleResolutionActions(bundle.id),
+      this.getRebalanceBundleEscalation(bundle.id),
+      this.listRebalanceBundleEscalationHistory(bundle.id),
+    ]);
+    const partialProgress = await this.buildBundlePartialProgress(detail, recoveryCandidates);
+    const resolutionOptions = this.buildBundleResolutionOptions(detail, partialProgress);
+    const escalationTransitions = this.buildBundleEscalationTransitions(detail, escalation);
+
+    return {
+      bundle,
+      graph: {
+        ...graph,
+        resolutionActions,
+        escalation,
+        escalationHistory,
+      },
+      partialProgress,
+      recoveryCandidates,
+      recoveryActions,
+      resolutionOptions,
+      resolutionActions,
+      escalation,
+      escalationHistory,
+      escalationTransitions,
     };
   }
 
@@ -4628,19 +5824,1362 @@ export class RuntimeStore {
     return this.syncRebalanceBundleForProposal(proposalId);
   }
 
+  private async buildRebalanceBundleRecoveryCandidatesForBundle(
+    bundle: RebalanceBundleDetailView,
+  ): Promise<RebalanceBundleRecoveryCandidateView[]> {
+    const [carryCandidates, treasuryCandidates] = await Promise.all([
+      Promise.all(bundle.graph.downstream.carry.actions.map(async (node) => this.buildCarryRecoveryCandidate(bundle, node))),
+      Promise.all(bundle.graph.downstream.treasury.actions.map(async (node) => this.buildTreasuryRecoveryCandidate(bundle, node))),
+    ]);
+
+    return [
+      ...carryCandidates,
+      ...treasuryCandidates,
+      this.buildProposalRecoveryCandidate(bundle),
+    ];
+  }
+
+  async listRebalanceBundleRecoveryActions(
+    bundleId: string,
+  ): Promise<RebalanceBundleRecoveryActionView[]> {
+    const rows = await this.db
+      .select()
+      .from(allocatorRebalanceBundleRecoveryActions)
+      .where(eq(allocatorRebalanceBundleRecoveryActions.bundleId, bundleId))
+      .orderBy(desc(allocatorRebalanceBundleRecoveryActions.requestedAt));
+
+    return rows.map(mapRebalanceBundleRecoveryActionRow);
+  }
+
+  async getRebalanceBundleRecoveryAction(
+    bundleId: string,
+    recoveryActionId: string,
+  ): Promise<RebalanceBundleRecoveryActionView | null> {
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundleRecoveryActions)
+      .where(and(
+        eq(allocatorRebalanceBundleRecoveryActions.bundleId, bundleId),
+        eq(allocatorRebalanceBundleRecoveryActions.id, recoveryActionId),
+      ))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceBundleRecoveryActionRow(row);
+  }
+
+  private buildBundleRecoveryBlockedReason(
+    code: RebalanceBundleRecoveryBlockedReason['code'],
+    category: RebalanceBundleRecoveryBlockedReason['category'],
+    message: string,
+    operatorAction: string,
+    details: Record<string, unknown> = {},
+  ): RebalanceBundleRecoveryBlockedReason {
+    return {
+      code,
+      category,
+      message,
+      operatorAction,
+      details,
+    };
+  }
+
+  private buildProposalRecoveryCandidate(
+    bundle: RebalanceBundleDetailView,
+  ): RebalanceBundleRecoveryCandidateView {
+    const now = new Date().toISOString();
+    return {
+      id: `${bundle.bundle.id}:rebalance_proposal:${bundle.bundle.proposalId}:requeue_child_execution`,
+      bundleId: bundle.bundle.id,
+      proposalId: bundle.bundle.proposalId,
+      recoveryActionType: 'requeue_child_execution',
+      targetChildType: 'rebalance_proposal',
+      targetChildId: bundle.bundle.proposalId,
+      targetChildStatus: bundle.graph.detail.proposal.status,
+      targetChildSummary: bundle.graph.detail.proposal.summary,
+      targetCommandType: 'execute_rebalance_proposal',
+      approvalRequirement: bundle.graph.detail.proposal.approvalRequirement,
+      eligibilityState: 'blocked',
+      blockedReasons: [this.buildBundleRecoveryBlockedReason(
+        'proposal_requeue_not_supported',
+        'safety',
+        'Proposal-level rebalance retry is not safely supported in this pass because it can duplicate downstream child work.',
+        'Inspect child actions directly and use child-scoped recovery actions when they are explicitly eligible.',
+        {
+          proposalId: bundle.bundle.proposalId,
+        },
+      )],
+      executionMode: bundle.bundle.executionMode,
+      simulated: bundle.bundle.simulated,
+      note: 'Bundle recovery currently supports explicit child action recovery only.',
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  private async buildCarryRecoveryCandidate(
+    bundle: RebalanceBundleDetailView,
+    node: RebalanceCarryActionNodeView,
+  ): Promise<RebalanceBundleRecoveryCandidateView> {
+    const blockedReasons: RebalanceBundleRecoveryBlockedReason[] = [];
+    const now = new Date().toISOString();
+    const stepRows = await this.db
+      .select()
+      .from(carryExecutionSteps)
+      .where(eq(carryExecutionSteps.carryActionId, node.action.id));
+    const actionableBundleStatuses: RebalanceBundleStatus[] = [
+      'failed',
+      'blocked',
+      'requires_intervention',
+      'partially_completed',
+    ];
+
+    if (!actionableBundleStatuses.includes(bundle.bundle.status)) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'bundle_not_actionable',
+        'bundle_state',
+        `Bundle status "${bundle.bundle.status}" does not permit recovery mutation requests.`,
+        'Wait for the bundle to reach a failed, blocked, partial, or intervention-required state before requesting recovery.',
+        {
+          bundleStatus: bundle.bundle.status,
+        },
+      ));
+    }
+
+    const runtimeStatus = await this.getRuntimeStatus();
+    if (
+      runtimeStatus.halted
+      || runtimeStatus.lifecycleState === 'paused'
+      || runtimeStatus.lifecycleState === 'stopped'
+      || runtimeStatus.lifecycleState === 'starting'
+    ) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'runtime_not_ready',
+        'runtime',
+        'Runtime is not in a state that permits child recovery execution.',
+        'Return runtime to ready state before requesting bundle recovery.',
+        {
+          lifecycleState: runtimeStatus.lifecycleState,
+          halted: runtimeStatus.halted,
+        },
+      ));
+    }
+
+    if (node.executions.some((execution) => execution.status === 'completed') || node.action.status === 'completed') {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_already_completed',
+        'target_child',
+        'Carry child already completed successfully and should not be retried.',
+        'Inspect the completed child execution history instead of requeueing it.',
+        {
+          carryActionId: node.action.id,
+        },
+      ));
+    }
+
+    if (node.action.status === 'queued' || node.action.status === 'executing') {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_has_inflight_command',
+        'target_child',
+        'Carry child is already queued or executing.',
+        'Wait for the in-flight carry child to settle before requesting another recovery action.',
+        {
+          carryActionId: node.action.id,
+          status: node.action.status,
+          linkedCommandId: node.action.linkedCommandId,
+        },
+      ));
+    }
+
+    if (node.action.status === 'cancelled') {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_not_retryable',
+        'target_child',
+        'Cancelled carry children are inspect-only in this pass.',
+        'Create a new allocator or carry evaluation if a replacement action is required.',
+        {
+          carryActionId: node.action.id,
+        },
+      ));
+    }
+
+    if (!node.action.executable || node.action.blockedReasons.length > 0) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_remains_blocked',
+        'safety',
+        'Carry child remains operationally blocked and cannot be requeued safely.',
+        'Resolve the carry child blocked reasons before requesting recovery.',
+        {
+          carryActionId: node.action.id,
+          blockedReasons: node.action.blockedReasons,
+        },
+      ));
+    }
+
+    const latestFailedExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
+      ?? node.executions.find((execution) => execution.status === 'failed')
+      ?? null;
+    const hasExecutionSideEffects = node.executions.some((execution) => execution.venueExecutionReference !== null)
+      || stepRows.some((row) =>
+        row.executionReference !== null
+        || row.venueOrderId !== null
+        || !['pending', 'failed'].includes(row.status),
+      );
+    if (hasExecutionSideEffects) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'carry_execution_partial_progress_detected',
+        'safety',
+        'Carry child shows partial execution progress, so replaying it could duplicate fills or orders.',
+        'Inspect the carry execution detail and resolve the partial application manually before retrying.',
+        {
+          carryActionId: node.action.id,
+          latestExecutionId: latestFailedExecution?.id ?? null,
+        },
+      ));
+    }
+
+    if (
+      !['recommended', 'approved', 'failed'].includes(node.action.status)
+      && node.action.status !== 'completed'
+      && node.action.status !== 'cancelled'
+      && node.action.status !== 'queued'
+      && node.action.status !== 'executing'
+    ) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_not_retryable',
+        'target_child',
+        `Carry child status "${node.action.status}" is not supported for bundle recovery.`,
+        'Inspect the child action directly before requesting recovery.',
+        {
+          carryActionId: node.action.id,
+          status: node.action.status,
+        },
+      ));
+    }
+
+    return {
+      id: `${bundle.bundle.id}:carry_action:${node.action.id}:requeue_child_execution`,
+      bundleId: bundle.bundle.id,
+      proposalId: bundle.bundle.proposalId,
+      recoveryActionType: 'requeue_child_execution',
+      targetChildType: 'carry_action',
+      targetChildId: node.action.id,
+      targetChildStatus: node.action.status,
+      targetChildSummary: node.action.summary,
+      targetCommandType: 'execute_carry_action',
+      approvalRequirement: node.action.approvalRequirement,
+      eligibilityState: blockedReasons.length === 0 ? 'eligible' : 'blocked',
+      blockedReasons,
+      executionMode: node.action.executionMode,
+      simulated: node.action.simulated,
+      note: latestFailedExecution === null
+        ? 'Carry child can be requeued from its persisted action record because no venue-side progress is recorded.'
+        : `Latest failed carry execution: ${latestFailedExecution.id}.`,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  private async buildTreasuryRecoveryCandidate(
+    bundle: RebalanceBundleDetailView,
+    node: RebalanceTreasuryActionNodeView,
+  ): Promise<RebalanceBundleRecoveryCandidateView> {
+    const blockedReasons: RebalanceBundleRecoveryBlockedReason[] = [];
+    const now = new Date().toISOString();
+    const actionableBundleStatuses: RebalanceBundleStatus[] = [
+      'failed',
+      'blocked',
+      'requires_intervention',
+      'partially_completed',
+    ];
+
+    if (!actionableBundleStatuses.includes(bundle.bundle.status)) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'bundle_not_actionable',
+        'bundle_state',
+        `Bundle status "${bundle.bundle.status}" does not permit recovery mutation requests.`,
+        'Wait for the bundle to reach a failed, blocked, partial, or intervention-required state before requesting recovery.',
+        {
+          bundleStatus: bundle.bundle.status,
+        },
+      ));
+    }
+
+    const runtimeStatus = await this.getRuntimeStatus();
+    if (
+      runtimeStatus.halted
+      || runtimeStatus.lifecycleState === 'paused'
+      || runtimeStatus.lifecycleState === 'stopped'
+      || runtimeStatus.lifecycleState === 'starting'
+    ) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'runtime_not_ready',
+        'runtime',
+        'Runtime is not in a state that permits child recovery execution.',
+        'Return runtime to ready state before requesting bundle recovery.',
+        {
+          lifecycleState: runtimeStatus.lifecycleState,
+          halted: runtimeStatus.halted,
+        },
+      ));
+    }
+
+    if (node.executions.some((execution) => execution.status === 'completed') || node.action.status === 'completed') {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_already_completed',
+        'target_child',
+        'Treasury child already completed successfully and should not be retried.',
+        'Inspect the completed child execution history instead of requeueing it.',
+        {
+          treasuryActionId: node.action.id,
+        },
+      ));
+    }
+
+    if (node.action.status === 'queued' || node.action.status === 'executing') {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_has_inflight_command',
+        'target_child',
+        'Treasury child is already queued or executing.',
+        'Wait for the in-flight treasury child to settle before requesting another recovery action.',
+        {
+          treasuryActionId: node.action.id,
+          status: node.action.status,
+          linkedCommandId: node.action.linkedCommandId,
+        },
+      ));
+    }
+
+    if (node.action.status === 'cancelled') {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_not_retryable',
+        'target_child',
+        'Cancelled treasury children are inspect-only in this pass.',
+        'Create a new treasury or allocator evaluation if a replacement action is required.',
+        {
+          treasuryActionId: node.action.id,
+        },
+      ));
+    }
+
+    if (!node.action.executable || node.action.readiness === 'blocked' || node.action.blockedReasons.length > 0) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_remains_blocked',
+        'safety',
+        'Treasury child remains operationally blocked and cannot be requeued safely.',
+        'Resolve the treasury child blocked reasons before requesting recovery.',
+        {
+          treasuryActionId: node.action.id,
+          blockedReasons: node.action.blockedReasons,
+        },
+      ));
+    }
+
+    const latestFailedExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
+      ?? node.executions.find((execution) => execution.status === 'failed')
+      ?? null;
+    const hasSideEffects = node.executions.some((execution) => execution.venueExecutionReference !== null);
+    if (hasSideEffects) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'treasury_execution_side_effect_detected',
+        'safety',
+        'Treasury child shows venue-side execution evidence, so replaying it could duplicate external state changes.',
+        'Inspect the treasury execution detail before requesting recovery.',
+        {
+          treasuryActionId: node.action.id,
+          latestExecutionId: latestFailedExecution?.id ?? null,
+        },
+      ));
+    }
+
+    if (
+      !['recommended', 'approved', 'failed'].includes(node.action.status)
+      && node.action.status !== 'completed'
+      && node.action.status !== 'cancelled'
+      && node.action.status !== 'queued'
+      && node.action.status !== 'executing'
+    ) {
+      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
+        'target_child_not_retryable',
+        'target_child',
+        `Treasury child status "${node.action.status}" is not supported for bundle recovery.`,
+        'Inspect the child action directly before requesting recovery.',
+        {
+          treasuryActionId: node.action.id,
+          status: node.action.status,
+        },
+      ));
+    }
+
+    return {
+      id: `${bundle.bundle.id}:treasury_action:${node.action.id}:requeue_child_execution`,
+      bundleId: bundle.bundle.id,
+      proposalId: bundle.bundle.proposalId,
+      recoveryActionType: 'requeue_child_execution',
+      targetChildType: 'treasury_action',
+      targetChildId: node.action.id,
+      targetChildStatus: node.action.status,
+      targetChildSummary: node.action.summary,
+      targetCommandType: 'execute_treasury_action',
+      approvalRequirement: node.action.approvalRequirement,
+      eligibilityState: blockedReasons.length === 0 ? 'eligible' : 'blocked',
+      blockedReasons,
+      executionMode: node.action.executionMode,
+      simulated: node.action.simulated,
+      note: latestFailedExecution === null
+        ? 'Treasury child can be queued from its persisted action record when no external side effects were recorded.'
+        : `Latest failed treasury execution: ${latestFailedExecution.id}.`,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async listRebalanceBundleRecoveryCandidates(
+    bundleId: string,
+  ): Promise<RebalanceBundleRecoveryCandidateView[]> {
+    const detail = await this.getRebalanceBundle(bundleId);
+    return detail?.recoveryCandidates ?? [];
+  }
+
+  private buildBundleResolutionBlockedReason(
+    code: RebalanceBundleResolutionBlockedReason['code'],
+    category: RebalanceBundleResolutionBlockedReason['category'],
+    message: string,
+    operatorAction: string,
+    details: Record<string, unknown> = {},
+  ): RebalanceBundleResolutionBlockedReason {
+    return {
+      code,
+      category,
+      message,
+      operatorAction,
+      details,
+    };
+  }
+
+  private async buildCarryChildInspection(
+    node: RebalanceCarryActionNodeView,
+    recoveryCandidate: RebalanceBundleRecoveryCandidateView | undefined,
+  ): Promise<RebalanceBundleChildInspectionView> {
+    const stepRows = await this.db
+      .select()
+      .from(carryExecutionSteps)
+      .where(eq(carryExecutionSteps.carryActionId, node.action.id));
+    const latestExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
+      ?? node.executions.at(-1)
+      ?? null;
+    const completed = node.action.status === 'completed' || node.executions.some((execution) => execution.status === 'completed');
+    const progressRecorded = completed
+      || node.executions.some((execution) => execution.venueExecutionReference !== null)
+      || stepRows.some((row) =>
+        row.executionReference !== null
+        || row.venueOrderId !== null
+        || !['pending', 'failed'].includes(row.status),
+      );
+    const retryability = recoveryCandidate?.eligibilityState === 'eligible'
+      ? 'retryable'
+      : completed
+        ? 'not_applicable'
+        : 'non_retryable';
+
+    let progressState: RebalanceBundleChildInspectionView['progressState'] = 'pending';
+    if (completed) {
+      progressState = 'completed';
+    } else if (node.action.status === 'queued' || node.action.status === 'executing') {
+      progressState = 'inflight';
+    } else if (progressRecorded) {
+      progressState = 'partial_progress';
+    } else if (recoveryCandidate?.eligibilityState === 'eligible') {
+      progressState = 'retryable_failure';
+    } else if (!node.action.executable || node.action.blockedReasons.length > 0) {
+      progressState = 'blocked_before_progress';
+    } else if (node.action.status === 'failed') {
+      progressState = 'failed_without_progress';
+    } else if (recoveryCandidate !== undefined) {
+      progressState = 'non_retryable';
+    }
+
+    const evidence = [
+      completed ? 'Completed carry execution recorded.' : null,
+      node.executions.some((execution) => execution.venueExecutionReference !== null)
+        ? 'Venue execution references recorded.'
+        : null,
+      stepRows.some((row) => row.venueOrderId !== null)
+        ? 'Carry execution step venue order ids recorded.'
+        : null,
+      stepRows.some((row) => row.executionReference !== null)
+        ? 'Carry execution step execution references recorded.'
+        : null,
+      stepRows.some((row) => !['pending', 'failed'].includes(row.status))
+        ? 'Carry execution steps advanced beyond pre-execution failure.'
+        : null,
+    ].filter((value): value is string => value !== null);
+
+    return {
+      childType: 'carry_action',
+      sleeveId: 'carry',
+      childId: node.action.id,
+      summary: node.action.summary,
+      actionStatus: node.action.status,
+      latestExecutionId: latestExecution?.id ?? null,
+      latestExecutionStatus: latestExecution?.status ?? null,
+      progressState,
+      retryability,
+      applied: completed,
+      progressRecorded,
+      blockedBeforeApplication: !progressRecorded && (!node.action.executable || node.action.blockedReasons.length > 0 || node.action.status === 'failed'),
+      retryCandidateId: recoveryCandidate?.id ?? null,
+      retryBlockedReasons: recoveryCandidate?.blockedReasons ?? [],
+      evidence,
+    };
+  }
+
+  private async buildTreasuryChildInspection(
+    node: RebalanceTreasuryActionNodeView,
+    recoveryCandidate: RebalanceBundleRecoveryCandidateView | undefined,
+  ): Promise<RebalanceBundleChildInspectionView> {
+    const latestExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
+      ?? node.executions.at(-1)
+      ?? null;
+    const completed = node.action.status === 'completed' || node.executions.some((execution) => execution.status === 'completed');
+    const progressRecorded = completed
+      || node.executions.some((execution) => execution.venueExecutionReference !== null);
+    const retryability = recoveryCandidate?.eligibilityState === 'eligible'
+      ? 'retryable'
+      : completed
+        ? 'not_applicable'
+        : 'non_retryable';
+
+    let progressState: RebalanceBundleChildInspectionView['progressState'] = 'pending';
+    if (completed) {
+      progressState = 'completed';
+    } else if (node.action.status === 'queued' || node.action.status === 'executing') {
+      progressState = 'inflight';
+    } else if (progressRecorded) {
+      progressState = 'partial_progress';
+    } else if (recoveryCandidate?.eligibilityState === 'eligible') {
+      progressState = 'retryable_failure';
+    } else if (!node.action.executable || node.action.readiness === 'blocked' || node.action.blockedReasons.length > 0) {
+      progressState = 'blocked_before_progress';
+    } else if (node.action.status === 'failed') {
+      progressState = 'failed_without_progress';
+    } else if (recoveryCandidate !== undefined) {
+      progressState = 'non_retryable';
+    }
+
+    const evidence = [
+      completed ? 'Treasury execution completed and applied state changes.' : null,
+      node.executions.some((execution) => execution.venueExecutionReference !== null)
+        ? 'Venue-side treasury execution references recorded.'
+        : null,
+      completed && node.executions.every((execution) => execution.venueExecutionReference === null)
+        ? 'Budget-state-only treasury application recorded.'
+        : null,
+    ].filter((value): value is string => value !== null);
+
+    return {
+      childType: 'treasury_action',
+      sleeveId: 'treasury',
+      childId: node.action.id,
+      summary: node.action.summary,
+      actionStatus: node.action.status,
+      latestExecutionId: latestExecution?.id ?? null,
+      latestExecutionStatus: latestExecution?.status ?? null,
+      progressState,
+      retryability,
+      applied: completed,
+      progressRecorded,
+      blockedBeforeApplication: !progressRecorded && (!node.action.executable || node.action.readiness === 'blocked' || node.action.blockedReasons.length > 0 || node.action.status === 'failed'),
+      retryCandidateId: recoveryCandidate?.id ?? null,
+      retryBlockedReasons: recoveryCandidate?.blockedReasons ?? [],
+      evidence,
+    };
+  }
+
+  private async buildBundlePartialProgress(
+    bundle: RebalanceBundleDetailView,
+    recoveryCandidates: RebalanceBundleRecoveryCandidateView[],
+  ): Promise<RebalanceBundlePartialProgressView> {
+    const carryChildren = await Promise.all(bundle.graph.downstream.carry.actions.map(async (node) =>
+      this.buildCarryChildInspection(
+        node,
+        recoveryCandidates.find((candidate) =>
+          candidate.targetChildType === 'carry_action' && candidate.targetChildId === node.action.id,
+        ),
+      )
+    ));
+    const treasuryChildren = await Promise.all(bundle.graph.downstream.treasury.actions.map(async (node) =>
+      this.buildTreasuryChildInspection(
+        node,
+        recoveryCandidates.find((candidate) =>
+          candidate.targetChildType === 'treasury_action' && candidate.targetChildId === node.action.id,
+        ),
+      )
+    ));
+    const children = [...carryChildren, ...treasuryChildren];
+    const summariseSleeve = (
+      sleeveId: 'carry' | 'treasury',
+    ): RebalanceBundlePartialProgressSleeveView => {
+      const items = children.filter((child) => child.sleeveId === sleeveId);
+      return {
+        sleeveId,
+        totalChildren: items.length,
+        appliedChildren: items.filter((child) => child.applied).length,
+        progressRecordedChildren: items.filter((child) => child.progressRecorded).length,
+        retryableChildren: items.filter((child) => child.retryability === 'retryable').length,
+        nonRetryableChildren: items.filter((child) => child.retryability === 'non_retryable').length,
+        blockedBeforeApplicationChildren: items.filter((child) => child.blockedBeforeApplication).length,
+      };
+    };
+
+    return {
+      totalChildren: children.length,
+      appliedChildren: children.filter((child) => child.applied).length,
+      progressRecordedChildren: children.filter((child) => child.progressRecorded).length,
+      retryableChildren: children.filter((child) => child.retryability === 'retryable').length,
+      nonRetryableChildren: children.filter((child) => child.retryability === 'non_retryable').length,
+      blockedBeforeApplicationChildren: children.filter((child) => child.blockedBeforeApplication).length,
+      inflightChildren: children.filter((child) => child.progressState === 'inflight').length,
+      sleeves: [
+        summariseSleeve('carry'),
+        summariseSleeve('treasury'),
+      ],
+      children,
+    };
+  }
+
+  private buildBundleResolutionOptions(
+    bundle: RebalanceBundleDetailView,
+    partialProgress: RebalanceBundlePartialProgressView,
+  ): RebalanceBundleResolutionOptionView[] {
+    const now = new Date().toISOString();
+    const actionableBundleStatuses: RebalanceBundleStatus[] = [
+      'failed',
+      'blocked',
+      'requires_intervention',
+      'partially_completed',
+    ];
+    const buildOption = (
+      resolutionActionType: RebalanceBundleResolutionActionType,
+      targetResolutionState: RebalanceBundleResolutionState,
+      summary: string,
+      operatorAction: string,
+      approvalRequirement: 'operator' | 'admin',
+    ): RebalanceBundleResolutionOptionView => {
+      const blockedReasons: RebalanceBundleResolutionBlockedReason[] = [];
+      if (!actionableBundleStatuses.includes(bundle.bundle.status)) {
+        blockedReasons.push(this.buildBundleResolutionBlockedReason(
+          'bundle_not_actionable',
+          'bundle_state',
+          `Bundle status "${bundle.bundle.status}" does not permit manual resolution.`,
+          'Only request manual resolution for failed, blocked, partial, or intervention-required bundles.',
+          { bundleStatus: bundle.bundle.status },
+        ));
+      }
+      if (bundle.bundle.pendingChildCount > 0 || partialProgress.inflightChildren > 0) {
+        blockedReasons.push(this.buildBundleResolutionBlockedReason(
+          'bundle_has_inflight_children',
+          'safety',
+          'Bundle still has in-flight downstream children and cannot be manually closed yet.',
+          'Wait for in-flight children to settle before recording manual resolution.',
+          {
+            pendingChildCount: bundle.bundle.pendingChildCount,
+            inflightChildren: partialProgress.inflightChildren,
+          },
+        ));
+      }
+      if (
+        resolutionActionType === 'accept_partial_application'
+        && bundle.bundle.outcomeClassification !== 'partial_application'
+      ) {
+        blockedReasons.push(this.buildBundleResolutionBlockedReason(
+          'bundle_not_partial_application',
+          'bundle_state',
+          'Accept-partial resolution is only available when the bundle outcome is partial application.',
+          'Use manual resolution or escalation for fully failed or fully blocked bundles.',
+          {
+            outcomeClassification: bundle.bundle.outcomeClassification,
+          },
+        ));
+      }
+      if (bundle.bundle.resolutionState === targetResolutionState) {
+        blockedReasons.push(this.buildBundleResolutionBlockedReason(
+          'resolution_state_already_current',
+          'validation',
+          `Bundle is already marked as ${targetResolutionState}.`,
+          'Inspect the existing manual resolution history instead of repeating the same decision.',
+          {
+            resolutionState: bundle.bundle.resolutionState,
+          },
+        ));
+      }
+
+      return {
+        id: `${bundle.bundle.id}:${resolutionActionType}`,
+        bundleId: bundle.bundle.id,
+        proposalId: bundle.bundle.proposalId,
+        resolutionActionType,
+        targetResolutionState,
+        approvalRequirement,
+        eligibilityState: blockedReasons.length === 0 ? 'eligible' : 'blocked',
+        blockedReasons,
+        noteRequired: true,
+        summary,
+        operatorAction,
+        createdAt: now,
+        updatedAt: now,
+      };
+    };
+
+    return [
+      buildOption(
+        'accept_partial_application',
+        'accepted_partial',
+        'Accept the current partial application as the intended bundle outcome without retrying remaining children.',
+        'Record why the partially applied state is acceptable and acknowledge the remaining non-retryable context.',
+        'operator',
+      ),
+      buildOption(
+        'mark_bundle_manually_resolved',
+        'manually_resolved',
+        'Record that the operator resolved the bundle outside the retry rails and no further bundle recovery is required.',
+        'Document the manual remediation or external resolution steps that closed the bundle.',
+        'operator',
+      ),
+      buildOption(
+        'escalate_bundle_for_review',
+        'escalated',
+        'Escalate the bundle for further review when current partial or non-retryable state cannot be safely closed yet.',
+        'Document why the bundle remains escalated and what follow-up is required.',
+        'operator',
+      ),
+    ];
+  }
+
+  private buildBundleEscalationBlockedReason(
+    code: RebalanceBundleEscalationBlockedReason['code'],
+    category: RebalanceBundleEscalationBlockedReason['category'],
+    message: string,
+    operatorAction: string,
+    details: Record<string, unknown> = {},
+  ): RebalanceBundleEscalationBlockedReason {
+    return {
+      code,
+      category,
+      message,
+      operatorAction,
+      details,
+    };
+  }
+
+  private buildBundleEscalationTransitions(
+    bundle: RebalanceBundleDetailView,
+    escalation: RebalanceBundleEscalationView | null,
+  ): RebalanceBundleEscalationTransitionView[] {
+    const now = new Date().toISOString();
+    const buildTransition = (
+      transitionType: RebalanceBundleEscalationTransitionType,
+      targetStatus: RebalanceBundleEscalationStatus,
+      summary: string,
+      operatorAction: string,
+      noteRequired: boolean,
+      assigneeRequired: boolean,
+    ): RebalanceBundleEscalationTransitionView => {
+      const blockedReasons: RebalanceBundleEscalationBlockedReason[] = [];
+      if (bundle.bundle.resolutionState !== 'escalated') {
+        blockedReasons.push(this.buildBundleEscalationBlockedReason(
+          'bundle_not_escalated',
+          'bundle_state',
+          'Bundle is not currently in an escalated resolution state.',
+          'Only use escalation workflow actions on bundles that are explicitly escalated.',
+          { resolutionState: bundle.bundle.resolutionState },
+        ));
+      }
+      if (escalation === null) {
+        blockedReasons.push(this.buildBundleEscalationBlockedReason(
+          'escalation_not_found',
+          'escalation_state',
+          'No escalation record exists for this bundle yet.',
+          'Escalate the bundle first or inspect the manual resolution history.',
+        ));
+      } else {
+        if (!escalation.isOpen) {
+          blockedReasons.push(this.buildBundleEscalationBlockedReason(
+            'escalation_already_resolved',
+            'escalation_state',
+            'This escalation is already resolved.',
+            'Inspect the resolved escalation history instead of applying more workflow transitions.',
+            { escalationStatus: escalation.status },
+          ));
+        }
+        if (
+          (transitionType === 'acknowledge' || transitionType === 'start_review' || transitionType === 'close')
+          && escalation.ownerId === null
+        ) {
+          blockedReasons.push(this.buildBundleEscalationBlockedReason(
+            'escalation_owner_required',
+            'ownership',
+            'Escalation must have an assigned owner before acknowledgement, review, or close.',
+            'Assign the escalation to an operator before continuing.',
+          ));
+        }
+        if (
+          transitionType === 'acknowledge'
+          && escalation.status !== 'open'
+        ) {
+          blockedReasons.push(this.buildBundleEscalationBlockedReason(
+            'invalid_status_transition',
+            'escalation_state',
+            `Escalation cannot be acknowledged from status "${escalation.status}".`,
+            'Only acknowledge newly open escalations.',
+            { escalationStatus: escalation.status },
+          ));
+        }
+        if (
+          transitionType === 'start_review'
+          && !['open', 'acknowledged'].includes(escalation.status)
+        ) {
+          blockedReasons.push(this.buildBundleEscalationBlockedReason(
+            'invalid_status_transition',
+            'escalation_state',
+            `Escalation cannot enter review from status "${escalation.status}".`,
+            'Start review only after the escalation is open or acknowledged.',
+            { escalationStatus: escalation.status },
+          ));
+        }
+      }
+
+      return {
+        id: `${bundle.bundle.id}:${transitionType}`,
+        bundleId: bundle.bundle.id,
+        escalationId: escalation?.id ?? null,
+        transitionType,
+        targetStatus,
+        approvalRequirement: 'operator',
+        eligibilityState: blockedReasons.length === 0 ? 'eligible' : 'blocked',
+        blockedReasons,
+        noteRequired,
+        assigneeRequired,
+        summary,
+        operatorAction,
+        createdAt: now,
+        updatedAt: now,
+      };
+    };
+
+    return [
+      buildTransition(
+        'assign',
+        escalation?.status ?? 'open',
+        'Assign or reassign the escalation owner and optional follow-up date.',
+        'Document the handoff and choose the operator who now owns the escalated bundle.',
+        true,
+        true,
+      ),
+      buildTransition(
+        'acknowledge',
+        'acknowledged',
+        'Acknowledge that the escalation owner has accepted the handoff.',
+        'Record acknowledgement once the owner accepts responsibility for follow-up.',
+        false,
+        false,
+      ),
+      buildTransition(
+        'start_review',
+        'in_review',
+        'Mark the escalation as actively under review.',
+        'Record review progress when the assigned owner begins investigating the escalated bundle.',
+        false,
+        false,
+      ),
+      buildTransition(
+        'close',
+        'resolved',
+        'Resolve the escalation once follow-up is complete and the handoff workflow is closed.',
+        'Document the resolution outcome and who closed the escalation.',
+        true,
+        false,
+      ),
+    ];
+  }
+
+  async getRebalanceBundleEscalation(
+    bundleId: string,
+  ): Promise<RebalanceBundleEscalationView | null> {
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundleEscalations)
+      .where(eq(allocatorRebalanceBundleEscalations.bundleId, bundleId))
+      .orderBy(desc(allocatorRebalanceBundleEscalations.createdAt))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceBundleEscalationRow(row);
+  }
+
+  async getOpenRebalanceBundleEscalation(
+    bundleId: string,
+  ): Promise<RebalanceBundleEscalationView | null> {
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundleEscalations)
+      .where(and(
+        eq(allocatorRebalanceBundleEscalations.bundleId, bundleId),
+        sql`${allocatorRebalanceBundleEscalations.status} <> 'resolved'`,
+      ))
+      .orderBy(desc(allocatorRebalanceBundleEscalations.createdAt))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceBundleEscalationRow(row);
+  }
+
+  async listRebalanceBundleEscalationHistory(
+    bundleId: string,
+  ): Promise<RebalanceBundleEscalationEventView[]> {
+    const rows = await this.db
+      .select()
+      .from(allocatorRebalanceBundleEscalationEvents)
+      .where(eq(allocatorRebalanceBundleEscalationEvents.bundleId, bundleId))
+      .orderBy(desc(allocatorRebalanceBundleEscalationEvents.createdAt));
+
+    return rows.map(mapRebalanceBundleEscalationEventRow);
+  }
+
+  async listRebalanceBundleEscalationTransitions(
+    bundleId: string,
+  ): Promise<RebalanceBundleEscalationTransitionView[]> {
+    const detail = await this.getRebalanceBundle(bundleId);
+    return detail?.escalationTransitions ?? [];
+  }
+
+  async createRebalanceBundleEscalation(input: {
+    bundleId: string;
+    proposalId: string;
+    sourceResolutionActionId?: string | null;
+    status: RebalanceBundleEscalationStatus;
+    ownerId?: string | null;
+    assignedBy?: string | null;
+    assignedAt?: Date | null;
+    acknowledgedBy?: string | null;
+    acknowledgedAt?: Date | null;
+    dueAt?: Date | null;
+    handoffNote?: string | null;
+    reviewNote?: string | null;
+    resolutionNote?: string | null;
+    closedBy?: string | null;
+    closedAt?: Date | null;
+    createdAt?: Date;
+  }): Promise<RebalanceBundleEscalationView> {
+    const createdAt = input.createdAt ?? new Date();
+    const [row] = await this.db
+      .insert(allocatorRebalanceBundleEscalations)
+      .values({
+        bundleId: input.bundleId,
+        proposalId: input.proposalId,
+        sourceResolutionActionId: input.sourceResolutionActionId ?? null,
+        status: input.status,
+        ownerId: input.ownerId ?? null,
+        assignedBy: input.assignedBy ?? null,
+        assignedAt: input.assignedAt ?? null,
+        acknowledgedBy: input.acknowledgedBy ?? null,
+        acknowledgedAt: input.acknowledgedAt ?? null,
+        dueAt: input.dueAt ?? null,
+        handoffNote: input.handoffNote ?? null,
+        reviewNote: input.reviewNote ?? null,
+        resolutionNote: input.resolutionNote ?? null,
+        closedBy: input.closedBy ?? null,
+        closedAt: input.closedAt ?? null,
+        createdAt,
+        updatedAt: createdAt,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createRebalanceBundleEscalation: escalation was not persisted');
+    }
+
+    return mapRebalanceBundleEscalationRow(row);
+  }
+
+  async updateRebalanceBundleEscalation(
+    escalationId: string,
+    patch: Partial<{
+      status: RebalanceBundleEscalationStatus;
+      ownerId: string | null;
+      assignedBy: string | null;
+      assignedAt: Date | null;
+      acknowledgedBy: string | null;
+      acknowledgedAt: Date | null;
+      dueAt: Date | null;
+      handoffNote: string | null;
+      reviewNote: string | null;
+      resolutionNote: string | null;
+      closedBy: string | null;
+      closedAt: Date | null;
+    }>,
+  ): Promise<RebalanceBundleEscalationView | null> {
+    await this.db
+      .update(allocatorRebalanceBundleEscalations)
+      .set({
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.ownerId !== undefined ? { ownerId: patch.ownerId } : {}),
+        ...(patch.assignedBy !== undefined ? { assignedBy: patch.assignedBy } : {}),
+        ...(patch.assignedAt !== undefined ? { assignedAt: patch.assignedAt } : {}),
+        ...(patch.acknowledgedBy !== undefined ? { acknowledgedBy: patch.acknowledgedBy } : {}),
+        ...(patch.acknowledgedAt !== undefined ? { acknowledgedAt: patch.acknowledgedAt } : {}),
+        ...(patch.dueAt !== undefined ? { dueAt: patch.dueAt } : {}),
+        ...(patch.handoffNote !== undefined ? { handoffNote: patch.handoffNote } : {}),
+        ...(patch.reviewNote !== undefined ? { reviewNote: patch.reviewNote } : {}),
+        ...(patch.resolutionNote !== undefined ? { resolutionNote: patch.resolutionNote } : {}),
+        ...(patch.closedBy !== undefined ? { closedBy: patch.closedBy } : {}),
+        ...(patch.closedAt !== undefined ? { closedAt: patch.closedAt } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceBundleEscalations.id, escalationId));
+
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundleEscalations)
+      .where(eq(allocatorRebalanceBundleEscalations.id, escalationId))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceBundleEscalationRow(row);
+  }
+
+  async recordRebalanceBundleEscalationEvent(input: {
+    escalationId: string;
+    bundleId: string;
+    proposalId: string;
+    eventType: RebalanceBundleEscalationEventView['eventType'];
+    fromStatus: RebalanceBundleEscalationStatus | null;
+    toStatus: RebalanceBundleEscalationStatus;
+    actorId: string;
+    ownerId?: string | null;
+    note?: string | null;
+    dueAt?: Date | null;
+    createdAt?: Date;
+  }): Promise<RebalanceBundleEscalationEventView> {
+    const createdAt = input.createdAt ?? new Date();
+    const [row] = await this.db
+      .insert(allocatorRebalanceBundleEscalationEvents)
+      .values({
+        escalationId: input.escalationId,
+        bundleId: input.bundleId,
+        proposalId: input.proposalId,
+        eventType: input.eventType,
+        fromStatus: input.fromStatus,
+        toStatus: input.toStatus,
+        actorId: input.actorId,
+        ownerId: input.ownerId ?? null,
+        note: input.note ?? null,
+        dueAt: input.dueAt ?? null,
+        createdAt,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.recordRebalanceBundleEscalationEvent: escalation event was not persisted');
+    }
+
+    return mapRebalanceBundleEscalationEventRow(row);
+  }
+
+  async updateRebalanceBundleEscalationState(input: {
+    bundleId: string;
+    latestEscalationId: string | null;
+    escalationStatus: RebalanceBundleEscalationStatus | null;
+    escalationOwnerId: string | null;
+    escalationAssignedAt: Date | null;
+    escalationDueAt: Date | null;
+    escalationSummary: string | null;
+  }): Promise<void> {
+    await this.db
+      .update(allocatorRebalanceBundles)
+      .set({
+        latestEscalationId: input.latestEscalationId,
+        escalationStatus: input.escalationStatus,
+        escalationOwnerId: input.escalationOwnerId,
+        escalationAssignedAt: input.escalationAssignedAt,
+        escalationDueAt: input.escalationDueAt,
+        escalationSummary: input.escalationSummary,
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceBundles.id, input.bundleId));
+  }
+
+  async listRebalanceBundleResolutionActions(
+    bundleId: string,
+  ): Promise<RebalanceBundleResolutionActionView[]> {
+    const rows = await this.db
+      .select()
+      .from(allocatorRebalanceBundleResolutionActions)
+      .where(eq(allocatorRebalanceBundleResolutionActions.bundleId, bundleId))
+      .orderBy(desc(allocatorRebalanceBundleResolutionActions.requestedAt));
+
+    return rows.map(mapRebalanceBundleResolutionActionRow);
+  }
+
+  async getRebalanceBundleResolutionAction(
+    bundleId: string,
+    resolutionActionId: string,
+  ): Promise<RebalanceBundleResolutionActionView | null> {
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundleResolutionActions)
+      .where(and(
+        eq(allocatorRebalanceBundleResolutionActions.bundleId, bundleId),
+        eq(allocatorRebalanceBundleResolutionActions.id, resolutionActionId),
+      ))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceBundleResolutionActionRow(row);
+  }
+
+  async listRebalanceBundleResolutionOptions(
+    bundleId: string,
+  ): Promise<RebalanceBundleResolutionOptionView[]> {
+    const detail = await this.getRebalanceBundle(bundleId);
+    return detail?.resolutionOptions ?? [];
+  }
+
+  async createRebalanceBundleResolutionAction(input: {
+    bundleId: string;
+    proposalId: string;
+    resolutionActionType: RebalanceBundleResolutionActionType;
+    status: RebalanceBundleResolutionActionStatus;
+    resolutionState: RebalanceBundleResolutionState;
+    note: string;
+    acknowledgedPartialApplication: boolean;
+    escalated: boolean;
+    affectedChildSummary: Record<string, unknown>;
+    linkedRecoveryActionIds: string[];
+    blockedReasons: RebalanceBundleResolutionBlockedReason[];
+    outcomeSummary?: string | null;
+    requestedBy: string;
+    completedBy?: string | null;
+    requestedAt?: Date;
+    completedAt?: Date | null;
+  }): Promise<RebalanceBundleResolutionActionView> {
+    const requestedAt = input.requestedAt ?? new Date();
+    const [row] = await this.db
+      .insert(allocatorRebalanceBundleResolutionActions)
+      .values({
+        bundleId: input.bundleId,
+        proposalId: input.proposalId,
+        resolutionActionType: input.resolutionActionType,
+        status: input.status,
+        resolutionState: input.resolutionState,
+        note: input.note,
+        acknowledgedPartialApplication: input.acknowledgedPartialApplication,
+        escalated: input.escalated,
+        affectedChildSummary: input.affectedChildSummary,
+        linkedRecoveryActionIds: input.linkedRecoveryActionIds,
+        blockedReasons: input.blockedReasons as unknown as Record<string, unknown>[],
+        outcomeSummary: input.outcomeSummary ?? null,
+        requestedBy: input.requestedBy,
+        completedBy: input.completedBy ?? null,
+        requestedAt,
+        completedAt: input.completedAt ?? null,
+        updatedAt: requestedAt,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createRebalanceBundleResolutionAction: resolution action was not persisted');
+    }
+
+    return mapRebalanceBundleResolutionActionRow(row);
+  }
+
+  async updateRebalanceBundleResolutionState(input: {
+    bundleId: string;
+    resolutionState: RebalanceBundleResolutionState;
+    latestResolutionActionId: string;
+    resolutionSummary: string;
+    resolvedBy: string;
+    resolvedAt: Date;
+  }): Promise<void> {
+    const recommendation = recommendationForResolutionState(input.resolutionState);
+    await this.db
+      .update(allocatorRebalanceBundles)
+      .set({
+        resolutionState: input.resolutionState,
+        latestResolutionActionId: input.latestResolutionActionId,
+        resolutionSummary: input.resolutionSummary,
+        resolvedBy: input.resolvedBy,
+        resolvedAt: input.resolvedAt,
+        ...(recommendation === null ? {} : { interventionRecommendation: recommendation }),
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceBundles.id, input.bundleId));
+  }
+
+  async createRebalanceBundleRecoveryAction(input: {
+    bundleId: string;
+    proposalId: string;
+    recoveryActionType: RebalanceBundleRecoveryActionType;
+    targetChildType: RebalanceBundleRecoveryActionView['targetChildType'];
+    targetChildId: string;
+    targetChildStatus: string;
+    targetChildSummary: string;
+    eligibilityState: RebalanceBundleRecoveryEligibilityState;
+    blockedReasons: RebalanceBundleRecoveryBlockedReason[];
+    approvalRequirement: RebalanceBundleRecoveryActionView['approvalRequirement'];
+    status: RebalanceBundleRecoveryStatus;
+    requestedBy: string;
+    note?: string | null;
+    linkedCommandId?: string | null;
+    targetCommandType?: RuntimeCommandType | null;
+    linkedCarryActionId?: string | null;
+    linkedTreasuryActionId?: string | null;
+    outcomeSummary?: string | null;
+    outcome?: Record<string, unknown>;
+    lastError?: string | null;
+    executionMode: RebalanceBundleRecoveryActionView['executionMode'];
+    simulated: boolean;
+    requestedAt?: Date;
+    queuedAt?: Date | null;
+    startedAt?: Date | null;
+    completedAt?: Date | null;
+  }): Promise<RebalanceBundleRecoveryActionView> {
+    const requestedAt = input.requestedAt ?? new Date();
+    const [row] = await this.db
+      .insert(allocatorRebalanceBundleRecoveryActions)
+      .values({
+        bundleId: input.bundleId,
+        proposalId: input.proposalId,
+        recoveryActionType: input.recoveryActionType,
+        targetChildType: input.targetChildType,
+        targetChildId: input.targetChildId,
+        targetChildStatus: input.targetChildStatus,
+        targetChildSummary: input.targetChildSummary,
+        eligibilityState: input.eligibilityState,
+        blockedReasons: input.blockedReasons as unknown as Record<string, unknown>[],
+        approvalRequirement: input.approvalRequirement,
+        status: input.status,
+        requestedBy: input.requestedBy,
+        note: input.note ?? null,
+        linkedCommandId: input.linkedCommandId ?? null,
+        targetCommandType: input.targetCommandType ?? null,
+        linkedCarryActionId: input.linkedCarryActionId ?? null,
+        linkedTreasuryActionId: input.linkedTreasuryActionId ?? null,
+        outcomeSummary: input.outcomeSummary ?? null,
+        outcome: input.outcome ?? {},
+        lastError: input.lastError ?? null,
+        executionMode: input.executionMode,
+        simulated: input.simulated,
+        requestedAt,
+        queuedAt: input.queuedAt ?? null,
+        startedAt: input.startedAt ?? null,
+        completedAt: input.completedAt ?? null,
+        updatedAt: requestedAt,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createRebalanceBundleRecoveryAction: recovery action was not persisted');
+    }
+
+    return mapRebalanceBundleRecoveryActionRow(row);
+  }
+
+  async updateRebalanceBundleRecoveryAction(
+    recoveryActionId: string,
+    patch: Partial<{
+      targetChildStatus: string;
+      targetChildSummary: string;
+      eligibilityState: RebalanceBundleRecoveryEligibilityState;
+      blockedReasons: RebalanceBundleRecoveryBlockedReason[];
+      status: RebalanceBundleRecoveryStatus;
+      linkedCommandId: string | null;
+      targetCommandType: RuntimeCommandType | null;
+      linkedCarryActionId: string | null;
+      linkedTreasuryActionId: string | null;
+      outcomeSummary: string | null;
+      outcome: Record<string, unknown>;
+      lastError: string | null;
+      queuedAt: Date | null;
+      startedAt: Date | null;
+      completedAt: Date | null;
+    }>,
+  ): Promise<RebalanceBundleRecoveryActionView | null> {
+    await this.db
+      .update(allocatorRebalanceBundleRecoveryActions)
+      .set({
+        ...(patch.targetChildStatus !== undefined ? { targetChildStatus: patch.targetChildStatus } : {}),
+        ...(patch.targetChildSummary !== undefined ? { targetChildSummary: patch.targetChildSummary } : {}),
+        ...(patch.eligibilityState !== undefined ? { eligibilityState: patch.eligibilityState } : {}),
+        ...(patch.blockedReasons !== undefined ? { blockedReasons: patch.blockedReasons as unknown as Record<string, unknown>[] } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.linkedCommandId !== undefined ? { linkedCommandId: patch.linkedCommandId } : {}),
+        ...(patch.targetCommandType !== undefined ? { targetCommandType: patch.targetCommandType } : {}),
+        ...(patch.linkedCarryActionId !== undefined ? { linkedCarryActionId: patch.linkedCarryActionId } : {}),
+        ...(patch.linkedTreasuryActionId !== undefined ? { linkedTreasuryActionId: patch.linkedTreasuryActionId } : {}),
+        ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
+        ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+        ...(patch.queuedAt !== undefined ? { queuedAt: patch.queuedAt } : {}),
+        ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
+        ...(patch.completedAt !== undefined ? { completedAt: patch.completedAt } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(allocatorRebalanceBundleRecoveryActions.id, recoveryActionId));
+
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundleRecoveryActions)
+      .where(eq(allocatorRebalanceBundleRecoveryActions.id, recoveryActionId))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceBundleRecoveryActionRow(row);
+  }
+
+  async getRebalanceBundleRecoveryActionByCommandId(
+    commandId: string,
+  ): Promise<RebalanceBundleRecoveryActionView | null> {
+    const [row] = await this.db
+      .select()
+      .from(allocatorRebalanceBundleRecoveryActions)
+      .where(eq(allocatorRebalanceBundleRecoveryActions.linkedCommandId, commandId))
+      .orderBy(desc(allocatorRebalanceBundleRecoveryActions.requestedAt))
+      .limit(1);
+
+    return row === undefined ? null : mapRebalanceBundleRecoveryActionRow(row);
+  }
+
   async getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null> {
     const detail = await this.getRebalanceProposal(proposalId);
     if (detail === null) {
       return null;
     }
 
-    const [allocatorDecision, carryActionRows] = await Promise.all([
+    const [allocatorDecision, carryActionRows, recoveryActionRows, resolutionActionRows, escalationRow, escalationEventRows] = await Promise.all([
       this.getAllocatorDecision(detail.proposal.allocatorRunId),
       this.db
         .select()
         .from(carryActions)
         .where(eq(carryActions.linkedRebalanceProposalId, proposalId))
         .orderBy(desc(carryActions.createdAt)),
+      this.db
+        .select()
+        .from(allocatorRebalanceBundleRecoveryActions)
+        .where(eq(allocatorRebalanceBundleRecoveryActions.proposalId, proposalId))
+        .orderBy(desc(allocatorRebalanceBundleRecoveryActions.requestedAt)),
+      this.db
+        .select()
+        .from(allocatorRebalanceBundleResolutionActions)
+        .where(eq(allocatorRebalanceBundleResolutionActions.proposalId, proposalId))
+        .orderBy(desc(allocatorRebalanceBundleResolutionActions.requestedAt)),
+      this.db
+        .select()
+        .from(allocatorRebalanceBundleEscalations)
+        .where(eq(allocatorRebalanceBundleEscalations.proposalId, proposalId))
+        .orderBy(desc(allocatorRebalanceBundleEscalations.createdAt))
+        .limit(1)
+        .then((rows) => rows[0]),
+      this.db
+        .select()
+        .from(allocatorRebalanceBundleEscalationEvents)
+        .where(eq(allocatorRebalanceBundleEscalationEvents.proposalId, proposalId))
+        .orderBy(desc(allocatorRebalanceBundleEscalationEvents.createdAt)),
     ]);
 
     const carryNodes: RebalanceCarryActionNodeView[] = (
@@ -4705,12 +7244,19 @@ export class RuntimeStore {
       live: treasuryNodes.some((node) => !node.action.simulated || node.executions.some((execution) => execution.executionMode === 'live' && !execution.simulated)),
       references: treasuryNodes.flatMap((node) => node.executions.flatMap((execution) => execution.venueExecutionReference === null ? [] : [execution.venueExecutionReference])),
     });
+    const recoveryActions = recoveryActionRows.map(mapRebalanceBundleRecoveryActionRow);
+    const resolutionActions = resolutionActionRows.map(mapRebalanceBundleResolutionActionRow);
+    const escalation = escalationRow === undefined ? null : mapRebalanceBundleEscalationRow(escalationRow);
+    const escalationHistory = escalationEventRows.map(mapRebalanceBundleEscalationEventRow);
 
     const timeline = createRebalanceTimeline({
       detail,
       commands,
       carryActions: carryNodes,
       treasuryActions: treasuryNodes,
+      recoveryActions,
+      resolutionActions,
+      escalationHistory,
     });
 
     return {
@@ -4739,6 +7285,10 @@ export class RuntimeStore {
               : 'No proposal-linked treasury action records were persisted.',
         },
       },
+      recoveryActions,
+      resolutionActions,
+      escalation,
+      escalationHistory,
       timeline,
     };
   }
@@ -5007,6 +7557,40 @@ export class RuntimeStore {
     );
   }
 
+  async persistVenueConnectorSnapshots(input: {
+    snapshots: VenueSnapshotView[];
+  }): Promise<void> {
+    if (input.snapshots.length === 0) {
+      return;
+    }
+
+    await this.db.insert(venueConnectorSnapshots).values(
+      input.snapshots.map((snapshot) => ({
+        venueId: snapshot.venueId,
+        venueName: snapshot.venueName,
+        connectorType: snapshot.connectorType,
+        sleeveApplicability: snapshot.sleeveApplicability,
+        truthMode: snapshot.truthMode,
+        readOnlySupport: snapshot.readOnlySupport,
+        executionSupport: snapshot.executionSupport,
+        approvedForLiveUse: snapshot.approvedForLiveUse,
+        onboardingState: snapshot.onboardingState,
+        missingPrerequisites: snapshot.missingPrerequisites,
+        authRequirementsSummary: snapshot.authRequirementsSummary,
+        healthy: snapshot.healthy,
+        healthState: snapshot.healthState,
+        degradedReason: snapshot.degradedReason,
+        snapshotType: snapshot.snapshotType,
+        snapshotSuccessful: snapshot.snapshotSuccessful,
+        snapshotSummary: snapshot.snapshotSummary,
+        snapshotPayload: serialiseVenueSnapshotPayload(snapshot),
+        errorMessage: snapshot.errorMessage,
+        metadata: snapshot.metadata,
+        capturedAt: new Date(snapshot.capturedAt),
+      })),
+    );
+  }
+
   async createCarryActions(input: {
     strategyRunId: string | null;
     linkedRebalanceProposalId?: string | null;
@@ -5104,6 +7688,11 @@ export class RuntimeStore {
         executionRequestedBy: input.actorId,
         executionRequestedAt: new Date(),
         queuedAt: new Date(),
+        executingAt: null,
+        completedAt: null,
+        failedAt: null,
+        cancelledAt: null,
+        lastError: null,
         updatedAt: new Date(),
       })
       .where(eq(carryActions.id, input.actionId));
@@ -5788,6 +8377,10 @@ export class RuntimeStore {
         executionRequestedAt: new Date(),
         queuedAt: new Date(),
         linkedCommandId: input.commandId,
+        executingAt: null,
+        completedAt: null,
+        failedAt: null,
+        cancelledAt: null,
         lastError: null,
         updatedAt: new Date(),
       })

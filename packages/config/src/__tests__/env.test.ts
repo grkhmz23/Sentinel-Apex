@@ -45,6 +45,8 @@ describe('config/env — valid configuration', () => {
       ALERT_WEBHOOK_URL: 'https://hooks.example.com/alert',
       FEATURE_FLAG_LIVE_EXECUTION: 'false',
       DRIFT_RPC_ENDPOINT: 'https://api.mainnet-beta.solana.com',
+      DRIFT_READONLY_ACCOUNT_ADDRESS: 'readonly-account',
+      DRIFT_READONLY_ACCOUNT_LABEL: 'Treasury watch wallet',
     });
 
     expect(cfg.LOG_LEVEL).toBe('debug');
@@ -56,6 +58,8 @@ describe('config/env — valid configuration', () => {
     expect(cfg.METRICS_PORT).toBe(9100);
     expect(cfg.ALERT_WEBHOOK_URL).toBe('https://hooks.example.com/alert');
     expect(cfg.DRIFT_RPC_ENDPOINT).toBe('https://api.mainnet-beta.solana.com');
+    expect(cfg.DRIFT_READONLY_ACCOUNT_ADDRESS).toBe('readonly-account');
+    expect(cfg.DRIFT_READONLY_ACCOUNT_LABEL).toBe('Treasury watch wallet');
   });
 });
 

@@ -22,10 +22,14 @@
     "db:health": "./scripts/db-health.sh",
     "db:migrate": "./scripts/db-migrate.sh",
     "test": "turbo run test --concurrency=4",
+    "test:workspace": "vitest run --config vitest.config.ts",
     "lint": "turbo run lint --concurrency=4",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,mjs,json,yaml,yml,md}\" --ignore-path .gitignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,mjs,json,yaml,yml,md}\" --ignore-path .gitignore",
     "typecheck": "turbo run typecheck",
+    "validate": "pnpm build && pnpm typecheck && pnpm lint && pnpm test",
+    "validate:ci": "CI=1 pnpm validate",
+    "release:check": "CI=1 pnpm validate && pnpm format:check",
     "clean": "turbo run clean && rm -rf node_modules .turbo"
   },
   "devDependencies": {

@@ -424,6 +424,42 @@ export const carryVenueSnapshots = pgTable(
   }),
 );
 
+export const venueConnectorSnapshots = pgTable(
+  'venue_connector_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    venueId: text('venue_id').notNull(),
+    venueName: text('venue_name').notNull(),
+    connectorType: text('connector_type').notNull(),
+    sleeveApplicability: jsonb('sleeve_applicability').notNull().default([]),
+    truthMode: text('truth_mode').notNull(),
+    readOnlySupport: boolean('read_only_support').notNull().default(false),
+    executionSupport: boolean('execution_support').notNull().default(false),
+    approvedForLiveUse: boolean('approved_for_live_use').notNull().default(false),
+    onboardingState: text('onboarding_state').notNull().default('simulated'),
+    missingPrerequisites: jsonb('missing_prerequisites').notNull().default([]),
+    authRequirementsSummary: jsonb('auth_requirements_summary').notNull().default([]),
+    healthy: boolean('healthy').notNull().default(true),
+    healthState: text('health_state').notNull().default('healthy'),
+    degradedReason: text('degraded_reason'),
+    snapshotType: text('snapshot_type').notNull(),
+    snapshotSuccessful: boolean('snapshot_successful').notNull().default(true),
+    snapshotSummary: text('snapshot_summary').notNull(),
+    snapshotPayload: jsonb('snapshot_payload').notNull().default({}),
+    errorMessage: text('error_message'),
+    metadata: jsonb('metadata').notNull().default({}),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    venueIdIdx: index('venue_connector_snapshots_venue_id_idx').on(t.venueId),
+    connectorTypeIdx: index('venue_connector_snapshots_connector_type_idx').on(t.connectorType),
+    truthModeIdx: index('venue_connector_snapshots_truth_mode_idx').on(t.truthMode),
+    healthStateIdx: index('venue_connector_snapshots_health_state_idx').on(t.healthState),
+    capturedAtIdx: index('venue_connector_snapshots_captured_at_idx').on(t.capturedAt),
+  }),
+);
+
 export const carryActions = pgTable(
   'carry_actions',
   {

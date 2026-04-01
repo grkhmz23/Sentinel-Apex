@@ -29,6 +29,20 @@ import type {
   TreasuryExecutionStatus,
   TreasuryPolicy,
 } from '@sentinel-apex/treasury';
+import type {
+  VenueAccountStateSnapshot,
+  VenueBalanceStateSnapshot,
+  VenueCapacityStateSnapshot,
+  VenueDerivativeAccountStateSnapshot,
+  VenueDerivativeHealthStateSnapshot,
+  VenueDerivativePositionStateSnapshot,
+  VenueExecutionReferenceStateSnapshot,
+  VenueExposureStateSnapshot,
+  VenueOrderStateSnapshot,
+  VenueTruthCoverage,
+  VenueTruthSnapshotCompleteness,
+  VenueTruthSourceMetadata,
+} from '@sentinel-apex/venue-adapters';
 
 export type RuntimeLifecycleState = 'starting' | 'ready' | 'paused' | 'stopped' | 'degraded';
 export type ProjectionStatus = 'fresh' | 'rebuilding' | 'stale';
@@ -65,7 +79,12 @@ export type RuntimeReconciliationFindingType =
   | 'position_exposure_mismatch'
   | 'projection_state_mismatch'
   | 'stale_projection_state'
-  | 'command_outcome_mismatch';
+  | 'command_outcome_mismatch'
+  | 'missing_venue_truth_snapshot'
+  | 'stale_venue_truth_snapshot'
+  | 'venue_truth_unavailable'
+  | 'venue_truth_partial_coverage'
+  | 'venue_execution_reference_mismatch';
 
 export interface RuntimeStatusView {
   executionMode: 'dry-run' | 'live';
@@ -449,6 +468,371 @@ export interface RebalanceTreasuryActionNodeView {
   executions: TreasuryExecutionView[];
 }
 
+export type RebalanceBundleRecoveryActionType = 'requeue_child_execution';
+export type RebalanceBundleRecoveryTargetChildType =
+  | 'carry_action'
+  | 'treasury_action'
+  | 'rebalance_proposal';
+export type RebalanceBundleRecoveryEligibilityState = 'eligible' | 'blocked';
+export type RebalanceBundleRecoveryStatus =
+  | 'requested'
+  | 'queued'
+  | 'executing'
+  | 'completed'
+  | 'failed'
+  | 'blocked'
+  | 'cancelled';
+export type RebalanceBundleRecoveryBlockedReasonCode =
+  | 'bundle_not_actionable'
+  | 'runtime_not_ready'
+  | 'target_child_not_found'
+  | 'target_child_unsupported'
+  | 'target_child_not_retryable'
+  | 'target_child_not_terminal'
+  | 'target_child_already_completed'
+  | 'target_child_has_inflight_command'
+  | 'target_child_has_safe_execution_gap'
+  | 'carry_execution_partial_progress_detected'
+  | 'treasury_execution_side_effect_detected'
+  | 'target_child_remains_blocked'
+  | 'approval_requirement_not_met'
+  | 'proposal_requeue_not_supported';
+export type RebalanceBundleRecoveryBlockedReasonCategory =
+  | 'bundle_state'
+  | 'runtime'
+  | 'target_child'
+  | 'safety'
+  | 'approval';
+
+export interface RebalanceBundleRecoveryBlockedReason {
+  code: RebalanceBundleRecoveryBlockedReasonCode;
+  category: RebalanceBundleRecoveryBlockedReasonCategory;
+  message: string;
+  operatorAction: string;
+  details: Record<string, unknown>;
+}
+
+export interface RebalanceBundleRecoveryCandidateView {
+  id: string;
+  bundleId: string;
+  proposalId: string;
+  recoveryActionType: RebalanceBundleRecoveryActionType;
+  targetChildType: RebalanceBundleRecoveryTargetChildType;
+  targetChildId: string;
+  targetChildStatus: string;
+  targetChildSummary: string;
+  targetCommandType: RuntimeCommandType | null;
+  approvalRequirement: 'operator' | 'admin';
+  eligibilityState: RebalanceBundleRecoveryEligibilityState;
+  blockedReasons: RebalanceBundleRecoveryBlockedReason[];
+  executionMode: 'dry-run' | 'live';
+  simulated: boolean;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceBundleRecoveryActionView {
+  id: string;
+  bundleId: string;
+  proposalId: string;
+  recoveryActionType: RebalanceBundleRecoveryActionType;
+  targetChildType: RebalanceBundleRecoveryTargetChildType;
+  targetChildId: string;
+  targetChildStatus: string;
+  targetChildSummary: string;
+  eligibilityState: RebalanceBundleRecoveryEligibilityState;
+  blockedReasons: RebalanceBundleRecoveryBlockedReason[];
+  approvalRequirement: 'operator' | 'admin';
+  status: RebalanceBundleRecoveryStatus;
+  requestedBy: string;
+  requestedAt: string;
+  note: string | null;
+  linkedCommandId: string | null;
+  targetCommandType: RuntimeCommandType | null;
+  linkedCarryActionId: string | null;
+  linkedTreasuryActionId: string | null;
+  outcomeSummary: string | null;
+  outcome: Record<string, unknown>;
+  lastError: string | null;
+  executionMode: 'dry-run' | 'live';
+  simulated: boolean;
+  queuedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+export type RebalanceBundleResolutionActionType =
+  | 'accept_partial_application'
+  | 'mark_bundle_manually_resolved'
+  | 'escalate_bundle_for_review';
+export type RebalanceBundleResolutionState =
+  | 'unresolved'
+  | 'accepted_partial'
+  | 'manually_resolved'
+  | 'escalated';
+export type RebalanceBundleResolutionEligibilityState = 'eligible' | 'blocked';
+export type RebalanceBundleResolutionActionStatus = 'completed' | 'blocked' | 'cancelled';
+export type RebalanceBundleResolutionBlockedReasonCode =
+  | 'bundle_not_actionable'
+  | 'bundle_has_inflight_children'
+  | 'bundle_not_partial_application'
+  | 'note_required'
+  | 'approval_requirement_not_met'
+  | 'resolution_state_already_current';
+export type RebalanceBundleResolutionBlockedReasonCategory =
+  | 'bundle_state'
+  | 'safety'
+  | 'validation'
+  | 'approval';
+
+export interface RebalanceBundleResolutionBlockedReason {
+  code: RebalanceBundleResolutionBlockedReasonCode;
+  category: RebalanceBundleResolutionBlockedReasonCategory;
+  message: string;
+  operatorAction: string;
+  details: Record<string, unknown>;
+}
+
+export interface RebalanceBundleResolutionOptionView {
+  id: string;
+  bundleId: string;
+  proposalId: string;
+  resolutionActionType: RebalanceBundleResolutionActionType;
+  targetResolutionState: RebalanceBundleResolutionState;
+  approvalRequirement: 'operator' | 'admin';
+  eligibilityState: RebalanceBundleResolutionEligibilityState;
+  blockedReasons: RebalanceBundleResolutionBlockedReason[];
+  noteRequired: boolean;
+  summary: string;
+  operatorAction: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceBundleResolutionActionView {
+  id: string;
+  bundleId: string;
+  proposalId: string;
+  resolutionActionType: RebalanceBundleResolutionActionType;
+  status: RebalanceBundleResolutionActionStatus;
+  resolutionState: RebalanceBundleResolutionState;
+  note: string;
+  acknowledgedPartialApplication: boolean;
+  escalated: boolean;
+  affectedChildSummary: Record<string, unknown>;
+  linkedRecoveryActionIds: string[];
+  requestedBy: string;
+  requestedAt: string;
+  completedBy: string | null;
+  completedAt: string | null;
+  outcomeSummary: string | null;
+  blockedReasons: RebalanceBundleResolutionBlockedReason[];
+  updatedAt: string;
+}
+
+export type RebalanceBundleEscalationStatus =
+  | 'open'
+  | 'acknowledged'
+  | 'in_review'
+  | 'resolved';
+export type RebalanceEscalationQueueState = 'overdue' | 'due_soon' | 'unassigned' | 'on_track' | 'resolved';
+export type RebalanceBundleEscalationEventType =
+  | 'created'
+  | 'assigned'
+  | 'acknowledged'
+  | 'review_started'
+  | 'resolved';
+export type RebalanceBundleEscalationEligibilityState = 'eligible' | 'blocked';
+export type RebalanceBundleEscalationTransitionType =
+  | 'assign'
+  | 'acknowledge'
+  | 'start_review'
+  | 'close';
+export type RebalanceBundleEscalationBlockedReasonCode =
+  | 'bundle_not_escalated'
+  | 'escalation_not_found'
+  | 'escalation_already_resolved'
+  | 'escalation_owner_required'
+  | 'actor_not_owner'
+  | 'invalid_status_transition'
+  | 'note_required'
+  | 'assignee_required'
+  | 'assignee_already_current';
+export type RebalanceBundleEscalationBlockedReasonCategory =
+  | 'bundle_state'
+  | 'escalation_state'
+  | 'ownership'
+  | 'validation';
+
+export interface RebalanceBundleEscalationBlockedReason {
+  code: RebalanceBundleEscalationBlockedReasonCode;
+  category: RebalanceBundleEscalationBlockedReasonCategory;
+  message: string;
+  operatorAction: string;
+  details: Record<string, unknown>;
+}
+
+export interface RebalanceBundleEscalationView {
+  id: string;
+  bundleId: string;
+  proposalId: string;
+  sourceResolutionActionId: string | null;
+  status: RebalanceBundleEscalationStatus;
+  isOpen: boolean;
+  ownerId: string | null;
+  assignedBy: string | null;
+  assignedAt: string | null;
+  acknowledgedBy: string | null;
+  acknowledgedAt: string | null;
+  dueAt: string | null;
+  handoffNote: string | null;
+  reviewNote: string | null;
+  resolutionNote: string | null;
+  closedBy: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceBundleEscalationEventView {
+  id: string;
+  escalationId: string;
+  bundleId: string;
+  proposalId: string;
+  eventType: RebalanceBundleEscalationEventType;
+  fromStatus: RebalanceBundleEscalationStatus | null;
+  toStatus: RebalanceBundleEscalationStatus;
+  actorId: string;
+  ownerId: string | null;
+  note: string | null;
+  dueAt: string | null;
+  createdAt: string;
+}
+
+export interface RebalanceBundleEscalationTransitionView {
+  id: string;
+  bundleId: string;
+  escalationId: string | null;
+  transitionType: RebalanceBundleEscalationTransitionType;
+  targetStatus: RebalanceBundleEscalationStatus;
+  approvalRequirement: 'operator' | 'admin';
+  eligibilityState: RebalanceBundleEscalationEligibilityState;
+  blockedReasons: RebalanceBundleEscalationBlockedReason[];
+  noteRequired: boolean;
+  assigneeRequired: boolean;
+  summary: string;
+  operatorAction: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceEscalationQueueFilters {
+  status?: RebalanceBundleEscalationStatus;
+  ownerId?: string;
+  openState?: 'open' | 'closed';
+  queueState?: 'overdue' | 'due_soon' | 'unassigned';
+  limit?: number;
+  sortBy?: 'due_at' | 'latest_activity' | 'created_at' | 'updated_at';
+  sortDirection?: 'asc' | 'desc';
+}
+
+export interface RebalanceEscalationQueueItemView {
+  escalationId: string;
+  bundleId: string;
+  proposalId: string;
+  allocatorRunId: string;
+  escalationStatus: RebalanceBundleEscalationStatus;
+  escalationQueueState: RebalanceEscalationQueueState;
+  isOpen: boolean;
+  ownerId: string | null;
+  assignedBy: string | null;
+  assignedAt: string | null;
+  acknowledgedAt: string | null;
+  inReviewAt: string | null;
+  dueAt: string | null;
+  latestActivityAt: string;
+  latestEventType: RebalanceBundleEscalationEventType | null;
+  latestEventSummary: string | null;
+  bundleStatus: RebalanceBundleStatus;
+  interventionRecommendation: RebalanceBundleInterventionRecommendation;
+  resolutionState: RebalanceBundleResolutionState;
+  outcomeClassification: RebalanceBundleOutcomeClassification;
+  failedChildCount: number;
+  blockedChildCount: number;
+  pendingChildCount: number;
+  totalChildCount: number;
+  childSleeves: Array<'carry' | 'treasury'>;
+  executionMode: RebalanceExecutionMode;
+  simulated: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RebalanceEscalationQueueSummaryView {
+  total: number;
+  open: number;
+  acknowledged: number;
+  inReview: number;
+  resolved: number;
+  overdue: number;
+  dueSoon: number;
+  unassigned: number;
+  mine: number;
+}
+
+export type RebalanceBundleChildInspectionProgressState =
+  | 'completed'
+  | 'partial_progress'
+  | 'retryable_failure'
+  | 'failed_without_progress'
+  | 'blocked_before_progress'
+  | 'non_retryable'
+  | 'inflight'
+  | 'pending';
+export type RebalanceBundleChildRetryability = 'retryable' | 'non_retryable' | 'not_applicable';
+
+export interface RebalanceBundleChildInspectionView {
+  childType: 'carry_action' | 'treasury_action';
+  sleeveId: 'carry' | 'treasury';
+  childId: string;
+  summary: string;
+  actionStatus: string;
+  latestExecutionId: string | null;
+  latestExecutionStatus: string | null;
+  progressState: RebalanceBundleChildInspectionProgressState;
+  retryability: RebalanceBundleChildRetryability;
+  applied: boolean;
+  progressRecorded: boolean;
+  blockedBeforeApplication: boolean;
+  retryCandidateId: string | null;
+  retryBlockedReasons: RebalanceBundleRecoveryBlockedReason[];
+  evidence: string[];
+}
+
+export interface RebalanceBundlePartialProgressSleeveView {
+  sleeveId: 'carry' | 'treasury';
+  totalChildren: number;
+  appliedChildren: number;
+  progressRecordedChildren: number;
+  retryableChildren: number;
+  nonRetryableChildren: number;
+  blockedBeforeApplicationChildren: number;
+}
+
+export interface RebalanceBundlePartialProgressView {
+  totalChildren: number;
+  appliedChildren: number;
+  progressRecordedChildren: number;
+  retryableChildren: number;
+  nonRetryableChildren: number;
+  blockedBeforeApplicationChildren: number;
+  inflightChildren: number;
+  sleeves: RebalanceBundlePartialProgressSleeveView[];
+  children: RebalanceBundleChildInspectionView[];
+}
+
 export interface RebalanceExecutionTimelineEntry {
   id: string;
   eventType:
@@ -463,17 +847,40 @@ export interface RebalanceExecutionTimelineEntry {
     | 'failed'
     | 'budget_state_applied'
     | 'downstream_action_recorded'
-    | 'downstream_execution_recorded';
+    | 'downstream_execution_recorded'
+    | 'recovery_requested'
+    | 'recovery_queued'
+    | 'recovery_completed'
+    | 'recovery_failed'
+    | 'recovery_blocked'
+    | 'resolution_completed'
+    | 'resolution_blocked'
+    | 'escalation_created'
+    | 'escalation_assigned'
+    | 'escalation_acknowledged'
+    | 'escalation_review_started'
+    | 'escalation_resolved';
   at: string;
   actorId: string | null;
   sleeveId: 'allocator' | 'carry' | 'treasury';
-  scope: 'proposal' | 'command' | 'rebalance_execution' | 'downstream_action' | 'downstream_execution';
+  scope:
+    | 'proposal'
+    | 'command'
+    | 'rebalance_execution'
+    | 'downstream_action'
+    | 'downstream_execution'
+    | 'recovery_action'
+    | 'resolution_action'
+    | 'escalation';
   status: string | null;
   summary: string;
   linkedCommandId: string | null;
   linkedRebalanceExecutionId: string | null;
   linkedActionId: string | null;
   linkedExecutionId: string | null;
+  linkedRecoveryActionId: string | null;
+  linkedResolutionActionId: string | null;
+  linkedEscalationId: string | null;
   details: Record<string, unknown>;
 }
 
@@ -492,6 +899,10 @@ export interface RebalanceExecutionGraphView {
       note: string | null;
     };
   };
+  recoveryActions: RebalanceBundleRecoveryActionView[];
+  resolutionActions: RebalanceBundleResolutionActionView[];
+  escalation: RebalanceBundleEscalationView | null;
+  escalationHistory: RebalanceBundleEscalationEventView[];
   timeline: RebalanceExecutionTimelineEntry[];
 }
 
@@ -511,7 +922,10 @@ export type RebalanceBundleInterventionRecommendation =
   | 'wait_for_inflight_children'
   | 'inspect_child_failures'
   | 'operator_review_required'
-  | 'unresolved_partial_application';
+  | 'unresolved_partial_application'
+  | 'accepted_partial_application'
+  | 'manually_resolved'
+  | 'escalated_for_review';
 export type RebalanceBundleOutcomeClassification =
   | 'pending'
   | 'safe_complete'
@@ -537,6 +951,17 @@ export interface RebalanceBundleView {
   childRollup: Record<string, unknown>;
   finalizationReason: string | null;
   finalizedAt: string | null;
+  resolutionState: RebalanceBundleResolutionState;
+  latestResolutionActionId: string | null;
+  resolutionSummary: string | null;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  latestEscalationId: string | null;
+  escalationStatus: RebalanceBundleEscalationStatus | null;
+  escalationOwnerId: string | null;
+  escalationAssignedAt: string | null;
+  escalationDueAt: string | null;
+  escalationSummary: string | null;
   executionMode: RebalanceExecutionMode;
   simulated: boolean;
   createdAt: string;
@@ -546,6 +971,14 @@ export interface RebalanceBundleView {
 export interface RebalanceBundleDetailView {
   bundle: RebalanceBundleView;
   graph: RebalanceExecutionGraphView;
+  partialProgress: RebalanceBundlePartialProgressView;
+  recoveryCandidates: RebalanceBundleRecoveryCandidateView[];
+  recoveryActions: RebalanceBundleRecoveryActionView[];
+  resolutionOptions: RebalanceBundleResolutionOptionView[];
+  resolutionActions: RebalanceBundleResolutionActionView[];
+  escalation: RebalanceBundleEscalationView | null;
+  escalationHistory: RebalanceBundleEscalationEventView[];
+  escalationTransitions: RebalanceBundleEscalationTransitionView[];
 }
 
 export interface CarryVenueView {
@@ -882,6 +1315,139 @@ export interface TreasuryVenueDetailView {
   recentExecutions: TreasuryExecutionView[];
 }
 
+export type VenueTruthMode = 'simulated' | 'real';
+export type VenueTruthSleeve = 'carry' | 'treasury';
+export type VenueTruthProfile = 'minimal' | 'generic_wallet' | 'capacity_only' | 'derivative_aware';
+export type VenueOnboardingState = 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
+export type VenueHealthState = 'healthy' | 'degraded' | 'unavailable';
+export type VenueSnapshotFreshness = 'fresh' | 'stale' | 'missing';
+
+export type {
+  VenueAccountStateSnapshot,
+  VenueBalanceStateSnapshot,
+  VenueCapacityStateSnapshot,
+  VenueDerivativeAccountStateSnapshot,
+  VenueDerivativeHealthStateSnapshot,
+  VenueDerivativePositionStateSnapshot,
+  VenueExecutionReferenceStateSnapshot,
+  VenueExposureStateSnapshot,
+  VenueOrderStateSnapshot,
+  VenueTruthCoverage,
+  VenueTruthSnapshotCompleteness,
+  VenueTruthSourceMetadata,
+};
+
+export interface VenueTruthCoverageAggregateView {
+  available: number;
+  partial: number;
+  unsupported: number;
+}
+
+export interface VenueTruthSummaryView {
+  totalVenues: number;
+  derivativeAwareVenues: number;
+  genericWalletVenues: number;
+  capacityOnlyVenues: number;
+  completeSnapshots: number;
+  partialSnapshots: number;
+  minimalSnapshots: number;
+  accountState: VenueTruthCoverageAggregateView;
+  balanceState: VenueTruthCoverageAggregateView;
+  capacityState: VenueTruthCoverageAggregateView;
+  exposureState: VenueTruthCoverageAggregateView;
+  derivativeAccountState: VenueTruthCoverageAggregateView;
+  derivativePositionState: VenueTruthCoverageAggregateView;
+  derivativeHealthState: VenueTruthCoverageAggregateView;
+  orderState: VenueTruthCoverageAggregateView;
+  executionReferences: VenueTruthCoverageAggregateView;
+}
+
+export interface VenueInventoryItemView {
+  venueId: string;
+  venueName: string;
+  connectorType: string;
+  sleeveApplicability: VenueTruthSleeve[];
+  truthMode: VenueTruthMode;
+  readOnlySupport: boolean;
+  executionSupport: boolean;
+  approvedForLiveUse: boolean;
+  onboardingState: VenueOnboardingState;
+  missingPrerequisites: string[];
+  authRequirementsSummary: string[];
+  healthy: boolean;
+  healthState: VenueHealthState;
+  degradedReason: string | null;
+  truthProfile: VenueTruthProfile;
+  latestSnapshotType: string;
+  latestSnapshotSummary: string;
+  latestErrorMessage: string | null;
+  snapshotFreshness: VenueSnapshotFreshness;
+  snapshotCompleteness: VenueTruthSnapshotCompleteness;
+  lastSnapshotAt: string;
+  lastSuccessfulSnapshotAt: string | null;
+  truthCoverage: VenueTruthCoverage;
+  sourceMetadata: VenueTruthSourceMetadata;
+  metadata: Record<string, unknown>;
+}
+
+export interface VenueSnapshotView {
+  id: string;
+  venueId: string;
+  venueName: string;
+  connectorType: string;
+  sleeveApplicability: VenueTruthSleeve[];
+  truthMode: VenueTruthMode;
+  readOnlySupport: boolean;
+  executionSupport: boolean;
+  approvedForLiveUse: boolean;
+  onboardingState: VenueOnboardingState;
+  missingPrerequisites: string[];
+  authRequirementsSummary: string[];
+  healthy: boolean;
+  healthState: VenueHealthState;
+  degradedReason: string | null;
+  truthProfile: VenueTruthProfile;
+  snapshotType: string;
+  snapshotSuccessful: boolean;
+  snapshotSummary: string;
+  snapshotPayload: Record<string, unknown>;
+  errorMessage: string | null;
+  capturedAt: string;
+  snapshotCompleteness: VenueTruthSnapshotCompleteness;
+  truthCoverage: VenueTruthCoverage;
+  sourceMetadata: VenueTruthSourceMetadata;
+  accountState: VenueAccountStateSnapshot | null;
+  balanceState: VenueBalanceStateSnapshot | null;
+  capacityState: VenueCapacityStateSnapshot | null;
+  exposureState: VenueExposureStateSnapshot | null;
+  derivativeAccountState: VenueDerivativeAccountStateSnapshot | null;
+  derivativePositionState: VenueDerivativePositionStateSnapshot | null;
+  derivativeHealthState: VenueDerivativeHealthStateSnapshot | null;
+  orderState: VenueOrderStateSnapshot | null;
+  executionReferenceState: VenueExecutionReferenceStateSnapshot | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface VenueDetailView {
+  venue: VenueInventoryItemView;
+  snapshots: VenueSnapshotView[];
+}
+
+export interface VenueInventorySummaryView {
+  totalVenues: number;
+  simulatedOnly: number;
+  realReadOnly: number;
+  realExecutionCapable: number;
+  derivativeAware: number;
+  genericWallet: number;
+  capacityOnly: number;
+  approvedForLiveUse: number;
+  degraded: number;
+  unavailable: number;
+  stale: number;
+  missingPrerequisites: number;
+}
+
 export interface RuntimeMismatchDetailView {
   mismatch: RuntimeMismatchView;
   linkedCommand: RuntimeCommandView | null;
@@ -1049,6 +1615,12 @@ export interface RuntimeReadApi {
   listCarryExecutionsForAction(actionId: string): Promise<CarryExecutionView[]>;
   getCarryExecution(executionId: string): Promise<CarryExecutionDetailView | null>;
   listCarryVenues(limit?: number): Promise<CarryVenueView[]>;
+  listVenues(limit?: number): Promise<VenueInventoryItemView[]>;
+  getVenue(venueId: string): Promise<VenueDetailView | null>;
+  listVenueSnapshots(venueId: string, limit?: number): Promise<VenueSnapshotView[]>;
+  getVenueSummary(): Promise<VenueInventorySummaryView>;
+  getVenueTruthSummary(): Promise<VenueTruthSummaryView>;
+  listVenueReadiness(limit?: number): Promise<VenueInventoryItemView[]>;
   getAllocatorSummary(): Promise<AllocatorSummaryView | null>;
   listAllocatorTargets(limit?: number): Promise<AllocatorSleeveTargetView[]>;
   listAllocatorRuns(limit?: number): Promise<AllocatorRunView[]>;
@@ -1058,6 +1630,29 @@ export interface RuntimeReadApi {
   listRebalanceBundles(limit?: number): Promise<RebalanceBundleView[]>;
   getRebalanceBundle(bundleId: string): Promise<RebalanceBundleDetailView | null>;
   getRebalanceBundleForProposal(proposalId: string): Promise<RebalanceBundleDetailView | null>;
+  listRebalanceBundleRecoveryActions(bundleId: string): Promise<RebalanceBundleRecoveryActionView[]>;
+  getRebalanceBundleRecoveryAction(
+    bundleId: string,
+    recoveryActionId: string,
+  ): Promise<RebalanceBundleRecoveryActionView | null>;
+  listRebalanceBundleRecoveryCandidates(
+    bundleId: string,
+  ): Promise<RebalanceBundleRecoveryCandidateView[]>;
+  listRebalanceBundleResolutionActions(bundleId: string): Promise<RebalanceBundleResolutionActionView[]>;
+  getRebalanceBundleResolutionAction(
+    bundleId: string,
+    resolutionActionId: string,
+  ): Promise<RebalanceBundleResolutionActionView | null>;
+  listRebalanceBundleResolutionOptions(
+    bundleId: string,
+  ): Promise<RebalanceBundleResolutionOptionView[]>;
+  getRebalanceBundleEscalation(bundleId: string): Promise<RebalanceBundleEscalationView | null>;
+  listRebalanceBundleEscalationHistory(bundleId: string): Promise<RebalanceBundleEscalationEventView[]>;
+  listRebalanceBundleEscalationTransitions(
+    bundleId: string,
+  ): Promise<RebalanceBundleEscalationTransitionView[]>;
+  listRebalanceEscalations(filters?: RebalanceEscalationQueueFilters): Promise<RebalanceEscalationQueueItemView[]>;
+  getRebalanceEscalationSummary(actorId?: string | null): Promise<RebalanceEscalationQueueSummaryView>;
   getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null>;
   getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null>;
   getRebalanceTimeline(proposalId: string): Promise<RebalanceExecutionTimelineEntry[]>;

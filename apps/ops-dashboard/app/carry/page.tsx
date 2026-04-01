@@ -68,7 +68,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
                 <tbody>
                   {venues.map((venue) => (
                     <tr key={venue.venueId}>
-                      <td>{venue.venueId}</td>
+                      <td><Link href={`/venues/${venue.venueId}`}>{venue.venueId}</Link></td>
                       <td><StatusBadge label={venue.venueMode} tone={carryModeTone(venue.venueMode)} /></td>
                       <td><StatusBadge label={formatCarryOnboardingState(venue.onboardingState)} tone={carryOnboardingTone(venue.onboardingState)} /></td>
                       <td>{venue.executionSupported ? 'Supported' : 'Unsupported'}</td>

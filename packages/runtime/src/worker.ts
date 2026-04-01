@@ -278,6 +278,9 @@ export class RuntimeWorker {
 
   private async executeCommand(command: RuntimeCommandView): Promise<void> {
     const remediation = getRemediationContext(command);
+    const bundleRecoveryActionId = typeof command.payload['bundleRecoveryActionId'] === 'string'
+      ? String(command.payload['bundleRecoveryActionId'])
+      : null;
 
     await this.store.updateWorkerStatus({
       schedulerState: 'running',
@@ -312,6 +315,13 @@ export class RuntimeWorker {
           linkedRecoveryEventId: startedEvent.id,
         });
       }
+    }
+
+    if (bundleRecoveryActionId !== null) {
+      await this.store.updateRebalanceBundleRecoveryAction(bundleRecoveryActionId, {
+        status: 'executing',
+        startedAt: new Date(),
+      });
     }
 
     try {
@@ -589,6 +599,19 @@ export class RuntimeWorker {
             orderCount: outcome.orderCount,
           },
         });
+        if (bundleRecoveryActionId !== null) {
+          await this.store.updateRebalanceBundleRecoveryAction(bundleRecoveryActionId, {
+            status: 'completed',
+            outcomeSummary: 'Bundle recovery requeued the carry child successfully.',
+            outcome: {
+              carryActionId: outcome.actionId,
+              carryExecutionId: outcome.executionId,
+              orderCount: outcome.orderCount,
+            },
+            lastError: null,
+            completedAt: new Date(),
+          });
+        }
         return;
       }
 
@@ -637,6 +660,21 @@ export class RuntimeWorker {
             treasuryExecutionId: outcome.executionId,
           },
         });
+        if (bundleRecoveryActionId !== null) {
+          await this.store.updateRebalanceBundleRecoveryAction(bundleRecoveryActionId, {
+            status: 'completed',
+            outcomeSummary: 'Bundle recovery requeued the treasury child successfully.',
+            outcome: {
+              treasuryActionId: outcome.actionId,
+              treasuryExecutionId: outcome.executionId,
+              treasuryRunId: outcome.treasuryRunId,
+              venueExecutionReference: outcome.venueExecutionReference,
+              simulated: outcome.simulated,
+            },
+            lastError: null,
+            completedAt: new Date(),
+          });
+        }
         return;
       }
 
@@ -735,6 +773,18 @@ export class RuntimeWorker {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.store.failRuntimeCommand(command.commandId, message);
+      if (bundleRecoveryActionId !== null) {
+        await this.store.updateRebalanceBundleRecoveryAction(bundleRecoveryActionId, {
+          status: 'failed',
+          outcomeSummary: message,
+          lastError: message,
+          outcome: {
+            commandId: command.commandId,
+            commandType: command.commandType,
+          },
+          completedAt: new Date(),
+        });
+      }
 
       if (remediation !== null) {
         const remediationAttempt = await this.store.getMismatchRemediationByCommandId(command.commandId);

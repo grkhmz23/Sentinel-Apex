@@ -97,4 +97,6 @@ export interface VenueAdapter {
 
   // Optional carry controlled-execution capabilities
   getCarryCapabilities?(): Promise<import('./carry-venue-adapter.js').CarryVenueCapabilities>;
+  getVenueCapabilitySnapshot?(): Promise<import('./venue-truth-adapter.js').VenueCapabilitySnapshot>;
+  getVenueTruthSnapshot?(): Promise<import('./venue-truth-adapter.js').VenueTruthSnapshot>;
 }

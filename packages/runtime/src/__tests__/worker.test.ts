@@ -11,8 +11,14 @@ import {
   treasuryActionExecutions,
   treasuryActions,
 } from '@sentinel-apex/db';
+import type {
+  VenueCapabilitySnapshot,
+  VenueTruthAdapter,
+  VenueTruthSnapshot,
+} from '@sentinel-apex/venue-adapters';
 
 import { RuntimeControlPlane } from '../control-plane.js';
+import { DatabaseAuditWriter, RuntimeStore } from '../store.js';
 import { RuntimeWorker } from '../worker.js';
 
 async function createConnectionString(): Promise<string> {
@@ -35,6 +41,248 @@ async function waitFor<T>(
   }
 
   throw new Error('Timed out waiting for condition');
+}
+
+function freshCapturedAt(): string {
+  return new Date(Date.now() - 60_000).toISOString();
+}
+
+function createStubVenueTruthSnapshot(
+  venueId: string,
+  venueName: string,
+  overrides: Partial<VenueTruthSnapshot> = {},
+): VenueTruthSnapshot {
+  return {
+    venueId,
+    venueName,
+    snapshotType: 'solana_rpc_account_state',
+    snapshotSuccessful: true,
+    healthy: true,
+    healthState: 'healthy',
+    summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+    errorMessage: null,
+    capturedAt: freshCapturedAt(),
+    snapshotCompleteness: 'partial',
+    truthCoverage: {
+      accountState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      balanceState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      capacityState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not expose venue capacity.',
+        limitations: [],
+      },
+      exposureState: {
+        status: 'available',
+        reason: null,
+        limitations: ['Exposure is balance-derived and does not include venue-native derivatives.'],
+      },
+      derivativeAccountState: {
+        status: 'partial',
+        reason: 'Program-owned account metadata is visible, but venue-native derivative decoding is not implemented.',
+        limitations: ['Authority, subaccount, positions, and health require a venue SDK or IDL-backed decoder.'],
+      },
+      derivativePositionState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not decode venue-native derivative positions.',
+        limitations: [],
+      },
+      derivativeHealthState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not decode venue-native margin or health state.',
+        limitations: [],
+      },
+      orderState: {
+        status: 'partial',
+        reason: 'Order context is reference-only and derived from recent account signatures.',
+        limitations: ['Order state is limited to reference-only recent signatures and not venue-native open orders.'],
+      },
+      executionReferences: {
+        status: 'available',
+        reason: null,
+        limitations: ['Execution references are limited to recent account signatures.'],
+      },
+    },
+    sourceMetadata: {
+      sourceKind: 'json_rpc',
+      sourceName: 'solana_rpc_readonly',
+      observedScope: [
+        'account_identity',
+        'native_balance',
+        'recent_signatures',
+        'derivative_account_metadata',
+        'order_reference_context',
+      ],
+    },
+    accountState: {
+      accountAddress: `${venueId}-account`,
+      accountLabel: venueName,
+      accountExists: true,
+      ownerProgram: 'drift-program',
+      executable: false,
+      lamports: '12000000000',
+      nativeBalanceDisplay: '12.000000000',
+      observedSlot: '123',
+      rentEpoch: '0',
+      dataLength: 0,
+    },
+    balanceState: {
+      balances: [{
+        assetKey: 'SOL',
+        assetSymbol: 'SOL',
+        assetType: 'native',
+        accountAddress: `${venueId}-account`,
+        amountAtomic: '12000000000',
+        amountDisplay: '12.000000000',
+        decimals: 9,
+        observedSlot: '123',
+      }],
+      totalTrackedBalances: 1,
+      observedSlot: '123',
+    },
+    capacityState: null,
+    exposureState: {
+      exposures: [{
+        exposureKey: `SOL:${venueId}-account`,
+        exposureType: 'balance_derived_spot',
+        assetKey: 'SOL',
+        quantity: '12000000000',
+        quantityDisplay: '12.000000000',
+        accountAddress: `${venueId}-account`,
+      }],
+      methodology: 'balance_derived_spot_exposure',
+    },
+    derivativeAccountState: {
+      venue: venueId,
+      accountAddress: `${venueId}-account`,
+      accountLabel: venueName,
+      accountExists: true,
+      ownerProgram: 'drift-program',
+      accountModel: 'program_account',
+      venueAccountType: null,
+      decoded: false,
+      authorityAddress: null,
+      subaccountId: null,
+      observedSlot: '123',
+      rpcVersion: '1.18.0',
+      dataLength: 512,
+      rawDiscriminatorHex: '0102030405060708',
+      notes: [
+        'Program-owned account metadata was captured from raw RPC.',
+        'Venue-native decode is unavailable in the current repo because no Drift or Anchor decoder is present.',
+      ],
+    },
+    derivativePositionState: null,
+    derivativeHealthState: null,
+    orderState: {
+      openOrderCount: null,
+      openOrders: [{
+        venueOrderId: null,
+        reference: `${venueId}-sig-1`,
+        marketKey: null,
+        marketSymbol: null,
+        side: 'unknown',
+        status: 'confirmed',
+        orderType: null,
+        price: null,
+        quantity: null,
+        reduceOnly: null,
+        accountAddress: `${venueId}-account`,
+        slot: '123',
+        placedAt: '2026-03-31T11:59:00.000Z',
+        metadata: {
+          referenceOnly: true,
+        },
+      }],
+      referenceMode: 'recent_account_signatures',
+      methodology: 'recent_account_signatures_reference_context',
+      notes: [
+        'This section is reference-only context derived from recent account signatures.',
+        'It is not a venue-native open-orders decode and may include non-order transactions.',
+      ],
+    },
+    executionReferenceState: {
+      referenceLookbackLimit: 10,
+      references: [{
+        referenceType: 'solana_signature',
+        reference: `${venueId}-sig-1`,
+        accountAddress: `${venueId}-account`,
+        slot: '123',
+        blockTime: '2026-03-31T11:59:00.000Z',
+        confirmationStatus: 'confirmed',
+        errored: false,
+        memo: null,
+      }],
+      oldestReferenceAt: '2026-03-31T11:59:00.000Z',
+    },
+    payload: {
+      balanceSol: '12.000000000',
+    },
+    metadata: {},
+    ...overrides,
+  };
+}
+
+class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
+  private connected = false;
+  private snapshot: VenueTruthSnapshot;
+
+  constructor(
+    readonly venueId: string,
+    readonly venueName: string,
+    snapshot: Partial<VenueTruthSnapshot>,
+    private readonly capabilityOverrides: Partial<VenueCapabilitySnapshot> = {},
+  ) {
+    this.snapshot = createStubVenueTruthSnapshot(venueId, venueName, snapshot);
+  }
+
+  async connect(): Promise<void> {
+    this.connected = true;
+  }
+
+  async disconnect(): Promise<void> {
+    this.connected = false;
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  async getVenueCapabilitySnapshot(): Promise<VenueCapabilitySnapshot> {
+    return {
+      venueId: this.venueId,
+      venueName: this.venueName,
+      sleeveApplicability: ['carry'],
+      connectorType: 'solana_rpc_readonly',
+      truthMode: 'real',
+      readOnlySupport: true,
+      executionSupport: false,
+      approvedForLiveUse: false,
+      onboardingState: 'read_only',
+      missingPrerequisites: [],
+      authRequirementsSummary: ['DRIFT_RPC_ENDPOINT', 'DRIFT_READONLY_ACCOUNT_ADDRESS'],
+      healthy: this.snapshot.healthy,
+      healthState: this.snapshot.healthState,
+      degradedReason: this.snapshot.errorMessage,
+      metadata: {},
+      ...this.capabilityOverrides,
+    };
+  }
+
+  async getVenueTruthSnapshot(): Promise<VenueTruthSnapshot> {
+    return this.snapshot;
+  }
+
+  setSnapshot(snapshot: Partial<VenueTruthSnapshot>): void {
+    this.snapshot = createStubVenueTruthSnapshot(this.venueId, this.venueName, snapshot);
+  }
 }
 
 describe('RuntimeWorker', () => {
@@ -578,6 +826,13 @@ describe('RuntimeWorker', () => {
         updatedAt: new Date('2026-03-20T12:03:06.000Z'),
       })
       .returning();
+    if (
+      rebalanceExecution === undefined
+      || carryAction === undefined
+      || treasuryAction === undefined
+    ) {
+      throw new Error('Expected manual partial bundle rows to persist.');
+    }
 
     const [treasuryExecution] = await connection.db
       .insert(treasuryActionExecutions)
@@ -603,6 +858,14 @@ describe('RuntimeWorker', () => {
         updatedAt: new Date('2026-03-20T12:03:06.000Z'),
       })
       .returning();
+    if (
+      rebalanceExecution === undefined
+      || carryAction === undefined
+      || treasuryAction === undefined
+      || treasuryExecution === undefined
+    ) {
+      throw new Error('Expected manual bundle setup rows to persist.');
+    }
 
     await connection.db
       .update(allocatorRebalanceProposals)
@@ -652,6 +915,719 @@ describe('RuntimeWorker', () => {
     expect(bundle.graph.downstream.carry.actions[0]?.action.id).toBe(carryAction.id);
     expect(bundle.graph.downstream.treasury.actions[0]?.executions[0]?.id).toBe(treasuryExecution.id);
     expect(proposalDetail.executions[0]?.id).toBe(rebalanceExecution.id);
+  });
+
+  it('records explicit manual resolution for partially applied non-retryable bundles without erasing prior history', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const connection = await createDatabaseConnection(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+    cleanups.push(async () => {
+      await connection.close();
+    });
+
+    await worker.start();
+
+    const command = await controlPlane.enqueueAllocatorEvaluation('vitest', {
+      actorId: 'vitest',
+      trigger: 'worker_bundle_manual_resolution_test',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const proposal = await waitFor(
+      async () => {
+        const proposals = await controlPlane.listRebalanceProposals(10);
+        return proposals[0] ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    const treasurySummary = await waitFor(
+      () => controlPlane.getTreasurySummary(),
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (proposal === null || treasurySummary === null) {
+      throw new Error('Expected rebalance proposal and treasury summary.');
+    }
+
+    const [rebalanceExecution] = await connection.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: proposal.id,
+        commandId: 'command-manual-resolution-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        simulated: proposal.simulated,
+        requestedBy: 'vitest',
+        startedBy: 'worker-test',
+        outcomeSummary: 'Manual partial bundle setup for resolution test.',
+        outcome: {
+          applied: true,
+        },
+        createdAt: new Date('2026-03-22T12:00:00.000Z'),
+        startedAt: new Date('2026-03-22T12:00:01.000Z'),
+        completedAt: new Date('2026-03-22T12:00:02.000Z'),
+        updatedAt: new Date('2026-03-22T12:00:02.000Z'),
+      })
+      .returning();
+
+    const [carryAction] = await connection.db
+      .insert(carryActions)
+      .values({
+        strategyRunId: null,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'increase_carry_exposure',
+        status: 'recommended',
+        sourceKind: 'rebalance',
+        sourceReference: proposal.id,
+        opportunityId: null,
+        asset: null,
+        summary: 'Carry child remained blocked before any venue-side progress.',
+        notionalUsd: '125000.00',
+        details: {},
+        readiness: 'blocked',
+        executable: false,
+        blockedReasons: [{
+          code: 'venue_execution_unsupported',
+          category: 'venue_capability',
+          message: 'Carry venue remains unsupported for execution.',
+          operatorAction: 'Inspect venue readiness before retrying.',
+          details: {},
+        }],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        executionPlan: {},
+        actorId: 'vitest',
+        createdAt: new Date('2026-03-22T12:00:03.000Z'),
+        updatedAt: new Date('2026-03-22T12:00:03.000Z'),
+      })
+      .returning();
+
+    const [treasuryAction] = await connection.db
+      .insert(treasuryActions)
+      .values({
+        treasuryRunId: treasurySummary.treasuryRunId,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'rebalance_treasury_budget',
+        status: 'completed',
+        venueId: null,
+        venueName: null,
+        venueMode: 'reserve',
+        amountUsd: '125000.00',
+        reasonCode: 'rebalance_budget_application',
+        summary: 'Treasury child completed budget-state application.',
+        details: {
+          rebalanceProposalId: proposal.id,
+        },
+        readiness: 'actionable',
+        executable: true,
+        blockedReasons: [],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        approvedBy: 'vitest',
+        approvedAt: new Date('2026-03-22T12:00:04.000Z'),
+        completedAt: new Date('2026-03-22T12:00:06.000Z'),
+        actorId: 'vitest',
+        createdAt: new Date('2026-03-22T12:00:04.000Z'),
+        updatedAt: new Date('2026-03-22T12:00:06.000Z'),
+      })
+      .returning();
+
+    const [treasuryExecution] = await connection.db
+      .insert(treasuryActionExecutions)
+      .values({
+        treasuryActionId: treasuryAction?.id ?? '',
+        treasuryRunId: treasurySummary.treasuryRunId,
+        commandId: 'command-manual-resolution-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        venueMode: 'reserve',
+        simulated: true,
+        requestedBy: 'vitest',
+        startedBy: 'worker-test',
+        blockedReasons: [],
+        outcomeSummary: 'Budget-state treasury application completed.',
+        outcome: {
+          executionKind: 'budget_state_application',
+          rebalanceProposalId: proposal.id,
+        },
+        createdAt: new Date('2026-03-22T12:00:05.000Z'),
+        startedAt: new Date('2026-03-22T12:00:05.000Z'),
+        completedAt: new Date('2026-03-22T12:00:06.000Z'),
+        updatedAt: new Date('2026-03-22T12:00:06.000Z'),
+      })
+      .returning();
+    if (
+      rebalanceExecution === undefined
+      || carryAction === undefined
+      || treasuryAction === undefined
+      || treasuryExecution === undefined
+    ) {
+      throw new Error('Expected manual resolution setup rows to persist.');
+    }
+
+    await connection.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: rebalanceExecution.id,
+        linkedCommandId: 'command-manual-resolution-setup',
+        updatedAt: new Date('2026-03-22T12:00:06.000Z'),
+      })
+      .where(eq(allocatorRebalanceProposals.id, proposal.id));
+
+    await connection.db
+      .update(treasuryActions)
+      .set({
+        latestExecutionId: treasuryExecution.id,
+        updatedAt: new Date('2026-03-22T12:00:06.000Z'),
+      })
+      .where(eq(treasuryActions.id, treasuryAction.id));
+
+    await connection.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        outcome: {
+          applied: true,
+          downstreamCarryActionIds: [carryAction.id],
+          downstreamTreasuryActionIds: [treasuryAction.id],
+        },
+        updatedAt: new Date('2026-03-22T12:00:06.000Z'),
+      })
+      .where(eq(allocatorRebalanceExecutions.id, rebalanceExecution.id));
+
+    const bundleBefore = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'requires_intervention',
+    );
+    if (bundleBefore === null) {
+      throw new Error('Expected requires_intervention bundle.');
+    }
+
+    expect(bundleBefore.partialProgress.appliedChildren).toBe(1);
+    expect(bundleBefore.partialProgress.nonRetryableChildren).toBe(1);
+    expect(bundleBefore.partialProgress.blockedBeforeApplicationChildren).toBe(1);
+    const acceptPartial = bundleBefore.resolutionOptions.find((option) =>
+      option.resolutionActionType === 'accept_partial_application',
+    );
+    if (acceptPartial === undefined) {
+      throw new Error('Expected accept_partial_application option.');
+    }
+    expect(acceptPartial.eligibilityState).toBe('eligible');
+
+    const resolutionAction = await controlPlane.requestRebalanceBundleResolutionAction(
+      bundleBefore.bundle.id,
+      {
+        resolutionActionType: 'accept_partial_application',
+        note: 'Treasury budget-state application is sufficient; carry child remains intentionally non-retryable.',
+      },
+      'vitest',
+      'operator',
+    );
+    if (resolutionAction === null) {
+      throw new Error('Expected manual resolution action.');
+    }
+
+    const bundleAfter = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.resolutionState === 'accepted_partial',
+    );
+    if (bundleAfter === null) {
+      throw new Error('Expected bundle to reflect accepted partial resolution.');
+    }
+
+    expect(bundleAfter.bundle.status).toBe('requires_intervention');
+    expect(bundleAfter.bundle.interventionRecommendation).toBe('accepted_partial_application');
+    expect(bundleAfter.bundle.resolutionSummary).toContain('Treasury budget-state application is sufficient');
+    expect(bundleAfter.resolutionActions.some((item) => item.id === resolutionAction.id && item.status === 'completed')).toBe(true);
+    expect(bundleAfter.recoveryActions).toHaveLength(0);
+  });
+
+  it('tracks escalation ownership, acknowledgement, review, and close workflow separately from bundle execution truth', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const connection = await createDatabaseConnection(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+    cleanups.push(async () => {
+      await connection.close();
+    });
+
+    await worker.start();
+
+    const command = await controlPlane.enqueueAllocatorEvaluation('vitest', {
+      actorId: 'vitest',
+      trigger: 'worker_bundle_escalation_workflow_test',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const proposal = await waitFor(
+      async () => {
+        const proposals = await controlPlane.listRebalanceProposals(10);
+        return proposals[0] ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    const treasurySummary = await waitFor(
+      () => controlPlane.getTreasurySummary(),
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (proposal === null || treasurySummary === null) {
+      throw new Error('Expected rebalance proposal and treasury summary.');
+    }
+
+    const [rebalanceExecution] = await connection.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: proposal.id,
+        commandId: 'command-escalation-workflow-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        simulated: proposal.simulated,
+        requestedBy: 'vitest',
+        startedBy: 'worker-test',
+        outcomeSummary: 'Manual partial bundle setup for escalation workflow test.',
+        outcome: {
+          applied: true,
+        },
+        createdAt: new Date('2026-03-23T12:00:00.000Z'),
+        startedAt: new Date('2026-03-23T12:00:01.000Z'),
+        completedAt: new Date('2026-03-23T12:00:02.000Z'),
+        updatedAt: new Date('2026-03-23T12:00:02.000Z'),
+      })
+      .returning();
+
+    const [carryAction] = await connection.db
+      .insert(carryActions)
+      .values({
+        strategyRunId: null,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'increase_carry_exposure',
+        status: 'recommended',
+        sourceKind: 'rebalance',
+        sourceReference: proposal.id,
+        opportunityId: null,
+        asset: null,
+        summary: 'Carry child remained blocked pending venue-side review.',
+        notionalUsd: '125000.00',
+        details: {},
+        readiness: 'blocked',
+        executable: false,
+        blockedReasons: [{
+          code: 'venue_execution_unsupported',
+          category: 'venue_capability',
+          message: 'Carry venue remains unsupported for execution.',
+          operatorAction: 'Inspect venue readiness before retrying.',
+          details: {},
+        }],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        executionPlan: {},
+        actorId: 'vitest',
+        createdAt: new Date('2026-03-23T12:00:03.000Z'),
+        updatedAt: new Date('2026-03-23T12:00:03.000Z'),
+      })
+      .returning();
+
+    const [treasuryAction] = await connection.db
+      .insert(treasuryActions)
+      .values({
+        treasuryRunId: treasurySummary.treasuryRunId,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'rebalance_treasury_budget',
+        status: 'completed',
+        venueId: null,
+        venueName: null,
+        venueMode: 'reserve',
+        amountUsd: '125000.00',
+        reasonCode: 'rebalance_budget_application',
+        summary: 'Treasury child completed budget-state application.',
+        details: {
+          rebalanceProposalId: proposal.id,
+        },
+        readiness: 'actionable',
+        executable: true,
+        blockedReasons: [],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        approvedBy: 'vitest',
+        approvedAt: new Date('2026-03-23T12:00:04.000Z'),
+        completedAt: new Date('2026-03-23T12:00:06.000Z'),
+        actorId: 'vitest',
+        createdAt: new Date('2026-03-23T12:00:04.000Z'),
+        updatedAt: new Date('2026-03-23T12:00:06.000Z'),
+      })
+      .returning();
+
+    const [treasuryExecution] = await connection.db
+      .insert(treasuryActionExecutions)
+      .values({
+        treasuryActionId: treasuryAction?.id ?? '',
+        treasuryRunId: treasurySummary.treasuryRunId,
+        commandId: 'command-escalation-workflow-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        venueMode: 'reserve',
+        simulated: true,
+        requestedBy: 'vitest',
+        startedBy: 'worker-test',
+        blockedReasons: [],
+        outcomeSummary: 'Budget-state treasury application completed.',
+        outcome: {
+          executionKind: 'budget_state_application',
+          rebalanceProposalId: proposal.id,
+        },
+        createdAt: new Date('2026-03-23T12:00:05.000Z'),
+        startedAt: new Date('2026-03-23T12:00:05.000Z'),
+        completedAt: new Date('2026-03-23T12:00:06.000Z'),
+        updatedAt: new Date('2026-03-23T12:00:06.000Z'),
+      })
+      .returning();
+    if (
+      rebalanceExecution === undefined
+      || carryAction === undefined
+      || treasuryAction === undefined
+      || treasuryExecution === undefined
+    ) {
+      throw new Error('Expected escalation workflow setup rows to persist.');
+    }
+
+    await connection.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: rebalanceExecution.id,
+        linkedCommandId: 'command-escalation-workflow-setup',
+        updatedAt: new Date('2026-03-23T12:00:06.000Z'),
+      })
+      .where(eq(allocatorRebalanceProposals.id, proposal.id));
+
+    await connection.db
+      .update(treasuryActions)
+      .set({
+        latestExecutionId: treasuryExecution.id,
+        updatedAt: new Date('2026-03-23T12:00:06.000Z'),
+      })
+      .where(eq(treasuryActions.id, treasuryAction.id));
+
+    await connection.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        outcome: {
+          applied: true,
+          downstreamCarryActionIds: [carryAction.id],
+          downstreamTreasuryActionIds: [treasuryAction.id],
+        },
+        updatedAt: new Date('2026-03-23T12:00:06.000Z'),
+      })
+      .where(eq(allocatorRebalanceExecutions.id, rebalanceExecution.id));
+
+    const bundleBefore = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'requires_intervention',
+    );
+    if (bundleBefore === null) {
+      throw new Error('Expected requires_intervention bundle.');
+    }
+
+    const escalationResolution = await controlPlane.requestRebalanceBundleResolutionAction(
+      bundleBefore.bundle.id,
+      {
+        resolutionActionType: 'escalate_bundle_for_review',
+        note: 'Venue-side follow-up is required before the bundle can be considered operationally closed.',
+      },
+      'ops-manager',
+      'operator',
+    );
+    if (escalationResolution === null) {
+      throw new Error('Expected escalation resolution action.');
+    }
+
+    const escalatedBundle = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.resolutionState === 'escalated' && value.escalation !== null,
+    );
+    if (escalatedBundle === null || escalatedBundle.escalation === null) {
+      throw new Error('Expected escalated bundle with escalation record.');
+    }
+
+    expect(escalatedBundle.bundle.status).toBe('requires_intervention');
+    expect(escalatedBundle.bundle.escalationStatus).toBe('open');
+    expect(escalatedBundle.escalation.ownerId).toBe('ops-manager');
+    expect(escalatedBundle.escalationHistory.some((event) => event.eventType === 'created')).toBe(true);
+
+    const openQueue = await controlPlane.listRebalanceEscalations({
+      openState: 'open',
+      sortBy: 'due_at',
+      sortDirection: 'asc',
+    });
+    const openSummary = await controlPlane.getRebalanceEscalationSummary('ops-manager');
+    expect(openQueue.some((item) =>
+      item.bundleId === escalatedBundle.bundle.id
+      && item.escalationStatus === 'open'
+      && item.ownerId === 'ops-manager'
+      && item.escalationQueueState === 'on_track',
+    )).toBe(true);
+    expect(openSummary.open).toBeGreaterThanOrEqual(1);
+    expect(openSummary.mine).toBeGreaterThanOrEqual(1);
+
+    await controlPlane.assignRebalanceBundleEscalation(
+      escalatedBundle.bundle.id,
+      {
+        ownerId: 'review-owner',
+        note: 'Handing off to the reviewer covering venue-side discrepancies.',
+        dueAt: '2026-03-24T12:00:00.000Z',
+      },
+      'ops-manager',
+      'operator',
+    );
+    await controlPlane.acknowledgeRebalanceBundleEscalation(
+      escalatedBundle.bundle.id,
+      {
+        note: 'Acknowledged by the assigned reviewer.',
+      },
+      'review-owner',
+      'operator',
+    );
+    await controlPlane.startRebalanceBundleEscalationReview(
+      escalatedBundle.bundle.id,
+      {
+        note: 'Investigating venue-side state and manual settlement evidence.',
+      },
+      'review-owner',
+      'operator',
+    );
+    await controlPlane.closeRebalanceBundleEscalation(
+      escalatedBundle.bundle.id,
+      {
+        note: 'Resolved after confirming manual settlement and documenting follow-up.',
+      },
+      'review-owner',
+      'operator',
+    );
+
+    const bundleAfter = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.escalation !== null && value.escalation.status === 'resolved',
+    );
+    if (bundleAfter === null || bundleAfter.escalation === null) {
+      throw new Error('Expected resolved escalation workflow.');
+    }
+
+    expect(bundleAfter.bundle.status).toBe('requires_intervention');
+    expect(bundleAfter.bundle.resolutionState).toBe('escalated');
+    expect(bundleAfter.bundle.escalationStatus).toBe('resolved');
+    expect(bundleAfter.bundle.escalationOwnerId).toBe('review-owner');
+    expect(bundleAfter.escalation.closedBy).toBe('review-owner');
+    expect(bundleAfter.escalation.resolutionNote).toContain('manual settlement');
+    expect(bundleAfter.escalationHistory.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(['created', 'assigned', 'acknowledged', 'review_started', 'resolved']),
+    );
+    expect(escalationResolution.resolutionState).toBe('escalated');
+
+    const resolvedQueue = await controlPlane.listRebalanceEscalations({
+      status: 'resolved',
+      openState: 'closed',
+    });
+    const reviewOwnerSummary = await controlPlane.getRebalanceEscalationSummary('review-owner');
+    expect(resolvedQueue.some((item) =>
+      item.bundleId === bundleAfter.bundle.id
+      && item.escalationStatus === 'resolved'
+      && item.ownerId === 'review-owner'
+      && item.escalationQueueState === 'resolved',
+    )).toBe(true);
+    expect(reviewOwnerSummary.resolved).toBeGreaterThanOrEqual(1);
+  });
+
+  it('queues explicit bundle recovery for safely retryable carry children and links the outcome back to the bundle', async () => {
+    const connectionString = await createConnectionString();
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const connection = await createDatabaseConnection(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {}, {
+      cycleIntervalMs: 1000,
+      pollIntervalMs: 10,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+    cleanups.push(async () => {
+      await connection.close();
+    });
+
+    await worker.start();
+
+    const command = await controlPlane.enqueueAllocatorEvaluation('vitest', {
+      actorId: 'vitest',
+      trigger: 'worker_bundle_recovery_test',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const proposal = await waitFor(
+      async () => {
+        const proposals = await controlPlane.listRebalanceProposals(10);
+        return proposals[0] ?? null;
+      },
+      (value): value is Exclude<typeof value, null> => value !== null,
+    );
+    if (proposal === null) {
+      throw new Error('Expected rebalance proposal.');
+    }
+
+    const [rebalanceExecution] = await connection.db
+      .insert(allocatorRebalanceExecutions)
+      .values({
+        proposalId: proposal.id,
+        commandId: 'command-bundle-recovery-setup',
+        status: 'completed',
+        executionMode: proposal.executionMode,
+        simulated: proposal.simulated,
+        requestedBy: 'vitest',
+        startedBy: 'worker-test',
+        outcomeSummary: 'Manual failed-child setup for bundle recovery test.',
+        outcome: {},
+        createdAt: new Date('2026-03-21T12:00:00.000Z'),
+        startedAt: new Date('2026-03-21T12:00:01.000Z'),
+        completedAt: new Date('2026-03-21T12:00:02.000Z'),
+        updatedAt: new Date('2026-03-21T12:00:02.000Z'),
+      })
+      .returning();
+
+    const [carryAction] = await connection.db
+      .insert(carryActions)
+      .values({
+        strategyRunId: null,
+        linkedRebalanceProposalId: proposal.id,
+        actionType: 'reduce_carry_exposure',
+        status: 'failed',
+        sourceKind: 'rebalance',
+        sourceReference: proposal.id,
+        opportunityId: null,
+        asset: null,
+        summary: 'Carry child failed before any venue-side progress was recorded.',
+        notionalUsd: '10000.00',
+        details: {},
+        readiness: 'actionable',
+        executable: true,
+        blockedReasons: [],
+        approvalRequirement: 'operator',
+        executionMode: proposal.executionMode,
+        simulated: true,
+        executionPlan: {},
+        approvedBy: 'vitest',
+        approvedAt: new Date('2026-03-21T12:00:03.000Z'),
+        failedAt: new Date('2026-03-21T12:00:04.000Z'),
+        linkedCommandId: 'command-old-carry-failure',
+        actorId: 'vitest',
+        createdAt: new Date('2026-03-21T12:00:03.000Z'),
+        updatedAt: new Date('2026-03-21T12:00:04.000Z'),
+        lastError: 'Simulated carry failure without side effects.',
+      })
+      .returning();
+    if (rebalanceExecution === undefined || carryAction === undefined) {
+      throw new Error('Expected manual bundle recovery rows to persist.');
+    }
+
+    await connection.db
+      .update(allocatorRebalanceProposals)
+      .set({
+        status: 'completed',
+        latestExecutionId: rebalanceExecution.id,
+        linkedCommandId: 'command-bundle-recovery-setup',
+        updatedAt: new Date('2026-03-21T12:00:04.000Z'),
+      })
+      .where(eq(allocatorRebalanceProposals.id, proposal.id));
+
+    await connection.db
+      .update(allocatorRebalanceExecutions)
+      .set({
+        outcome: {
+          applied: false,
+          downstreamCarryActionIds: [carryAction.id],
+          downstreamTreasuryActionIds: [],
+        },
+        updatedAt: new Date('2026-03-21T12:00:04.000Z'),
+      })
+      .where(eq(allocatorRebalanceExecutions.id, rebalanceExecution.id));
+
+    const bundleBefore = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'failed',
+    );
+    if (bundleBefore === null || rebalanceExecution === undefined || carryAction === undefined) {
+      throw new Error('Expected failed bundle and carry action setup.');
+    }
+    const candidate = bundleBefore.recoveryCandidates.find((item) =>
+      item.targetChildType === 'carry_action' && item.targetChildId === carryAction.id,
+    );
+    if (candidate === undefined) {
+      throw new Error('Expected carry recovery candidate.');
+    }
+
+    expect(candidate.eligibilityState).toBe('eligible');
+
+    const recoveryAction = await controlPlane.requestRebalanceBundleRecoveryAction(
+      bundleBefore.bundle.id,
+      {
+        recoveryActionType: candidate.recoveryActionType,
+        targetChildType: candidate.targetChildType,
+        targetChildId: candidate.targetChildId,
+        note: 'Retry the failed carry child.',
+      },
+      'vitest',
+      'operator',
+    );
+    if (recoveryAction === null || recoveryAction.linkedCommandId === null) {
+      throw new Error('Expected bundle recovery action to be queued.');
+    }
+
+    await waitFor(
+      async () => controlPlane.getCommand(recoveryAction.linkedCommandId ?? ''),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+
+    const completedRecovery = await waitFor(
+      async () => controlPlane.getRebalanceBundleRecoveryAction(bundleBefore.bundle.id, recoveryAction.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.status === 'completed',
+    );
+    const bundleAfter = await waitFor(
+      async () => controlPlane.getRebalanceBundleForProposal(proposal.id),
+      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'completed',
+    );
+    if (completedRecovery === null || bundleAfter === null) {
+      throw new Error('Expected completed bundle recovery.');
+    }
+
+    expect(completedRecovery.targetChildId).toBe(carryAction.id);
+    expect(completedRecovery.linkedCommandId).toBeTruthy();
+    expect(bundleAfter.bundle.interventionRecommendation).toBe('no_action_needed');
+    expect(bundleAfter.bundle.failedChildCount).toBe(0);
+    expect(bundleAfter.recoveryActions.some((item) => item.id === recoveryAction.id)).toBe(true);
   });
 
   it('evaluates and executes carry actions through the runtime command rail', async () => {
@@ -1018,5 +1994,385 @@ describe('RuntimeWorker', () => {
 
     expect(resolvedMismatch.latestRemediation?.status).toBe('completed');
     expect(resolvedMismatch.reconciliationFindings.some((item) => item.status === 'resolved')).toBe(true);
+  });
+
+  it('surfaces missing, stale, and unavailable real venue truth through reconciliation', async () => {
+    const connectionString = await createConnectionString();
+    const missingAdapter = new StubReadonlyVenueTruthAdapter(
+      'drift-solana-missing',
+      'Drift Solana Missing',
+      {
+        venueId: 'drift-solana-missing',
+        venueName: 'Drift Solana Missing',
+        snapshotType: 'solana_rpc_error',
+        snapshotSuccessful: false,
+        healthy: false,
+        healthState: 'degraded',
+        summary: 'Read-only balance snapshot is not available yet.',
+        errorMessage: 'Account balance has not been captured yet.',
+        capturedAt: freshCapturedAt(),
+        snapshotCompleteness: 'minimal',
+        payload: {},
+        metadata: {},
+      },
+      {
+        healthy: false,
+        healthState: 'degraded',
+        degradedReason: 'Account balance has not been captured yet.',
+      },
+    );
+    const staleAdapter = new StubReadonlyVenueTruthAdapter(
+      'drift-solana-stale',
+      'Drift Solana Stale',
+      {
+        venueId: 'drift-solana-stale',
+        venueName: 'Drift Solana Stale',
+        snapshotType: 'solana_rpc_account_state',
+        snapshotSuccessful: true,
+        healthy: true,
+        healthState: 'healthy',
+        summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+        errorMessage: null,
+        capturedAt: '2020-01-01T00:00:00.000Z',
+        snapshotCompleteness: 'partial',
+        payload: { balanceSol: '6.500000000' },
+        metadata: {},
+      },
+    );
+    const unavailableAdapter = new StubReadonlyVenueTruthAdapter(
+      'drift-solana-unavailable',
+      'Drift Solana Unavailable',
+      {
+        venueId: 'drift-solana-unavailable',
+        venueName: 'Drift Solana Unavailable',
+        snapshotType: 'solana_rpc_error',
+        snapshotSuccessful: false,
+        healthy: false,
+        healthState: 'unavailable',
+        summary: 'Read-only RPC snapshot failed.',
+        errorMessage: 'RPC getVersion failed with status 503.',
+        capturedAt: freshCapturedAt(),
+        snapshotCompleteness: 'minimal',
+        payload: {},
+        metadata: {},
+      },
+      {
+        healthy: false,
+        healthState: 'unavailable',
+        degradedReason: 'RPC getVersion failed with status 503.',
+      },
+    );
+
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {
+      truthAdapters: [missingAdapter, staleAdapter, unavailableAdapter],
+    }, {
+      cycleIntervalMs: 60_000,
+      pollIntervalMs: 25,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const firstReconciliationCommand = await controlPlane.enqueueReconciliationRun('vitest', {
+      trigger: 'phase-5-2-missing-venue-truth',
+      triggeredBy: 'vitest',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(firstReconciliationCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+    );
+
+    const missingFindings = await waitFor(
+      async () => controlPlane.listReconciliationFindings({
+        findingType: 'missing_venue_truth_snapshot',
+        limit: 20,
+      }),
+      (findings) => findings.some(
+        (finding) => finding.venueId === 'drift-solana-missing' && finding.status === 'active',
+      ),
+    );
+
+    expect(missingFindings.some((finding) => finding.venueId === 'drift-solana-missing')).toBe(true);
+    missingAdapter.setSnapshot({
+      venueId: 'drift-solana-missing',
+      venueName: 'Drift Solana Missing',
+      snapshotType: 'solana_rpc_account_state',
+      snapshotSuccessful: true,
+      healthy: true,
+      healthState: 'healthy',
+      summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+      errorMessage: null,
+      capturedAt: freshCapturedAt(),
+      snapshotCompleteness: 'partial',
+      payload: { balanceSol: '12.000000000' },
+      metadata: {},
+    });
+
+    const cycleCommand = await controlPlane.enqueueCommand('run_cycle', 'vitest', {
+      triggerSource: 'phase-5-2-seed-venue-truth',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(cycleCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+      20_000,
+    );
+
+    const secondReconciliationCommand = await controlPlane.enqueueReconciliationRun('vitest', {
+      trigger: 'phase-5-2-venue-truth-after-ingest',
+      triggeredBy: 'vitest',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(secondReconciliationCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+      20_000,
+    );
+
+    const resolvedMissingFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'missing_venue_truth_snapshot',
+      limit: 50,
+    });
+    expect(
+      resolvedMissingFindings.some((finding) => finding.venueId === 'drift-solana-missing' && finding.status === 'resolved'),
+    ).toBe(true);
+
+    const staleFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'stale_venue_truth_snapshot',
+      limit: 20,
+    });
+    expect(staleFindings.some((finding) => finding.venueId === 'drift-solana-stale' && finding.status === 'active')).toBe(true);
+
+    const unavailableFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'venue_truth_unavailable',
+      limit: 20,
+    });
+    const unavailableFinding = unavailableFindings.find(
+      (finding) => finding.venueId === 'drift-solana-unavailable' && finding.status === 'active',
+    );
+    expect(unavailableFinding).toBeTruthy();
+    expect(unavailableFinding?.mismatchId).toBeTruthy();
+
+    const mismatchDetail = await controlPlane.getMismatchDetail(String(unavailableFinding?.mismatchId));
+    expect(mismatchDetail?.mismatch.sourceKind).toBe('reconciliation');
+    expect(mismatchDetail?.latestReconciliationFinding?.findingType).toBe('venue_truth_unavailable');
+
+    const summary = await controlPlane.getReconciliationSummary();
+    expect(summary?.latestTypeCounts['missing_venue_truth_snapshot']).toBeGreaterThan(0);
+    expect(summary?.latestTypeCounts['stale_venue_truth_snapshot']).toBeGreaterThan(0);
+    expect(summary?.latestTypeCounts['venue_truth_unavailable']).toBeGreaterThan(0);
+    expect(summary?.latestTypeCounts['venue_truth_partial_coverage']).toBeGreaterThan(0);
+  });
+
+  it('compares internal execution references against recent real venue references when available', async () => {
+    const connectionString = await createConnectionString();
+    const adapter = new StubReadonlyVenueTruthAdapter(
+      'drift-solana-readonly',
+      'Drift Solana Read-Only',
+      {
+        executionReferenceState: {
+          referenceLookbackLimit: 10,
+          references: [{
+            referenceType: 'solana_signature',
+            reference: 'sig-observed-1',
+            accountAddress: 'drift-solana-readonly-account',
+            slot: '123',
+            blockTime: '2026-03-31T11:59:00.000Z',
+            confirmationStatus: 'confirmed',
+            errored: false,
+            memo: null,
+          }],
+          oldestReferenceAt: '2026-03-31T11:59:00.000Z',
+        },
+      },
+    );
+
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {
+      truthAdapters: [adapter],
+    }, {
+      cycleIntervalMs: 60_000,
+      pollIntervalMs: 25,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const connection = await createDatabaseConnection(connectionString);
+    const store = new RuntimeStore(connection.db, new DatabaseAuditWriter(connection.db));
+    const [action] = await store.createCarryActions({
+      strategyRunId: null,
+      intents: [{
+        actionType: 'increase_carry_exposure',
+        sourceKind: 'opportunity',
+        sourceReference: 'opp-exec-ref-test',
+        opportunityId: 'opp-exec-ref-test',
+        asset: 'BTC',
+        summary: 'Seed execution reference reconciliation.',
+        notionalUsd: '1000',
+        details: {},
+        readiness: 'actionable',
+        blockedReasons: [],
+        executable: true,
+        approvalRequirement: 'operator',
+        executionMode: 'dry-run',
+        simulated: true,
+        plannedOrders: [{
+          intentId: 'intent-exec-ref-test',
+          venueId: 'drift-solana-readonly',
+          asset: 'BTC',
+          side: 'buy',
+          type: 'market',
+          size: '0.01',
+          limitPrice: null,
+          opportunityId: 'opp-exec-ref-test' as never,
+          reduceOnly: false,
+          createdAt: new Date('2026-03-31T11:58:00.000Z'),
+          metadata: {},
+        }],
+        effects: {
+          currentCarryAllocationUsd: '0',
+          projectedCarryAllocationUsd: '1000',
+          projectedCarryAllocationPct: 0.01,
+          approvedCarryBudgetUsd: '5000',
+          projectedRemainingBudgetUsd: '4000',
+          openPositionCount: 0,
+        },
+      }],
+      actorId: 'vitest',
+      createdAt: new Date('2026-03-31T11:58:00.000Z'),
+    });
+
+    if (action === undefined) {
+      throw new Error('Expected carry action to be created');
+    }
+
+    const execution = await store.createCarryExecution({
+      carryActionId: action.id,
+      strategyRunId: null,
+      commandId: null,
+      status: 'completed',
+      executionMode: 'dry-run',
+      simulated: true,
+      requestedBy: 'vitest',
+      venueExecutionReference: 'sig-missing-1',
+      outcome: {},
+    });
+    await store.createCarryExecutionStep({
+      carryExecutionId: execution.id,
+      carryActionId: action.id,
+      strategyRunId: null,
+      plannedOrderId: null,
+      intentId: 'intent-exec-ref-test',
+      venueId: 'drift-solana-readonly',
+      venueMode: 'live',
+      executionSupported: false,
+      readOnly: true,
+      approvedForLiveUse: false,
+      onboardingState: 'read_only',
+      asset: 'BTC',
+      side: 'buy',
+      orderType: 'market',
+      requestedSize: '0.01',
+      reduceOnly: false,
+      executionReference: 'sig-missing-1',
+      status: 'completed',
+      simulated: true,
+      outcome: {},
+      metadata: {},
+      completedAt: new Date('2026-03-31T11:58:05.000Z'),
+    });
+
+    const firstReconciliationCommand = await controlPlane.enqueueReconciliationRun('vitest', {
+      trigger: 'phase-5-3-execution-reference-mismatch',
+      triggeredBy: 'vitest',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(firstReconciliationCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+      20_000,
+    );
+
+    const mismatchedFindings = await waitFor(
+      async () => controlPlane.listReconciliationFindings({
+        findingType: 'venue_execution_reference_mismatch',
+        limit: 20,
+      }),
+      (findings) => findings.some(
+        (finding) => finding.venueId === 'drift-solana-readonly' && finding.status === 'active',
+      ),
+      20_000,
+    );
+    expect(
+      mismatchedFindings.some(
+        (finding) => finding.venueId === 'drift-solana-readonly' && finding.status === 'active',
+      ),
+    ).toBe(true);
+
+    adapter.setSnapshot({
+      executionReferenceState: {
+        referenceLookbackLimit: 10,
+        references: [
+          {
+            referenceType: 'solana_signature',
+            reference: 'sig-observed-1',
+            accountAddress: 'drift-solana-readonly-account',
+            slot: '123',
+            blockTime: '2026-03-31T11:59:00.000Z',
+            confirmationStatus: 'confirmed',
+            errored: false,
+            memo: null,
+          },
+          {
+            referenceType: 'solana_signature',
+            reference: 'sig-missing-1',
+            accountAddress: 'drift-solana-readonly-account',
+            slot: '124',
+            blockTime: '2026-03-31T12:00:00.000Z',
+            confirmationStatus: 'confirmed',
+            errored: false,
+            memo: null,
+          },
+        ],
+        oldestReferenceAt: '2026-03-31T11:59:00.000Z',
+      },
+      payload: {
+        balanceSol: '12.000000000',
+      },
+    });
+
+    const cycleCommand = await controlPlane.enqueueCommand('run_cycle', 'vitest', {
+      triggerSource: 'phase-5-3-refresh-execution-reference-truth',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(cycleCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+      20_000,
+    );
+
+    const secondReconciliationCommand = await controlPlane.enqueueReconciliationRun('vitest', {
+      trigger: 'phase-5-3-execution-reference-mismatch-resolved',
+      triggeredBy: 'vitest',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(secondReconciliationCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+      20_000,
+    );
+
+    const resolvedFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'venue_execution_reference_mismatch',
+      limit: 20,
+    });
+    expect(
+      resolvedFindings.some(
+        (finding) => finding.venueId === 'drift-solana-readonly' && finding.status === 'resolved',
+      ),
+    ).toBe(true);
   });
 });

@@ -6,6 +6,10 @@ import type {
   TreasuryVenuePosition,
   TreasuryVenueState,
 } from '../interfaces/treasury-venue-adapter.js';
+import type {
+  VenueCapabilitySnapshot,
+  VenueTruthSnapshot,
+} from '../interfaces/venue-truth-adapter.js';
 
 export interface SimulatedTreasuryVenueConfig {
   venueId: string;
@@ -87,6 +91,142 @@ export class SimulatedTreasuryVenueAdapter implements TreasuryVenueAdapter {
       metadata: {
         simulated: true,
         ...(this.config.metadata ?? {}),
+      },
+    };
+  }
+
+  async getVenueCapabilitySnapshot(): Promise<VenueCapabilitySnapshot> {
+    return {
+      venueId: this.config.venueId,
+      venueName: this.config.venueName,
+      sleeveApplicability: ['treasury'],
+      connectorType: 'simulated_treasury_adapter',
+      truthMode: 'simulated',
+      readOnlySupport: false,
+      executionSupport: true,
+      approvedForLiveUse: false,
+      onboardingState: 'simulated',
+      missingPrerequisites: [
+        'Real connector implementation',
+        'Read-only validation against venue',
+        'Live enable approval',
+      ],
+      authRequirementsSummary: [],
+      healthy: this.config.healthy ?? true,
+      healthState: (this.config.healthy ?? true) ? 'healthy' : 'degraded',
+      degradedReason: (this.config.healthy ?? true) ? null : 'simulated_treasury_health_flag_false',
+      metadata: {
+        simulated: true,
+        liquidityTier: this.config.liquidityTier,
+        ...(this.config.metadata ?? {}),
+      },
+    };
+  }
+
+  async getVenueTruthSnapshot(): Promise<VenueTruthSnapshot> {
+    const [venueState, position] = await Promise.all([
+      this.getVenueState(),
+      this.getPosition(),
+    ]);
+
+    return {
+      venueId: venueState.venueId,
+      venueName: venueState.venueName,
+      snapshotType: 'simulated_treasury_state',
+      snapshotSuccessful: true,
+      healthy: venueState.healthy,
+      healthState: venueState.healthy ? 'healthy' : 'degraded',
+      summary: `Allocation ${position.currentAllocationUsd} USD, withdrawal availability ${position.withdrawalAvailableUsd} USD.`,
+      errorMessage: null,
+      capturedAt: position.updatedAt,
+      snapshotCompleteness: 'complete',
+      truthCoverage: {
+        accountState: {
+          status: 'unsupported',
+          reason: 'Simulated treasury adapters do not expose a stable venue account identity.',
+          limitations: [],
+        },
+        balanceState: {
+          status: 'unsupported',
+          reason: 'Treasury venue truth is modeled as capacity and allocation, not account balances.',
+          limitations: [],
+        },
+        capacityState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        exposureState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        derivativeAccountState: {
+          status: 'unsupported',
+          reason: 'Simulated treasury adapters do not expose venue-native derivative account metadata.',
+          limitations: [],
+        },
+        derivativePositionState: {
+          status: 'unsupported',
+          reason: 'Simulated treasury adapters do not expose venue-native derivative position state.',
+          limitations: [],
+        },
+        derivativeHealthState: {
+          status: 'unsupported',
+          reason: 'Simulated treasury adapters do not expose venue-native derivative margin or health state.',
+          limitations: [],
+        },
+        orderState: {
+          status: 'unsupported',
+          reason: 'Simulated treasury adapters do not expose venue-native open order state.',
+          limitations: [],
+        },
+        executionReferences: {
+          status: 'unsupported',
+          reason: 'Simulated treasury truth does not include external execution references.',
+          limitations: [],
+        },
+      },
+      sourceMetadata: {
+        sourceKind: 'simulation',
+        sourceName: 'simulated_treasury_adapter',
+        observedScope: ['capacity', 'allocation'],
+      },
+      accountState: null,
+      balanceState: null,
+      capacityState: {
+        availableCapacityUsd: venueState.availableCapacityUsd,
+        currentAllocationUsd: position.currentAllocationUsd,
+        withdrawalAvailableUsd: position.withdrawalAvailableUsd,
+        liquidityTier: venueState.liquidityTier,
+        aprBps: venueState.aprBps,
+      },
+      exposureState: {
+        exposures: [{
+          exposureKey: `${venueState.venueId}:allocation`,
+          exposureType: 'allocation',
+          assetKey: 'USD',
+          quantity: position.currentAllocationUsd,
+          quantityDisplay: position.currentAllocationUsd,
+          accountAddress: null,
+        }],
+        methodology: 'treasury_allocation_state',
+      },
+      derivativeAccountState: null,
+      derivativePositionState: null,
+      derivativeHealthState: null,
+      orderState: null,
+      executionReferenceState: null,
+      payload: {
+        liquidityTier: venueState.liquidityTier,
+        aprBps: venueState.aprBps,
+        availableCapacityUsd: venueState.availableCapacityUsd,
+        currentAllocationUsd: position.currentAllocationUsd,
+        withdrawalAvailableUsd: position.withdrawalAvailableUsd,
+      },
+      metadata: {
+        simulated: true,
+        ...(venueState.metadata ?? {}),
       },
     };
   }

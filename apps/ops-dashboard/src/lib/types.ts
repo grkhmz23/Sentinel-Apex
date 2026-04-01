@@ -9,6 +9,8 @@ import type {
   CarryExecutionView,
   CarryVenueView,
   RebalanceBundleDetailView,
+  RebalanceEscalationQueueItemView,
+  RebalanceEscalationQueueSummaryView,
   RebalanceProposalView,
   RuntimeCommandView,
   RuntimeMismatchDetailView,
@@ -31,6 +33,10 @@ import type {
   TreasuryAllocationView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  VenueDetailView,
+  VenueInventoryItemView,
+  VenueInventorySummaryView,
+  VenueTruthSummaryView,
   TreasuryVenueDetailView,
   TreasuryVenueView,
 } from '@sentinel-apex/runtime';
@@ -93,6 +99,21 @@ export interface RebalanceProposalPageData {
 
 export interface RebalanceBundlePageData {
   bundle: RebalanceBundleDetailView;
+}
+
+export interface EscalationsPageData {
+  escalations: RebalanceEscalationQueueItemView[];
+  summary: RebalanceEscalationQueueSummaryView;
+}
+
+export interface VenuesPageData {
+  venues: VenueInventoryItemView[];
+  summary: VenueInventorySummaryView;
+  truthSummary: VenueTruthSummaryView;
+}
+
+export interface VenueDetailPageData {
+  detail: VenueDetailView;
 }
 
 export interface ReconciliationPageData {

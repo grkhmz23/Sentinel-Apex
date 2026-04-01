@@ -8,10 +8,12 @@ import type { DashboardSession } from '../lib/operator-session';
 const navigation = [
   { href: '/', label: 'Overview' },
   { href: '/allocator', label: 'Allocator' },
+  { href: '/allocator/escalations', label: 'Escalations' },
   { href: '/carry', label: 'Carry' },
   { href: '/mismatches', label: 'Mismatches' },
   { href: '/reconciliation', label: 'Reconciliation' },
   { href: '/treasury', label: 'Treasury' },
+  { href: '/venues', label: 'Venues' },
   { href: '/operations', label: 'Operations' },
 ];
 

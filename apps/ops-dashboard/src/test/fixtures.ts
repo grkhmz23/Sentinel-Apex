@@ -10,7 +10,17 @@ import type {
   CarryExecutionView,
   CarryVenueView,
   RebalanceBundleDetailView,
+  RebalanceBundleEscalationEventView,
+  RebalanceBundleEscalationTransitionView,
+  RebalanceBundleEscalationView,
+  RebalanceEscalationQueueItemView,
+  RebalanceEscalationQueueSummaryView,
+  RebalanceBundleRecoveryActionView,
+  RebalanceBundleRecoveryCandidateView,
+  RebalanceBundleResolutionActionView,
+  RebalanceBundleResolutionOptionView,
   RebalanceBundleView,
+  RebalanceBundlePartialProgressView,
   RebalanceExecutionGraphView,
   RebalanceProposalDetailView,
   RebalanceProposalView,
@@ -29,6 +39,10 @@ import type {
   TreasuryExecutionView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  VenueDetailView,
+  VenueInventoryItemView,
+  VenueInventorySummaryView,
+  VenueTruthSummaryView,
   TreasuryVenueDetailView,
   TreasuryVenueView,
 } from '@sentinel-apex/runtime';
@@ -357,6 +371,10 @@ export function createRebalanceExecutionGraph(
     latestExecutionId: 'carry-execution-1',
   });
   const carryExecution = createCarryExecution({ carryActionId: carryAction.id });
+  const recoveryAction = createRebalanceBundleRecoveryAction();
+  const resolutionAction = createRebalanceBundleResolutionAction();
+  const escalation = createRebalanceBundleEscalation();
+  const escalationEvent = createRebalanceBundleEscalationEvent();
 
   return {
     detail,
@@ -403,6 +421,10 @@ export function createRebalanceExecutionGraph(
         note: 'Treasury sleeve impact is currently represented by approved rebalance budget-state application, not by proposal-linked treasury action records.',
       },
     },
+    recoveryActions: [recoveryAction],
+    resolutionActions: [resolutionAction],
+    escalation,
+    escalationHistory: [escalationEvent],
     timeline: [
       {
         id: 'rebalance-proposal-1:proposed',
@@ -417,6 +439,9 @@ export function createRebalanceExecutionGraph(
         linkedRebalanceExecutionId: null,
         linkedActionId: null,
         linkedExecutionId: null,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
         details: {},
       },
       {
@@ -432,6 +457,63 @@ export function createRebalanceExecutionGraph(
         linkedRebalanceExecutionId: null,
         linkedActionId: carryAction.id,
         linkedExecutionId: null,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
+        details: {},
+      },
+      {
+        id: 'bundle-recovery-action-1:completed',
+        eventType: 'recovery_completed',
+        at: recoveryAction.completedAt ?? recoveryAction.requestedAt,
+        actorId: recoveryAction.requestedBy,
+        sleeveId: 'carry',
+        scope: 'recovery_action',
+        status: recoveryAction.status,
+        summary: recoveryAction.outcomeSummary ?? 'Bundle recovery completed.',
+        linkedCommandId: recoveryAction.linkedCommandId,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: recoveryAction.targetChildId,
+        linkedExecutionId: null,
+        linkedRecoveryActionId: recoveryAction.id,
+        linkedResolutionActionId: null,
+        linkedEscalationId: null,
+        details: {},
+      },
+      {
+        id: 'bundle-resolution-action-1:completed',
+        eventType: 'resolution_completed',
+        at: resolutionAction.completedAt ?? resolutionAction.requestedAt,
+        actorId: resolutionAction.completedBy ?? resolutionAction.requestedBy,
+        sleeveId: 'allocator',
+        scope: 'resolution_action',
+        status: resolutionAction.status,
+        summary: resolutionAction.outcomeSummary ?? 'Bundle resolution completed.',
+        linkedCommandId: null,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: null,
+        linkedExecutionId: null,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: resolutionAction.id,
+        linkedEscalationId: null,
+        details: {},
+      },
+      {
+        id: 'bundle-escalation-1:created:event',
+        eventType: 'escalation_created',
+        at: escalationEvent.createdAt,
+        actorId: escalationEvent.actorId,
+        sleeveId: 'allocator',
+        scope: 'escalation',
+        status: escalationEvent.toStatus,
+        summary: escalationEvent.note ?? 'Escalation created.',
+        linkedCommandId: null,
+        linkedRebalanceExecutionId: null,
+        linkedActionId: null,
+        linkedExecutionId: null,
+        linkedRecoveryActionId: null,
+        linkedResolutionActionId: null,
+        linkedEscalationId: escalation.id,
         details: {},
       },
     ],
@@ -462,10 +544,310 @@ export function createRebalanceBundle(
     },
     finalizationReason: 'All downstream work recorded for the rebalance bundle completed successfully.',
     finalizedAt: '2026-03-20T12:03:02.000Z',
+    resolutionState: 'unresolved',
+    latestResolutionActionId: null,
+    resolutionSummary: null,
+    resolvedBy: null,
+    resolvedAt: null,
+    latestEscalationId: null,
+    escalationStatus: null,
+    escalationOwnerId: null,
+    escalationAssignedAt: null,
+    escalationDueAt: null,
+    escalationSummary: null,
     executionMode: 'dry-run',
     simulated: true,
     createdAt: '2026-03-20T12:02:00.000Z',
     updatedAt: '2026-03-20T12:03:02.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleRecoveryCandidate(
+  overrides: Partial<RebalanceBundleRecoveryCandidateView> = {},
+): RebalanceBundleRecoveryCandidateView {
+  return {
+    id: 'bundle-recovery-candidate-1',
+    bundleId: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    recoveryActionType: 'requeue_child_execution',
+    targetChildType: 'carry_action',
+    targetChildId: 'carry-action-1',
+    targetChildStatus: 'failed',
+    targetChildSummary: 'Retry carry child after failed execution.',
+    targetCommandType: 'execute_carry_action',
+    approvalRequirement: 'operator',
+    eligibilityState: 'eligible',
+    blockedReasons: [],
+    executionMode: 'dry-run',
+    simulated: true,
+    note: 'Carry child can be requeued safely because no partial execution progress was recorded.',
+    createdAt: '2026-03-20T12:04:00.000Z',
+    updatedAt: '2026-03-20T12:04:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleRecoveryAction(
+  overrides: Partial<RebalanceBundleRecoveryActionView> = {},
+): RebalanceBundleRecoveryActionView {
+  return {
+    id: 'bundle-recovery-action-1',
+    bundleId: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    recoveryActionType: 'requeue_child_execution',
+    targetChildType: 'carry_action',
+    targetChildId: 'carry-action-1',
+    targetChildStatus: 'failed',
+    targetChildSummary: 'Retry carry child after failed execution.',
+    eligibilityState: 'eligible',
+    blockedReasons: [],
+    approvalRequirement: 'operator',
+    status: 'completed',
+    requestedBy: 'ops-user',
+    requestedAt: '2026-03-20T12:05:00.000Z',
+    note: 'Retry requested from bundle detail.',
+    linkedCommandId: 'command-carry-recovery-1',
+    targetCommandType: 'execute_carry_action',
+    linkedCarryActionId: 'carry-action-1',
+    linkedTreasuryActionId: null,
+    outcomeSummary: 'Bundle recovery requeued the carry child successfully.',
+    outcome: {
+      carryExecutionId: 'carry-execution-2',
+    },
+    lastError: null,
+    executionMode: 'dry-run',
+    simulated: true,
+    queuedAt: '2026-03-20T12:05:02.000Z',
+    startedAt: '2026-03-20T12:05:03.000Z',
+    completedAt: '2026-03-20T12:05:06.000Z',
+    updatedAt: '2026-03-20T12:05:06.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleResolutionOption(
+  overrides: Partial<RebalanceBundleResolutionOptionView> = {},
+): RebalanceBundleResolutionOptionView {
+  return {
+    id: 'bundle-resolution-option-1',
+    bundleId: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    resolutionActionType: 'accept_partial_application',
+    targetResolutionState: 'accepted_partial',
+    approvalRequirement: 'operator',
+    eligibilityState: 'eligible',
+    blockedReasons: [],
+    noteRequired: true,
+    summary: 'Accept the current partial application without retrying remaining children.',
+    operatorAction: 'Record why the partial state is acceptable.',
+    createdAt: '2026-03-20T12:06:00.000Z',
+    updatedAt: '2026-03-20T12:06:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleResolutionAction(
+  overrides: Partial<RebalanceBundleResolutionActionView> = {},
+): RebalanceBundleResolutionActionView {
+  return {
+    id: 'bundle-resolution-action-1',
+    bundleId: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    resolutionActionType: 'accept_partial_application',
+    status: 'completed',
+    resolutionState: 'accepted_partial',
+    note: 'Operator accepted the partial application after review.',
+    acknowledgedPartialApplication: true,
+    escalated: false,
+    affectedChildSummary: {
+      retryableChildren: 0,
+      nonRetryableChildren: 1,
+      appliedChildren: 1,
+    },
+    linkedRecoveryActionIds: ['bundle-recovery-action-1'],
+    requestedBy: 'ops-user',
+    requestedAt: '2026-03-20T12:06:00.000Z',
+    completedBy: 'ops-user',
+    completedAt: '2026-03-20T12:06:01.000Z',
+    outcomeSummary: 'Operator accepted the partial bundle outcome as-is.',
+    blockedReasons: [],
+    updatedAt: '2026-03-20T12:06:01.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundlePartialProgress(
+  overrides: Partial<RebalanceBundlePartialProgressView> = {},
+): RebalanceBundlePartialProgressView {
+  return {
+    totalChildren: 1,
+    appliedChildren: 1,
+    progressRecordedChildren: 1,
+    retryableChildren: 0,
+    nonRetryableChildren: 1,
+    blockedBeforeApplicationChildren: 0,
+    inflightChildren: 0,
+    sleeves: [
+      {
+        sleeveId: 'carry',
+        totalChildren: 1,
+        appliedChildren: 1,
+        progressRecordedChildren: 1,
+        retryableChildren: 0,
+        nonRetryableChildren: 1,
+        blockedBeforeApplicationChildren: 0,
+      },
+      {
+        sleeveId: 'treasury',
+        totalChildren: 0,
+        appliedChildren: 0,
+        progressRecordedChildren: 0,
+        retryableChildren: 0,
+        nonRetryableChildren: 0,
+        blockedBeforeApplicationChildren: 0,
+      },
+    ],
+    children: [{
+      childType: 'carry_action',
+      sleeveId: 'carry',
+      childId: 'carry-action-1',
+      summary: 'Carry child applied partially and needs operator review.',
+      actionStatus: 'failed',
+      latestExecutionId: 'carry-execution-1',
+      latestExecutionStatus: 'failed',
+      progressState: 'partial_progress',
+      retryability: 'non_retryable',
+      applied: true,
+      progressRecorded: true,
+      blockedBeforeApplication: false,
+      retryCandidateId: null,
+      retryBlockedReasons: [],
+      evidence: ['Venue execution references recorded.'],
+    }],
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleEscalation(
+  overrides: Partial<RebalanceBundleEscalationView> = {},
+): RebalanceBundleEscalationView {
+  return {
+    id: 'bundle-escalation-1',
+    bundleId: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    sourceResolutionActionId: 'bundle-resolution-action-1',
+    status: 'open',
+    isOpen: true,
+    ownerId: 'ops-owner',
+    assignedBy: 'ops-user',
+    assignedAt: '2026-03-20T12:06:05.000Z',
+    acknowledgedBy: null,
+    acknowledgedAt: null,
+    dueAt: '2026-03-21T12:00:00.000Z',
+    handoffNote: 'Escalated for manual venue-side review.',
+    reviewNote: null,
+    resolutionNote: null,
+    closedBy: null,
+    closedAt: null,
+    createdAt: '2026-03-20T12:06:05.000Z',
+    updatedAt: '2026-03-20T12:06:05.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleEscalationEvent(
+  overrides: Partial<RebalanceBundleEscalationEventView> = {},
+): RebalanceBundleEscalationEventView {
+  return {
+    id: 'bundle-escalation-event-1',
+    escalationId: 'bundle-escalation-1',
+    bundleId: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    eventType: 'created',
+    fromStatus: null,
+    toStatus: 'open',
+    actorId: 'ops-user',
+    ownerId: 'ops-owner',
+    note: 'Escalated for manual venue-side review.',
+    dueAt: '2026-03-21T12:00:00.000Z',
+    createdAt: '2026-03-20T12:06:05.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceBundleEscalationTransition(
+  overrides: Partial<RebalanceBundleEscalationTransitionView> = {},
+): RebalanceBundleEscalationTransitionView {
+  return {
+    id: 'rebalance-bundle-1:assign',
+    bundleId: 'rebalance-bundle-1',
+    escalationId: 'bundle-escalation-1',
+    transitionType: 'assign',
+    targetStatus: 'open',
+    approvalRequirement: 'operator',
+    eligibilityState: 'eligible',
+    blockedReasons: [],
+    noteRequired: true,
+    assigneeRequired: true,
+    summary: 'Assign or reassign the escalation owner and optional follow-up date.',
+    operatorAction: 'Document the handoff and choose the operator who now owns the escalated bundle.',
+    createdAt: '2026-03-20T12:06:06.000Z',
+    updatedAt: '2026-03-20T12:06:06.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceEscalationQueueItem(
+  overrides: Partial<RebalanceEscalationQueueItemView> = {},
+): RebalanceEscalationQueueItemView {
+  return {
+    escalationId: 'bundle-escalation-1',
+    bundleId: 'rebalance-bundle-1',
+    proposalId: 'rebalance-proposal-1',
+    allocatorRunId: 'allocator-run-1',
+    escalationStatus: 'open',
+    escalationQueueState: 'due_soon',
+    isOpen: true,
+    ownerId: 'ops-owner',
+    assignedBy: 'ops-user',
+    assignedAt: '2026-03-20T12:06:05.000Z',
+    acknowledgedAt: null,
+    inReviewAt: null,
+    dueAt: '2026-03-21T12:00:00.000Z',
+    latestActivityAt: '2026-03-20T12:06:05.000Z',
+    latestEventType: 'created',
+    latestEventSummary: 'Escalated for manual venue-side review.',
+    bundleStatus: 'requires_intervention',
+    interventionRecommendation: 'escalated_for_review',
+    resolutionState: 'escalated',
+    outcomeClassification: 'partial_application',
+    failedChildCount: 1,
+    blockedChildCount: 0,
+    pendingChildCount: 0,
+    totalChildCount: 2,
+    childSleeves: ['carry', 'treasury'],
+    executionMode: 'dry-run',
+    simulated: true,
+    createdAt: '2026-03-20T12:06:05.000Z',
+    updatedAt: '2026-03-20T12:06:05.000Z',
+    ...overrides,
+  };
+}
+
+export function createRebalanceEscalationQueueSummary(
+  overrides: Partial<RebalanceEscalationQueueSummaryView> = {},
+): RebalanceEscalationQueueSummaryView {
+  return {
+    total: 1,
+    open: 1,
+    acknowledged: 0,
+    inReview: 0,
+    resolved: 0,
+    overdue: 0,
+    dueSoon: 1,
+    unassigned: 0,
+    mine: 0,
     ...overrides,
   };
 }
@@ -475,7 +857,29 @@ export function createRebalanceBundleDetail(
 ): RebalanceBundleDetailView {
   return {
     bundle: createRebalanceBundle(),
-    graph: createRebalanceExecutionGraph(),
+    graph: createRebalanceExecutionGraph({
+      recoveryActions: [createRebalanceBundleRecoveryAction()],
+      resolutionActions: [createRebalanceBundleResolutionAction()],
+    }),
+    partialProgress: createRebalanceBundlePartialProgress(),
+    recoveryCandidates: [createRebalanceBundleRecoveryCandidate()],
+    recoveryActions: [createRebalanceBundleRecoveryAction()],
+    resolutionOptions: [createRebalanceBundleResolutionOption()],
+    resolutionActions: [createRebalanceBundleResolutionAction()],
+    escalation: createRebalanceBundleEscalation(),
+    escalationHistory: [createRebalanceBundleEscalationEvent()],
+    escalationTransitions: [
+      createRebalanceBundleEscalationTransition(),
+      createRebalanceBundleEscalationTransition({
+        id: 'rebalance-bundle-1:acknowledge',
+        transitionType: 'acknowledge',
+        targetStatus: 'acknowledged',
+        noteRequired: false,
+        assigneeRequired: false,
+        summary: 'Acknowledge that the escalation owner has accepted the handoff.',
+        operatorAction: 'Record acknowledgement once the owner accepts responsibility for follow-up.',
+      }),
+    ],
     ...overrides,
   };
 }
@@ -626,6 +1030,11 @@ export function createReconciliationSummary(): RuntimeReconciliationSummaryView 
       projection_state_mismatch: 0,
       stale_projection_state: 0,
       command_outcome_mismatch: 0,
+      missing_venue_truth_snapshot: 0,
+      stale_venue_truth_snapshot: 0,
+      venue_truth_unavailable: 0,
+      venue_truth_partial_coverage: 0,
+      venue_execution_reference_mismatch: 0,
     },
   };
 }
@@ -1126,6 +1535,320 @@ export function createTreasuryVenueDetail(
     latestSummary: createTreasurySummary(),
     recentActions: [createTreasuryAction({ venueId: venue.venueId, venueName: venue.venueName })],
     recentExecutions: [createTreasuryExecution()],
+    ...overrides,
+  };
+}
+
+export function createVenueInventoryItem(
+  overrides: Partial<VenueInventoryItemView> = {},
+): VenueInventoryItemView {
+  return {
+    venueId: 'drift-solana-readonly',
+    venueName: 'Drift Solana Read-Only',
+    connectorType: 'solana_rpc_readonly',
+    sleeveApplicability: ['carry'],
+    truthMode: 'real',
+    readOnlySupport: true,
+    executionSupport: false,
+    approvedForLiveUse: false,
+    onboardingState: 'read_only',
+    missingPrerequisites: [],
+    authRequirementsSummary: ['DRIFT_RPC_ENDPOINT', 'DRIFT_READONLY_ACCOUNT_ADDRESS'],
+    healthy: true,
+    healthState: 'healthy',
+    degradedReason: null,
+    truthProfile: 'derivative_aware',
+    latestSnapshotType: 'solana_rpc_account_state',
+    latestSnapshotSummary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+    latestErrorMessage: null,
+    snapshotFreshness: 'fresh',
+    snapshotCompleteness: 'partial',
+    lastSnapshotAt: '2026-03-20T12:01:00.000Z',
+    lastSuccessfulSnapshotAt: '2026-03-20T12:01:00.000Z',
+    truthCoverage: {
+      accountState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      balanceState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      capacityState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not expose venue capacity.',
+        limitations: [],
+      },
+      exposureState: {
+        status: 'available',
+        reason: null,
+        limitations: ['Exposure is balance-derived and does not include venue-native derivatives.'],
+      },
+      derivativeAccountState: {
+        status: 'partial',
+        reason: 'Program-account or candidate derivative metadata is visible, but venue-native decode is not implemented.',
+        limitations: ['Authority, subaccount, positions, and health require a venue SDK or IDL-backed decoder.'],
+      },
+      derivativePositionState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not decode venue-native derivative positions.',
+        limitations: [],
+      },
+      derivativeHealthState: {
+        status: 'unsupported',
+        reason: 'Generic Solana RPC does not decode venue-native margin or health state.',
+        limitations: [],
+      },
+      orderState: {
+        status: 'partial',
+        reason: 'Order context is reference-only and derived from recent account signatures.',
+        limitations: ['Order state is limited to reference-only recent signatures and not venue-native open orders.'],
+      },
+      executionReferences: {
+        status: 'available',
+        reason: null,
+        limitations: ['Execution references are limited to recent account signatures.'],
+      },
+    },
+    sourceMetadata: {
+      sourceKind: 'json_rpc',
+      sourceName: 'solana_rpc_readonly',
+      observedScope: [
+        'account_identity',
+        'native_balance',
+        'recent_signatures',
+        'derivative_account_metadata',
+        'order_reference_context',
+      ],
+    },
+    metadata: {
+      endpointConfigured: true,
+      accountAddressConfigured: true,
+    },
+    ...overrides,
+  };
+}
+
+export function createVenueInventorySummary(
+  overrides: Partial<VenueInventorySummaryView> = {},
+): VenueInventorySummaryView {
+  return {
+    totalVenues: 3,
+    simulatedOnly: 2,
+    realReadOnly: 1,
+    realExecutionCapable: 0,
+    derivativeAware: 1,
+    genericWallet: 0,
+    capacityOnly: 0,
+    approvedForLiveUse: 0,
+    degraded: 0,
+    unavailable: 0,
+    stale: 0,
+    missingPrerequisites: 0,
+    ...overrides,
+  };
+}
+
+export function createVenueTruthSummary(
+  overrides: Partial<VenueTruthSummaryView> = {},
+): VenueTruthSummaryView {
+  return {
+    totalVenues: 3,
+    derivativeAwareVenues: 1,
+    genericWalletVenues: 0,
+    capacityOnlyVenues: 0,
+    completeSnapshots: 0,
+    partialSnapshots: 2,
+    minimalSnapshots: 1,
+    accountState: {
+      available: 1,
+      partial: 0,
+      unsupported: 2,
+    },
+    balanceState: {
+      available: 1,
+      partial: 0,
+      unsupported: 2,
+    },
+    capacityState: {
+      available: 0,
+      partial: 0,
+      unsupported: 3,
+    },
+    exposureState: {
+      available: 1,
+      partial: 0,
+      unsupported: 2,
+    },
+    derivativeAccountState: {
+      available: 0,
+      partial: 1,
+      unsupported: 2,
+    },
+    derivativePositionState: {
+      available: 0,
+      partial: 0,
+      unsupported: 3,
+    },
+    derivativeHealthState: {
+      available: 0,
+      partial: 0,
+      unsupported: 3,
+    },
+    orderState: {
+      available: 0,
+      partial: 1,
+      unsupported: 2,
+    },
+    executionReferences: {
+      available: 1,
+      partial: 0,
+      unsupported: 2,
+    },
+    ...overrides,
+  };
+}
+
+export function createVenueDetail(
+  overrides: Partial<VenueDetailView> = {},
+): VenueDetailView {
+  return {
+    venue: createVenueInventoryItem(),
+    snapshots: [
+      {
+        id: 'venue-snapshot-1',
+        venueId: 'drift-solana-readonly',
+        venueName: 'Drift Solana Read-Only',
+        connectorType: 'solana_rpc_readonly',
+        sleeveApplicability: ['carry'],
+        truthMode: 'real',
+        readOnlySupport: true,
+        executionSupport: false,
+        approvedForLiveUse: false,
+        onboardingState: 'read_only',
+        missingPrerequisites: [],
+        authRequirementsSummary: ['DRIFT_RPC_ENDPOINT', 'DRIFT_READONLY_ACCOUNT_ADDRESS'],
+        healthy: true,
+        healthState: 'healthy',
+        degradedReason: null,
+        truthProfile: 'derivative_aware',
+        snapshotType: 'solana_rpc_account_state',
+        snapshotSuccessful: true,
+        snapshotSummary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+        snapshotPayload: {
+          balanceSol: '12.000000000',
+        },
+        errorMessage: null,
+        capturedAt: '2026-03-20T12:01:00.000Z',
+        snapshotCompleteness: 'partial',
+        truthCoverage: createVenueInventoryItem().truthCoverage,
+        sourceMetadata: createVenueInventoryItem().sourceMetadata,
+        accountState: {
+          accountAddress: 'readonly-account',
+          accountLabel: 'Treasury observation wallet',
+          accountExists: true,
+          ownerProgram: '11111111111111111111111111111111',
+          executable: false,
+          lamports: '12000000000',
+          nativeBalanceDisplay: '12.000000000',
+          observedSlot: '123',
+          rentEpoch: '0',
+          dataLength: 0,
+        },
+        balanceState: {
+          balances: [{
+            assetKey: 'SOL',
+            assetSymbol: 'SOL',
+            assetType: 'native',
+            accountAddress: 'readonly-account',
+            amountAtomic: '12000000000',
+            amountDisplay: '12.000000000',
+            decimals: 9,
+            observedSlot: '123',
+          }],
+          totalTrackedBalances: 1,
+          observedSlot: '123',
+        },
+        capacityState: null,
+        exposureState: {
+          exposures: [{
+            exposureKey: 'SOL:readonly-account',
+            exposureType: 'balance_derived_spot',
+            assetKey: 'SOL',
+            quantity: '12000000000',
+            quantityDisplay: '12.000000000',
+            accountAddress: 'readonly-account',
+          }],
+          methodology: 'balance_derived_spot_exposure',
+        },
+        derivativeAccountState: {
+          venue: 'drift-solana-readonly',
+          accountAddress: 'readonly-account',
+          accountLabel: 'Treasury observation wallet',
+          accountExists: true,
+          ownerProgram: 'drift-program',
+          accountModel: 'program_account',
+          venueAccountType: null,
+          decoded: false,
+          authorityAddress: null,
+          subaccountId: null,
+          observedSlot: '123',
+          rpcVersion: '1.18.0',
+          dataLength: 512,
+          rawDiscriminatorHex: '0102030405060708',
+          notes: [
+            'Program-owned account metadata was captured from raw RPC.',
+            'Venue-native decode is unavailable in the current repo because no Drift or Anchor decoder is present.',
+          ],
+        },
+        derivativePositionState: null,
+        derivativeHealthState: null,
+        orderState: {
+          openOrderCount: null,
+          openOrders: [{
+            venueOrderId: null,
+            reference: 'sig-fixture-1',
+            marketKey: null,
+            marketSymbol: null,
+            side: 'unknown',
+            status: 'confirmed',
+            orderType: null,
+            price: null,
+            quantity: null,
+            reduceOnly: null,
+            accountAddress: 'readonly-account',
+            slot: '123',
+            placedAt: '2026-03-20T12:00:30.000Z',
+            metadata: {
+              referenceOnly: true,
+            },
+          }],
+          referenceMode: 'recent_account_signatures',
+          methodology: 'recent_account_signatures_reference_context',
+          notes: [
+            'This section is reference-only context derived from recent account signatures.',
+            'It is not a venue-native open-orders decode and may include non-order transactions.',
+          ],
+        },
+        executionReferenceState: {
+          referenceLookbackLimit: 10,
+          references: [{
+            referenceType: 'solana_signature',
+            reference: 'sig-fixture-1',
+            accountAddress: 'readonly-account',
+            slot: '123',
+            blockTime: '2026-03-20T12:00:30.000Z',
+            confirmationStatus: 'confirmed',
+            errored: false,
+            memo: null,
+          }],
+          oldestReferenceAt: '2026-03-20T12:00:30.000Z',
+        },
+        metadata: {},
+      },
+    ],
     ...overrides,
   };
 }

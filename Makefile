@@ -52,14 +52,14 @@ dev-api: ## Start the API in watch mode
 .PHONY: build
 build: ## Build all packages and apps
 	@echo "$(GREEN)→ Building all packages…$(RESET)"
-	pnpm turbo run build
+	pnpm build
 
 ##@ Quality
 
 .PHONY: test
 test: ## Run all tests
 	@echo "$(GREEN)→ Running tests…$(RESET)"
-	pnpm turbo run test
+	pnpm test
 
 .PHONY: test-watch
 test-watch: ## Run tests in watch mode
@@ -68,7 +68,7 @@ test-watch: ## Run tests in watch mode
 .PHONY: lint
 lint: ## Lint all source files
 	@echo "$(GREEN)→ Linting…$(RESET)"
-	pnpm turbo run lint
+	pnpm lint
 
 .PHONY: lint-fix
 lint-fix: ## Lint and auto-fix all source files
@@ -77,7 +77,22 @@ lint-fix: ## Lint and auto-fix all source files
 .PHONY: typecheck
 typecheck: ## Run TypeScript type checking across all packages
 	@echo "$(GREEN)→ Type checking…$(RESET)"
-	pnpm turbo run typecheck
+	pnpm typecheck
+
+.PHONY: validate
+validate: ## Run the canonical local validation flow
+	@echo "$(GREEN)→ Running canonical validation…$(RESET)"
+	pnpm validate
+
+.PHONY: validate-ci
+validate-ci: ## Run the canonical CI validation flow
+	@echo "$(GREEN)→ Running CI validation…$(RESET)"
+	pnpm validate:ci
+
+.PHONY: release-check
+release-check: ## Run the release-readiness validation gate
+	@echo "$(GREEN)→ Running release readiness checks…$(RESET)"
+	pnpm release:check
 
 .PHONY: format
 format: ## Format all files with Prettier

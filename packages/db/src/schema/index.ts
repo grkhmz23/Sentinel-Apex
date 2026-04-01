@@ -6,6 +6,10 @@ export { auditEvents } from './audit.js';
 
 export {
   allocatorCurrent,
+  allocatorRebalanceBundleEscalationEvents,
+  allocatorRebalanceBundleEscalations,
+  allocatorRebalanceBundleRecoveryActions,
+  allocatorRebalanceBundleResolutionActions,
   allocatorRebalanceBundles,
   allocatorRebalanceCurrent,
   allocatorRebalanceExecutions,
@@ -37,6 +41,7 @@ export {
   runtimeReconciliationFindings,
   runtimeReconciliationRuns,
   runtimeRecoveryEvents,
+  venueConnectorSnapshots,
   riskCurrent,
   riskSnapshots,
   runtimeState,

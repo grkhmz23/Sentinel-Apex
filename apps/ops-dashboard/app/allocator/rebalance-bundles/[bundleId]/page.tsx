@@ -11,6 +11,9 @@ import { DefinitionList } from '../../../../src/components/definition-list';
 import { EmptyState } from '../../../../src/components/empty-state';
 import { ErrorState } from '../../../../src/components/error-state';
 import { Panel } from '../../../../src/components/panel';
+import { RebalanceBundleEscalationActions } from '../../../../src/components/rebalance-bundle-escalation-actions';
+import { RebalanceBundleRecoveryActions } from '../../../../src/components/rebalance-bundle-recovery-actions';
+import { RebalanceBundleResolutionActions } from '../../../../src/components/rebalance-bundle-resolution-actions';
 import { StatusBadge } from '../../../../src/components/status-badge';
 import { requireDashboardSession } from '../../../../src/lib/auth.server';
 import { formatDateTime } from '../../../../src/lib/format';
@@ -42,6 +45,7 @@ export default async function RebalanceBundlePage(
           <div>
             <p className="eyebrow">Sentinel</p>
             <h1>Rebalance Bundle Detail</h1>
+            <p className="panel__hint"><Link href="/allocator/escalations">Back to escalations queue</Link></p>
           </div>
         </header>
 
@@ -58,10 +62,14 @@ export default async function RebalanceBundlePage(
                 { label: 'Recommendation', value: bundle.bundle.interventionRecommendation },
                 { label: 'Completion state', value: bundle.bundle.completionState },
                 { label: 'Finalized', value: bundle.bundle.finalizedAt === null ? 'Not finalized' : formatDateTime(bundle.bundle.finalizedAt) },
+                { label: 'Resolution state', value: bundle.bundle.resolutionState },
+                { label: 'Resolved at', value: bundle.bundle.resolvedAt === null ? 'Not resolved' : formatDateTime(bundle.bundle.resolvedAt) },
+                { label: 'Escalation status', value: bundle.bundle.escalationStatus ?? 'No escalation workflow' },
+                { label: 'Escalation owner', value: bundle.bundle.escalationOwnerId ?? 'Unassigned' },
               ]}
             />
             <p className="panel__hint">
-              {bundle.bundle.finalizationReason ?? 'This bundle remains open until downstream sleeve work reaches a terminal coordinated state.'}
+              {bundle.bundle.resolutionSummary ?? bundle.bundle.finalizationReason ?? 'This bundle remains open until downstream sleeve work reaches a terminal coordinated state.'}
             </p>
           </Panel>
         </div>
@@ -88,6 +96,191 @@ export default async function RebalanceBundlePage(
                 { label: 'Latest execution', value: graph.detail.proposal.latestExecutionId ?? 'Not executed' },
               ]}
             />
+          </Panel>
+        </div>
+
+        <div className="grid grid--two-column">
+          <Panel subtitle="Inspect-first summary of applied, retryable, and non-retryable child state" title="Partial Progress">
+            <DefinitionList
+              items={[
+                { label: 'Applied children', value: String(bundle.partialProgress.appliedChildren) },
+                { label: 'Progress recorded', value: String(bundle.partialProgress.progressRecordedChildren) },
+                { label: 'Retryable children', value: String(bundle.partialProgress.retryableChildren) },
+                { label: 'Non-retryable children', value: String(bundle.partialProgress.nonRetryableChildren) },
+                { label: 'Blocked before application', value: String(bundle.partialProgress.blockedBeforeApplicationChildren) },
+                { label: 'In flight', value: String(bundle.partialProgress.inflightChildren) },
+              ]}
+            />
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Child</th>
+                  <th>Progress</th>
+                  <th>Retryability</th>
+                  <th>Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bundle.partialProgress.children.map((child) => (
+                  <tr key={`${child.childType}:${child.childId}`}>
+                    <td>{child.childType} / {child.childId}</td>
+                    <td>{child.progressState}</td>
+                    <td>{child.retryability}</td>
+                    <td>{child.evidence[0] ?? 'No external or budget-state progress recorded.'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+
+          <Panel subtitle="Backend-computed recovery eligibility for proposal-linked child rails only" title="Recovery Candidates">
+            {bundle.recoveryCandidates.length === 0 ? (
+              <EmptyState message="No recovery candidates were computed for this bundle." title="No recovery candidates" />
+            ) : (
+              <RebalanceBundleRecoveryActions
+                bundleId={bundle.bundle.id}
+                candidates={bundle.recoveryCandidates}
+              />
+            )}
+          </Panel>
+
+          <Panel subtitle="Durable operator-triggered recovery attempts linked back to this bundle" title="Recovery History">
+            {bundle.recoveryActions.length === 0 ? (
+              <EmptyState message="No bundle recovery actions have been requested yet." title="No recovery history" />
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Requested</th>
+                    <th>Target</th>
+                    <th>Status</th>
+                    <th>Command</th>
+                    <th>Outcome</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bundle.recoveryActions.map((action) => (
+                    <tr key={action.id}>
+                      <td>{formatDateTime(action.requestedAt)}</td>
+                      <td>{action.targetChildType} / {action.targetChildId}</td>
+                      <td><StatusBadge label={action.status} tone={action.status === 'completed' ? 'good' : action.status === 'failed' || action.status === 'blocked' ? 'bad' : 'warn'} /></td>
+                      <td>{action.linkedCommandId ?? 'No command'}</td>
+                      <td>{action.outcomeSummary ?? action.lastError ?? 'Pending'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        </div>
+
+        <div className="grid grid--two-column">
+          <Panel subtitle="Ownership and follow-up state for escalated bundles" title="Escalation Ownership">
+            {bundle.escalation === null ? (
+              <EmptyState message="No escalation workflow record exists for this bundle." title="No escalation" />
+            ) : (
+              <DefinitionList
+                items={[
+                  { label: 'Status', value: bundle.escalation.status },
+                  { label: 'Owner', value: bundle.escalation.ownerId ?? 'Unassigned' },
+                  { label: 'Assigned by', value: bundle.escalation.assignedBy ?? 'Not assigned' },
+                  { label: 'Assigned at', value: bundle.escalation.assignedAt === null ? 'Not assigned' : formatDateTime(bundle.escalation.assignedAt) },
+                  { label: 'Acknowledged at', value: bundle.escalation.acknowledgedAt === null ? 'Not acknowledged' : formatDateTime(bundle.escalation.acknowledgedAt) },
+                  { label: 'Due at', value: bundle.escalation.dueAt === null ? 'No follow-up target' : formatDateTime(bundle.escalation.dueAt) },
+                  { label: 'Closed at', value: bundle.escalation.closedAt === null ? 'Still open' : formatDateTime(bundle.escalation.closedAt) },
+                ]}
+              />
+            )}
+            <p className="panel__hint">
+              {bundle.escalation?.handoffNote
+                ?? bundle.escalation?.reviewNote
+                ?? bundle.escalation?.resolutionNote
+                ?? 'Escalation workflow remains a process overlay and does not change bundle execution truth.'}
+            </p>
+          </Panel>
+
+          <Panel subtitle="Explicit handoff, acknowledgement, review, and close actions" title="Escalation Workflow">
+            {bundle.escalationTransitions.length === 0 ? (
+              <EmptyState message="No escalation transitions were computed for this bundle." title="No escalation actions" />
+            ) : (
+              <RebalanceBundleEscalationActions
+                bundleId={bundle.bundle.id}
+                escalation={bundle.escalation}
+                transitions={bundle.escalationTransitions}
+              />
+            )}
+          </Panel>
+        </div>
+
+        <div className="grid grid--two-column">
+          <Panel subtitle="Explicit operator closure paths for partial or non-retryable bundle outcomes" title="Resolution Options">
+            {bundle.resolutionOptions.length === 0 ? (
+              <EmptyState message="No manual resolution options were computed for this bundle." title="No resolution options" />
+            ) : (
+              <RebalanceBundleResolutionActions
+                bundleId={bundle.bundle.id}
+                options={bundle.resolutionOptions}
+                history={bundle.resolutionActions}
+              />
+            )}
+          </Panel>
+
+          <Panel subtitle="Durable escalation handoff and review history" title="Escalation History">
+            {bundle.escalationHistory.length === 0 ? (
+              <EmptyState message="No escalation workflow events have been recorded yet." title="No escalation history" />
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>At</th>
+                    <th>Event</th>
+                    <th>Actor</th>
+                    <th>Owner</th>
+                    <th>Note</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bundle.escalationHistory.map((event) => (
+                    <tr key={event.id}>
+                      <td>{formatDateTime(event.createdAt)}</td>
+                      <td>{event.eventType} / {event.toStatus}</td>
+                      <td>{event.actorId}</td>
+                      <td>{event.ownerId ?? 'Unassigned'}</td>
+                      <td>{event.note ?? 'No note'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+
+          <Panel subtitle="Durable operator manual closure and escalation history" title="Resolution History">
+            {bundle.resolutionActions.length === 0 ? (
+              <EmptyState message="No manual bundle resolution actions have been recorded yet." title="No resolution history" />
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Requested</th>
+                    <th>Action</th>
+                    <th>Status</th>
+                    <th>Resolution</th>
+                    <th>Note</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bundle.resolutionActions.map((action) => (
+                    <tr key={action.id}>
+                      <td>{formatDateTime(action.requestedAt)}</td>
+                      <td>{action.resolutionActionType}</td>
+                      <td><StatusBadge label={action.status} tone={action.status === 'completed' ? 'good' : action.status === 'blocked' ? 'bad' : 'warn'} /></td>
+                      <td>{action.resolutionState}</td>
+                      <td>{action.note}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </Panel>
         </div>
 

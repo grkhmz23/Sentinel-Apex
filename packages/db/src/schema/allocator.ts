@@ -211,13 +211,174 @@ export const allocatorRebalanceBundles = pgTable(
     childRollup: jsonb('child_rollup').notNull().default({}),
     finalizationReason: text('finalization_reason'),
     finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+    resolutionState: text('resolution_state').notNull().default('unresolved'),
+    latestResolutionActionId: uuid('latest_resolution_action_id'),
+    resolutionSummary: text('resolution_summary'),
+    resolvedBy: text('resolved_by'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    latestEscalationId: uuid('latest_escalation_id'),
+    escalationStatus: text('escalation_status'),
+    escalationOwnerId: text('escalation_owner_id'),
+    escalationAssignedAt: timestamp('escalation_assigned_at', { withTimezone: true }),
+    escalationDueAt: timestamp('escalation_due_at', { withTimezone: true }),
+    escalationSummary: text('escalation_summary'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     proposalIdIdx: index('allocator_rebalance_bundles_proposal_id_idx').on(t.proposalId),
     statusIdx: index('allocator_rebalance_bundles_status_idx').on(t.status),
+    resolutionStateIdx: index('allocator_rebalance_bundles_resolution_state_idx').on(t.resolutionState),
+    escalationStatusIdx: index('allocator_rebalance_bundles_escalation_status_idx').on(t.escalationStatus),
     createdAtIdx: index('allocator_rebalance_bundles_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const allocatorRebalanceBundleRecoveryActions = pgTable(
+  'allocator_rebalance_bundle_recovery_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    bundleId: uuid('bundle_id')
+      .notNull()
+      .references(() => allocatorRebalanceBundles.id),
+    proposalId: uuid('proposal_id')
+      .notNull()
+      .references(() => allocatorRebalanceProposals.id),
+    recoveryActionType: text('recovery_action_type').notNull(),
+    targetChildType: text('target_child_type').notNull(),
+    targetChildId: text('target_child_id').notNull(),
+    targetChildStatus: text('target_child_status').notNull(),
+    targetChildSummary: text('target_child_summary').notNull(),
+    eligibilityState: text('eligibility_state').notNull().default('blocked'),
+    blockedReasons: jsonb('blocked_reasons').notNull().default([]),
+    approvalRequirement: text('approval_requirement').notNull().default('operator'),
+    status: text('status').notNull().default('requested'),
+    requestedBy: text('requested_by').notNull(),
+    note: text('note'),
+    linkedCommandId: text('linked_command_id'),
+    targetCommandType: text('target_command_type'),
+    linkedCarryActionId: uuid('linked_carry_action_id'),
+    linkedTreasuryActionId: uuid('linked_treasury_action_id'),
+    outcomeSummary: text('outcome_summary'),
+    outcome: jsonb('outcome').notNull().default({}),
+    lastError: text('last_error'),
+    executionMode: text('execution_mode').notNull().default('dry-run'),
+    simulated: boolean('simulated').notNull().default(true),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    queuedAt: timestamp('queued_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    bundleIdIdx: index('allocator_rebalance_bundle_recovery_actions_bundle_id_idx').on(t.bundleId),
+    proposalIdIdx: index('allocator_rebalance_bundle_recovery_actions_proposal_id_idx').on(t.proposalId),
+    statusIdx: index('allocator_rebalance_bundle_recovery_actions_status_idx').on(t.status),
+    targetChildIdx: index('allocator_rebalance_bundle_recovery_actions_target_child_idx').on(
+      t.targetChildType,
+      t.targetChildId,
+    ),
+    requestedAtIdx: index('allocator_rebalance_bundle_recovery_actions_requested_at_idx').on(t.requestedAt),
+    linkedCommandIdx: index('allocator_rebalance_bundle_recovery_actions_linked_command_id_idx').on(t.linkedCommandId),
+  }),
+);
+
+export const allocatorRebalanceBundleResolutionActions = pgTable(
+  'allocator_rebalance_bundle_resolution_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    bundleId: uuid('bundle_id')
+      .notNull()
+      .references(() => allocatorRebalanceBundles.id),
+    proposalId: uuid('proposal_id')
+      .notNull()
+      .references(() => allocatorRebalanceProposals.id),
+    resolutionActionType: text('resolution_action_type').notNull(),
+    status: text('status').notNull().default('completed'),
+    resolutionState: text('resolution_state').notNull().default('unresolved'),
+    note: text('note').notNull(),
+    acknowledgedPartialApplication: boolean('acknowledged_partial_application').notNull().default(false),
+    escalated: boolean('escalated').notNull().default(false),
+    affectedChildSummary: jsonb('affected_child_summary').notNull().default({}),
+    linkedRecoveryActionIds: jsonb('linked_recovery_action_ids').notNull().default([]),
+    blockedReasons: jsonb('blocked_reasons').notNull().default([]),
+    outcomeSummary: text('outcome_summary'),
+    requestedBy: text('requested_by').notNull(),
+    completedBy: text('completed_by'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    bundleIdIdx: index('allocator_rebalance_bundle_resolution_actions_bundle_id_idx').on(t.bundleId),
+    proposalIdIdx: index('allocator_rebalance_bundle_resolution_actions_proposal_id_idx').on(t.proposalId),
+    resolutionStateIdx: index('allocator_rebalance_bundle_resolution_actions_resolution_state_idx').on(t.resolutionState),
+    statusIdx: index('allocator_rebalance_bundle_resolution_actions_status_idx').on(t.status),
+    requestedAtIdx: index('allocator_rebalance_bundle_resolution_actions_requested_at_idx').on(t.requestedAt),
+  }),
+);
+
+export const allocatorRebalanceBundleEscalations = pgTable(
+  'allocator_rebalance_bundle_escalations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    bundleId: uuid('bundle_id')
+      .notNull()
+      .references(() => allocatorRebalanceBundles.id),
+    proposalId: uuid('proposal_id')
+      .notNull()
+      .references(() => allocatorRebalanceProposals.id),
+    sourceResolutionActionId: uuid('source_resolution_action_id'),
+    status: text('status').notNull().default('open'),
+    ownerId: text('owner_id'),
+    assignedBy: text('assigned_by'),
+    assignedAt: timestamp('assigned_at', { withTimezone: true }),
+    acknowledgedBy: text('acknowledged_by'),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    handoffNote: text('handoff_note'),
+    reviewNote: text('review_note'),
+    resolutionNote: text('resolution_note'),
+    closedBy: text('closed_by'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    bundleIdIdx: index('allocator_rebalance_bundle_escalations_bundle_id_idx').on(t.bundleId),
+    proposalIdIdx: index('allocator_rebalance_bundle_escalations_proposal_id_idx').on(t.proposalId),
+    statusIdx: index('allocator_rebalance_bundle_escalations_status_idx').on(t.status),
+    createdAtIdx: index('allocator_rebalance_bundle_escalations_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const allocatorRebalanceBundleEscalationEvents = pgTable(
+  'allocator_rebalance_bundle_escalation_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    escalationId: uuid('escalation_id')
+      .notNull()
+      .references(() => allocatorRebalanceBundleEscalations.id),
+    bundleId: uuid('bundle_id')
+      .notNull()
+      .references(() => allocatorRebalanceBundles.id),
+    proposalId: uuid('proposal_id')
+      .notNull()
+      .references(() => allocatorRebalanceProposals.id),
+    eventType: text('event_type').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status').notNull(),
+    actorId: text('actor_id').notNull(),
+    ownerId: text('owner_id'),
+    note: text('note'),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    escalationIdIdx: index('allocator_rebalance_bundle_escalation_events_escalation_id_idx').on(t.escalationId),
+    bundleIdIdx: index('allocator_rebalance_bundle_escalation_events_bundle_id_idx').on(t.bundleId),
+    proposalIdIdx: index('allocator_rebalance_bundle_escalation_events_proposal_id_idx').on(t.proposalId),
+    createdAtIdx: index('allocator_rebalance_bundle_escalation_events_created_at_idx').on(t.createdAt),
   }),
 );
 

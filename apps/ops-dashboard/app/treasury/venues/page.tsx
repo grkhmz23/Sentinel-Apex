@@ -59,6 +59,7 @@ export default async function TreasuryVenuesPage(): Promise<JSX.Element> {
                       <div className="stack stack--compact">
                         <Link href={`/treasury/venues/${venue.venueId}`}>{venue.venueName}</Link>
                         <span className="panel__hint">{venue.readinessLabel}</span>
+                        <Link href={`/venues/${venue.venueId}`}>Global venue detail</Link>
                       </div>
                     </td>
                     <td><StatusBadge label={venue.simulationState} tone={treasuryModeTone(venue.venueMode)} /></td>

@@ -9,6 +9,7 @@ module.exports = {
     sourceType: 'module',
     project: ['./tsconfig.json', './apps/*/tsconfig.json', './packages/*/tsconfig.json'],
     tsconfigRootDir: __dirname,
+    warnOnUnsupportedTypeScriptVersion: false,
   },
   plugins: ['@typescript-eslint', 'import'],
   extends: [
@@ -137,6 +138,7 @@ module.exports = {
     ],
     'import/no-duplicates': 'error',
     'import/no-cycle': ['error', { maxDepth: 5 }],
+    'import/no-named-as-default': 'off',
     'import/no-self-import': 'error',
     'import/first': 'error',
     'import/newline-after-import': 'error',

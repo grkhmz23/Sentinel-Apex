@@ -139,6 +139,177 @@ export async function rejectRebalanceProposal(proposalId: string, reason: string
   return payload.data;
 }
 
+export async function requestRebalanceBundleRecoveryAction(input: {
+  bundleId: string;
+  recoveryActionType: 'requeue_child_execution';
+  targetChildType: 'carry_action' | 'treasury_action' | 'rebalance_proposal';
+  targetChildId: string;
+  note?: string;
+}): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-bundles/${input.bundleId}/recovery-actions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      recoveryActionType: input.recoveryActionType,
+      targetChildType: input.targetChildType,
+      targetChildId: input.targetChildId,
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function requestRebalanceBundleResolutionAction(input: {
+  bundleId: string;
+  resolutionActionType:
+    | 'accept_partial_application'
+    | 'mark_bundle_manually_resolved'
+    | 'escalate_bundle_for_review';
+  note: string;
+}): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-bundles/${input.bundleId}/resolution-actions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      resolutionActionType: input.resolutionActionType,
+      note: input.note,
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function assignRebalanceBundleEscalation(input: {
+  bundleId: string;
+  ownerId: string;
+  note: string;
+  dueAt?: string;
+}): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-bundles/${input.bundleId}/escalation/assign`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      ownerId: input.ownerId,
+      note: input.note,
+      ...(input.dueAt !== undefined ? { dueAt: input.dueAt } : {}),
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function acknowledgeRebalanceBundleEscalation(input: {
+  bundleId: string;
+  note?: string;
+}): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-bundles/${input.bundleId}/escalation/acknowledge`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function startRebalanceBundleEscalationReview(input: {
+  bundleId: string;
+  note?: string;
+}): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-bundles/${input.bundleId}/escalation/start-review`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function closeRebalanceBundleEscalation(input: {
+  bundleId: string;
+  note: string;
+}): Promise<unknown> {
+  const response = await fetch(`/api/allocator/rebalance-bundles/${input.bundleId}/escalation/close`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      note: input.note,
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: unknown;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
 export async function triggerTreasuryEvaluation(): Promise<unknown> {
   const response = await fetch('/api/treasury/evaluate', {
     method: 'POST',

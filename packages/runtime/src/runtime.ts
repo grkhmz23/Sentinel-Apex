@@ -46,6 +46,7 @@ import {
   type TreasuryVenueSnapshot,
 } from '@sentinel-apex/treasury';
 import {
+  SolanaRpcReadonlyTruthAdapter,
   SimulatedVenueAdapter,
   SimulatedTreasuryVenueAdapter,
   type SimulatedVenueConfig,
@@ -53,7 +54,10 @@ import {
   type TreasuryVenueAdapter,
   type TreasuryVenueCapabilities,
   type VenueAdapter,
+  type VenueCapabilitySnapshot,
   type VenuePosition,
+  type VenueTruthAdapter,
+  type VenueTruthSnapshot,
 } from '@sentinel-apex/venue-adapters';
 
 import { RuntimeHealthMonitor } from './health-monitor.js';
@@ -83,6 +87,12 @@ import type {
   RuntimeCycleOutcome,
   RuntimeStatusView,
   TreasurySummaryView,
+  VenueDetailView,
+  VenueInventoryItemView,
+  VenueInventorySummaryView,
+  VenueSnapshotView,
+  VenueTruthProfile,
+  VenueTruthSummaryView,
 } from './types.js';
 
 function severityForRiskStatus(status: string): string {
@@ -166,6 +176,32 @@ function normaliseCarryOpportunityScore(opportunities: OpportunityView[]): numbe
   return Number((scored.reduce((sum, value) => sum + value, 0) / scored.length).toFixed(4));
 }
 
+function deriveVenueTruthProfile(snapshot: VenueTruthSnapshot): VenueTruthProfile {
+  if (
+    snapshot.truthCoverage.derivativeAccountState.status !== 'unsupported'
+    || snapshot.truthCoverage.derivativePositionState.status !== 'unsupported'
+    || snapshot.truthCoverage.derivativeHealthState.status !== 'unsupported'
+    || snapshot.truthCoverage.orderState.status !== 'unsupported'
+  ) {
+    return 'derivative_aware';
+  }
+
+  if (snapshot.truthCoverage.capacityState.status === 'available') {
+    return 'capacity_only';
+  }
+
+  if (
+    snapshot.truthCoverage.accountState.status === 'available'
+    || snapshot.truthCoverage.balanceState.status === 'available'
+    || snapshot.truthCoverage.exposureState.status === 'available'
+    || snapshot.truthCoverage.executionReferences.status === 'available'
+  ) {
+    return 'generic_wallet';
+  }
+
+  return 'minimal';
+}
+
 export interface DeterministicRuntimeScenario {
   sleeveId?: string;
   executionMode?: 'dry-run' | 'live';
@@ -176,6 +212,7 @@ export interface DeterministicRuntimeScenario {
   pipelineConfig?: Partial<PipelineConfig>;
   venues?: SimulatedVenueConfig[];
   treasuryVenues?: SimulatedTreasuryVenueConfig[];
+  truthAdapters?: VenueTruthAdapter[];
 }
 
 export interface SentinelRuntimeOptions {
@@ -187,6 +224,7 @@ export interface SentinelRuntimeOptions {
   riskLimits: RiskLimits;
   adapters: Map<string, VenueAdapter>;
   treasuryAdapters: Map<string, TreasuryVenueAdapter>;
+  truthAdapters: Map<string, VenueTruthAdapter>;
   treasuryPolicyEngine: TreasuryPolicyEngine;
   treasuryExecutionPlanner: TreasuryExecutionPlanner;
   treasuryPolicy: TreasuryPolicy;
@@ -211,6 +249,7 @@ export class SentinelRuntime {
     this.reconciliationEngine = new RuntimeReconciliationEngine(
       this.options.store,
       this.options.adapters,
+      this.options.truthAdapters,
       this.options.logger,
     );
   }
@@ -276,6 +315,29 @@ export class SentinelRuntime {
     for (const venue of defaultTreasuryVenues) {
       const adapter = new SimulatedTreasuryVenueAdapter(venue);
       treasuryAdapters.set(venue.venueId, adapter);
+    }
+    const truthAdapters = new Map<string, VenueTruthAdapter>();
+    for (const adapter of overrides.truthAdapters ?? []) {
+      truthAdapters.set(adapter.venueId, adapter);
+    }
+    const driftRpcEndpoint = process.env['DRIFT_RPC_ENDPOINT'];
+    if (
+      !truthAdapters.has('drift-solana-readonly')
+      && driftRpcEndpoint !== undefined
+      && driftRpcEndpoint !== ''
+    ) {
+      const adapter = new SolanaRpcReadonlyTruthAdapter({
+        venueId: 'drift-solana-readonly',
+        venueName: 'Drift Solana Read-Only',
+        rpcEndpoint: driftRpcEndpoint,
+        ...(process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] === undefined
+          ? {}
+          : { accountAddress: process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] }),
+        ...(process.env['DRIFT_READONLY_ACCOUNT_LABEL'] === undefined
+          ? {}
+          : { accountLabel: process.env['DRIFT_READONLY_ACCOUNT_LABEL'] }),
+      });
+      truthAdapters.set(adapter.venueId, adapter);
     }
 
     const connection = await createDatabaseConnection(connectionString);
@@ -345,6 +407,7 @@ export class SentinelRuntime {
       riskLimits: effectiveRiskLimits,
       adapters,
       treasuryAdapters,
+      truthAdapters,
       treasuryPolicyEngine: new TreasuryPolicyEngine(),
       treasuryExecutionPlanner: new TreasuryExecutionPlanner(),
       treasuryPolicy,
@@ -386,6 +449,11 @@ export class SentinelRuntime {
       }
     }
     for (const adapter of this.options.treasuryAdapters.values()) {
+      if (!adapter.isConnected()) {
+        await adapter.connect();
+      }
+    }
+    for (const adapter of this.options.truthAdapters.values()) {
       if (!adapter.isConnected()) {
         await adapter.connect();
       }
@@ -622,6 +690,7 @@ export class SentinelRuntime {
 
       const latestPositions = await this.collectPositions();
       await this.options.store.syncPositions(latestPositions);
+      await this.refreshVenueTruthInventory();
 
       await this.options.store.completeStrategyRun({
         runId,
@@ -814,6 +883,30 @@ export class SentinelRuntime {
     return this.options.store.listCarryVenues(limit);
   }
 
+  async listVenues(limit = 100): Promise<VenueInventoryItemView[]> {
+    return this.options.store.listVenues(limit);
+  }
+
+  async getVenue(venueId: string): Promise<VenueDetailView | null> {
+    return this.options.store.getVenue(venueId);
+  }
+
+  async listVenueSnapshots(venueId: string, limit = 20): Promise<VenueSnapshotView[]> {
+    return this.options.store.listVenueSnapshots(venueId, limit);
+  }
+
+  async getVenueSummary(): Promise<VenueInventorySummaryView> {
+    return this.options.store.getVenueSummary();
+  }
+
+  async getVenueTruthSummary(): Promise<VenueTruthSummaryView> {
+    return this.options.store.getVenueTruthSummary();
+  }
+
+  async listVenueReadiness(limit = 100): Promise<VenueInventoryItemView[]> {
+    return this.options.store.listVenueReadiness(limit);
+  }
+
   private async collectCarryVenueViews(
     strategyRunId: string | null,
   ): Promise<Array<{
@@ -875,6 +968,389 @@ export class SentinelRuntime {
     return views;
   }
 
+  private async refreshVenueTruthInventory(): Promise<void> {
+    const snapshots = await this.collectVenueTruthSnapshots();
+    await this.options.store.persistVenueConnectorSnapshots({ snapshots });
+  }
+
+  private async collectVenueTruthSnapshots(): Promise<VenueSnapshotView[]> {
+    const snapshots: VenueSnapshotView[] = [];
+
+    for (const adapter of this.options.adapters.values()) {
+      const capability = await this.collectVenueCapabilityForCarryAdapter(adapter);
+      const snapshot = await this.collectVenueTruthForCarryAdapter(adapter);
+      snapshots.push(this.composeVenueSnapshot(capability, snapshot));
+    }
+
+    for (const adapter of this.options.treasuryAdapters.values()) {
+      const capability = await this.collectVenueCapabilityForTreasuryAdapter(adapter);
+      const snapshot = await this.collectVenueTruthForTreasuryAdapter(adapter);
+      snapshots.push(this.composeVenueSnapshot(capability, snapshot));
+    }
+
+    for (const adapter of this.options.truthAdapters.values()) {
+      const [capability, snapshot] = await Promise.all([
+        adapter.getVenueCapabilitySnapshot(),
+        adapter.getVenueTruthSnapshot(),
+      ]);
+      snapshots.push(this.composeVenueSnapshot(capability, snapshot));
+    }
+
+    return snapshots;
+  }
+
+  private composeVenueSnapshot(
+    capability: VenueCapabilitySnapshot,
+    snapshot: VenueTruthSnapshot,
+  ): VenueSnapshotView {
+    return {
+      id: createId(),
+      venueId: capability.venueId,
+      venueName: capability.venueName,
+      connectorType: capability.connectorType,
+      sleeveApplicability: capability.sleeveApplicability,
+      truthMode: capability.truthMode,
+      readOnlySupport: capability.readOnlySupport,
+      executionSupport: capability.executionSupport,
+      approvedForLiveUse: capability.approvedForLiveUse,
+      onboardingState: capability.onboardingState,
+      missingPrerequisites: capability.missingPrerequisites,
+      authRequirementsSummary: capability.authRequirementsSummary,
+      healthy: snapshot.healthy && capability.healthy,
+      healthState: snapshot.healthState,
+      degradedReason: snapshot.errorMessage ?? capability.degradedReason,
+      truthProfile: deriveVenueTruthProfile(snapshot),
+      snapshotType: snapshot.snapshotType,
+      snapshotSuccessful: snapshot.snapshotSuccessful,
+      snapshotSummary: snapshot.summary,
+      snapshotPayload: snapshot.payload,
+      errorMessage: snapshot.errorMessage,
+      capturedAt: snapshot.capturedAt,
+      snapshotCompleteness: snapshot.snapshotCompleteness,
+      truthCoverage: snapshot.truthCoverage,
+      sourceMetadata: snapshot.sourceMetadata,
+      accountState: snapshot.accountState,
+      balanceState: snapshot.balanceState,
+      capacityState: snapshot.capacityState,
+      exposureState: snapshot.exposureState,
+      derivativeAccountState: snapshot.derivativeAccountState,
+      derivativePositionState: snapshot.derivativePositionState,
+      derivativeHealthState: snapshot.derivativeHealthState,
+      orderState: snapshot.orderState,
+      executionReferenceState: snapshot.executionReferenceState,
+      metadata: {
+        ...capability.metadata,
+        ...snapshot.metadata,
+      },
+    };
+  }
+
+  private async collectVenueCapabilityForCarryAdapter(adapter: VenueAdapter): Promise<VenueCapabilitySnapshot> {
+    if (typeof adapter.getVenueCapabilitySnapshot === 'function') {
+      return adapter.getVenueCapabilitySnapshot();
+    }
+
+    const capabilities = typeof adapter.getCarryCapabilities === 'function'
+      ? await adapter.getCarryCapabilities()
+      : {
+        venueId: adapter.venueId,
+        venueMode: 'simulated' as const,
+        executionSupported: false,
+        supportsIncreaseExposure: false,
+        supportsReduceExposure: false,
+        readOnly: true,
+        approvedForLiveUse: false,
+        healthy: true,
+        onboardingState: 'read_only' as const,
+        missingPrerequisites: ['carry_controlled_execution_not_implemented'],
+        metadata: {
+          venueType: adapter.venueType,
+        },
+      };
+
+    return {
+      venueId: capabilities.venueId,
+      venueName: capabilities.venueId,
+      sleeveApplicability: ['carry'],
+      connectorType: 'carry_adapter',
+      truthMode: capabilities.venueMode === 'simulated' ? 'simulated' : 'real',
+      readOnlySupport: capabilities.readOnly,
+      executionSupport: capabilities.executionSupported,
+      approvedForLiveUse: capabilities.approvedForLiveUse,
+      onboardingState: capabilities.onboardingState,
+      missingPrerequisites: capabilities.missingPrerequisites,
+      authRequirementsSummary: [],
+      healthy: capabilities.healthy,
+      healthState: capabilities.healthy ? 'healthy' : 'degraded',
+      degradedReason: capabilities.healthy ? null : 'carry_adapter_reported_unhealthy',
+      metadata: capabilities.metadata,
+    };
+  }
+
+  private async collectVenueTruthForCarryAdapter(adapter: VenueAdapter): Promise<VenueTruthSnapshot> {
+    if (typeof adapter.getVenueTruthSnapshot === 'function') {
+      return adapter.getVenueTruthSnapshot();
+    }
+
+    const [balances, positions, status] = await Promise.all([
+      adapter.getBalances(),
+      adapter.getPositions(),
+      adapter.getStatus(),
+    ]);
+    return {
+      venueId: adapter.venueId,
+      venueName: adapter.venueId,
+      snapshotType: 'carry_adapter_account_state',
+      snapshotSuccessful: true,
+      healthy: status.healthy,
+      healthState: status.healthy ? 'healthy' : 'degraded',
+      summary: `${balances.length} balances and ${positions.length} positions observed.`,
+      errorMessage: null,
+      capturedAt: new Date().toISOString(),
+      snapshotCompleteness: 'complete',
+      truthCoverage: {
+        accountState: {
+          status: 'unsupported',
+          reason: 'Carry adapter truth does not expose a stable venue account identity.',
+          limitations: [],
+        },
+        balanceState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        capacityState: {
+          status: 'unsupported',
+          reason: 'Carry adapters do not expose treasury-style venue capacity.',
+          limitations: [],
+        },
+        exposureState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        derivativeAccountState: {
+          status: 'unsupported',
+          reason: 'Carry adapter truth does not decode venue-native derivative account metadata.',
+          limitations: [],
+        },
+        derivativePositionState: {
+          status: 'unsupported',
+          reason: 'Carry adapter truth exposes generic venue positions, not venue-native derivative state.',
+          limitations: [],
+        },
+        derivativeHealthState: {
+          status: 'unsupported',
+          reason: 'Carry adapter truth does not expose venue-native margin or health semantics.',
+          limitations: [],
+        },
+        orderState: {
+          status: 'unsupported',
+          reason: 'Carry adapter truth does not expose venue-native open-order state.',
+          limitations: [],
+        },
+        executionReferences: {
+          status: 'unsupported',
+          reason: 'Carry adapter truth does not expose external execution references.',
+          limitations: [],
+        },
+      },
+      sourceMetadata: {
+        sourceKind: 'adapter',
+        sourceName: 'carry_adapter',
+        observedScope: ['balances', 'positions', 'status'],
+      },
+      accountState: null,
+      balanceState: {
+        balances: balances.map((balance) => ({
+          assetKey: balance.asset,
+          assetSymbol: balance.asset,
+          assetType: 'unknown',
+          accountAddress: null,
+          amountAtomic: balance.total,
+          amountDisplay: balance.total,
+          decimals: null,
+          observedSlot: null,
+        })),
+        totalTrackedBalances: balances.length,
+        observedSlot: null,
+      },
+      capacityState: null,
+      exposureState: {
+        exposures: positions.map((position) => ({
+          exposureKey: `${position.asset}:${position.side}`,
+          exposureType: 'position',
+          assetKey: position.asset,
+          quantity: position.size,
+          quantityDisplay: position.size,
+          accountAddress: null,
+        })),
+        methodology: 'venue_positions',
+      },
+      derivativeAccountState: null,
+      derivativePositionState: null,
+      derivativeHealthState: null,
+      orderState: null,
+      executionReferenceState: null,
+      payload: {
+        balances: balances.map((balance) => ({
+          asset: balance.asset,
+          total: balance.total,
+          available: balance.available,
+          locked: balance.locked,
+          updatedAt: balance.updatedAt.toISOString(),
+        })),
+        positions: positions.map((position) => ({
+          asset: position.asset,
+          side: position.side,
+          size: position.size,
+          updatedAt: position.updatedAt.toISOString(),
+        })),
+        status,
+      },
+      metadata: {
+        venueType: adapter.venueType,
+      },
+    };
+  }
+
+  private async collectVenueCapabilityForTreasuryAdapter(
+    adapter: TreasuryVenueAdapter,
+  ): Promise<VenueCapabilitySnapshot> {
+    if (typeof adapter.getVenueCapabilitySnapshot === 'function') {
+      return adapter.getVenueCapabilitySnapshot();
+    }
+
+    const capabilities = await adapter.getCapabilities();
+    return {
+      venueId: capabilities.venueId,
+      venueName: capabilities.venueId,
+      sleeveApplicability: ['treasury'],
+      connectorType: 'treasury_adapter',
+      truthMode: capabilities.venueMode === 'simulated' ? 'simulated' : 'real',
+      readOnlySupport: capabilities.readOnly,
+      executionSupport: capabilities.executionSupported,
+      approvedForLiveUse: capabilities.approvedForLiveUse,
+      onboardingState: capabilities.onboardingState,
+      missingPrerequisites: capabilities.missingPrerequisites,
+      authRequirementsSummary: [],
+      healthy: capabilities.healthy,
+      healthState: capabilities.healthy ? 'healthy' : 'degraded',
+      degradedReason: capabilities.healthy ? null : 'treasury_adapter_reported_unhealthy',
+      metadata: capabilities.metadata,
+    };
+  }
+
+  private async collectVenueTruthForTreasuryAdapter(
+    adapter: TreasuryVenueAdapter,
+  ): Promise<VenueTruthSnapshot> {
+    if (typeof adapter.getVenueTruthSnapshot === 'function') {
+      return adapter.getVenueTruthSnapshot();
+    }
+
+    const [state, position] = await Promise.all([
+      adapter.getVenueState(),
+      adapter.getPosition(),
+    ]);
+    return {
+      venueId: state.venueId,
+      venueName: state.venueName,
+      snapshotType: 'treasury_adapter_state',
+      snapshotSuccessful: true,
+      healthy: state.healthy,
+      healthState: state.healthy ? 'healthy' : 'degraded',
+      summary: `Allocation ${position.currentAllocationUsd} USD and available capacity ${state.availableCapacityUsd} USD.`,
+      errorMessage: null,
+      capturedAt: position.updatedAt,
+      snapshotCompleteness: 'complete',
+      truthCoverage: {
+        accountState: {
+          status: 'unsupported',
+          reason: 'Treasury adapter truth does not expose a stable venue account identity.',
+          limitations: [],
+        },
+        balanceState: {
+          status: 'unsupported',
+          reason: 'Treasury adapter truth is modeled as capacity and allocation, not account balances.',
+          limitations: [],
+        },
+        capacityState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        exposureState: {
+          status: 'available',
+          reason: null,
+          limitations: [],
+        },
+        derivativeAccountState: {
+          status: 'unsupported',
+          reason: 'Treasury adapter truth does not expose venue-native derivative account metadata.',
+          limitations: [],
+        },
+        derivativePositionState: {
+          status: 'unsupported',
+          reason: 'Treasury adapter truth does not expose venue-native derivative positions.',
+          limitations: [],
+        },
+        derivativeHealthState: {
+          status: 'unsupported',
+          reason: 'Treasury adapter truth does not expose venue-native margin or health semantics.',
+          limitations: [],
+        },
+        orderState: {
+          status: 'unsupported',
+          reason: 'Treasury adapter truth does not expose venue-native open-order state.',
+          limitations: [],
+        },
+        executionReferences: {
+          status: 'unsupported',
+          reason: 'Treasury adapter truth does not expose external execution references.',
+          limitations: [],
+        },
+      },
+      sourceMetadata: {
+        sourceKind: 'adapter',
+        sourceName: 'treasury_adapter',
+        observedScope: ['capacity', 'allocation'],
+      },
+      accountState: null,
+      balanceState: null,
+      capacityState: {
+        availableCapacityUsd: state.availableCapacityUsd,
+        currentAllocationUsd: position.currentAllocationUsd,
+        withdrawalAvailableUsd: position.withdrawalAvailableUsd,
+        liquidityTier: state.liquidityTier,
+        aprBps: state.aprBps,
+      },
+      exposureState: {
+        exposures: [{
+          exposureKey: `${state.venueId}:allocation`,
+          exposureType: 'allocation',
+          assetKey: 'USD',
+          quantity: position.currentAllocationUsd,
+          quantityDisplay: position.currentAllocationUsd,
+          accountAddress: null,
+        }],
+        methodology: 'treasury_allocation_state',
+      },
+      derivativeAccountState: null,
+      derivativePositionState: null,
+      derivativeHealthState: null,
+      orderState: null,
+      executionReferenceState: null,
+      payload: {
+        liquidityTier: state.liquidityTier,
+        aprBps: state.aprBps,
+        availableCapacityUsd: state.availableCapacityUsd,
+        currentAllocationUsd: position.currentAllocationUsd,
+        withdrawalAvailableUsd: position.withdrawalAvailableUsd,
+      },
+      metadata: state.metadata,
+    };
+  }
+
   async runCarryEvaluation(input: {
     actorId: string;
     trigger: string;
@@ -899,6 +1375,7 @@ export class SentinelRuntime {
       strategyRunId: sourceRunId,
       venues: carryVenues,
     });
+    await this.refreshVenueTruthInventory();
 
     const carryCurrentAllocationUsd = portfolioSummary?.sleeves.find((sleeve) => sleeve.sleeveId === 'carry')?.nav ?? '0';
     const approvedCarryBudgetUsd = (await this.options.store.getRebalanceCurrent())?.carryTargetAllocationUsd
@@ -1263,6 +1740,7 @@ export class SentinelRuntime {
 
     const latestPositions = await this.collectPositions();
     await this.options.store.syncPositions(latestPositions);
+    await this.refreshVenueTruthInventory();
 
     const currentStatus = await this.options.store.getRuntimeStatus();
     const lastSuccessfulRunId = await this.options.store.getLatestSuccessfulRunId();
@@ -1351,6 +1829,7 @@ export class SentinelRuntime {
       venueCapabilities,
       actorId: input.actorId,
     });
+    await this.refreshVenueTruthInventory();
 
     await this.options.store.auditWriter.write({
       eventId: createId(),
@@ -2284,6 +2763,9 @@ export class SentinelRuntime {
       await adapter.disconnect();
     }
     for (const adapter of this.options.treasuryAdapters.values()) {
+      await adapter.disconnect();
+    }
+    for (const adapter of this.options.truthAdapters.values()) {
       await adapter.disconnect();
     }
     await this.options.connection.close();

@@ -396,7 +396,17 @@ export async function runtimeRoutes(
   app.get<{
     Querystring: {
       limit?: string;
-      findingType?: 'order_state_mismatch' | 'position_exposure_mismatch' | 'projection_state_mismatch' | 'stale_projection_state' | 'command_outcome_mismatch';
+      findingType?:
+        | 'order_state_mismatch'
+        | 'position_exposure_mismatch'
+        | 'projection_state_mismatch'
+        | 'stale_projection_state'
+        | 'command_outcome_mismatch'
+        | 'missing_venue_truth_snapshot'
+        | 'stale_venue_truth_snapshot'
+        | 'venue_truth_unavailable'
+        | 'venue_truth_partial_coverage'
+        | 'venue_execution_reference_mismatch';
       severity?: 'low' | 'medium' | 'high' | 'critical';
       status?: 'active' | 'resolved';
       reconciliationRunId?: string;

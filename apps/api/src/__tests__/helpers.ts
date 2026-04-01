@@ -13,6 +13,10 @@ import { createSignedOperatorHeaders, type OpsOperatorRole } from '@sentinel-ape
 
 export async function createApiHarness(
   runtimeOverrides: DeterministicRuntimeScenario = {},
+  workerOptions: {
+    cycleIntervalMs?: number;
+    pollIntervalMs?: number;
+  } = {},
 ): Promise<{
   connectionString: string;
   controlPlane: RuntimeControlPlane;
@@ -21,8 +25,8 @@ export async function createApiHarness(
   const connectionString = `file:///tmp/sentinel-apex-api-test-${randomUUID()}`;
   const controlPlane = await RuntimeControlPlane.connect(connectionString);
   const worker = await RuntimeWorker.createDeterministic(connectionString, runtimeOverrides, {
-    cycleIntervalMs: 25,
-    pollIntervalMs: 10,
+    cycleIntervalMs: workerOptions.cycleIntervalMs ?? 25,
+    pollIntervalMs: workerOptions.pollIntervalMs ?? 10,
   });
   await worker.start();
 
