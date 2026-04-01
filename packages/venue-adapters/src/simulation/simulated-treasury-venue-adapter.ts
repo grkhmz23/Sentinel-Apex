@@ -190,6 +190,7 @@ export class SimulatedTreasuryVenueAdapter implements TreasuryVenueAdapter {
       sourceMetadata: {
         sourceKind: 'simulation',
         sourceName: 'simulated_treasury_adapter',
+        connectorDepth: 'simulation',
         observedScope: ['capacity', 'allocation'],
       },
       accountState: null,

@@ -2,7 +2,20 @@
 
 **Version:** 1.0.0
 **Status:** Active
-**Last Updated:** 2026-03-30
+**Last Updated:** 2026-04-01
+
+## Phase 5.6 Addendum: Internal Derivative State Boundary
+
+Phase 5.6 does not change the carry thesis. It changes how Sentinel Apex represents the carry sleeve's internal derivative posture for comparison against external Drift-native truth.
+
+Current internal derivative state truth:
+
+- configured Drift account identity is treated as canonical internal account state
+- open carry-related derivative orders are treated as canonical internal order inventory when they exist in persisted runtime orders
+- open derivative positions are reconstructed from persisted fills and remain explicitly marked as derived internal state
+- internal health and margin-like state remain unsupported
+
+Operationally, this means carry execution now feeds a durable internal derivative comparison layer, but the runtime still does not pretend allocator budgets, generic risk snapshots, or external venue truth are themselves the canonical internal derivative state.
 
 ## Phase 4.3 Addendum: Execution Transparency
 

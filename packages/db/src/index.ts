@@ -32,6 +32,8 @@ export {
   portfolioSnapshots,
   riskBreaches,
   executionEvents,
+  internalDerivativeCurrent,
+  internalDerivativeSnapshots,
   runtimeCommands,
   runtimeMismatchRemediations,
   runtimeMismatches,

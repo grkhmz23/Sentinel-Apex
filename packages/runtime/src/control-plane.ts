@@ -83,12 +83,15 @@ import type {
   TreasuryPolicyView,
   TreasurySummaryView,
   VenueDetailView,
+  VenueDerivativeComparisonDetailView,
+  VenueDerivativeComparisonSummaryView,
   VenueInventoryItemView,
   VenueInventorySummaryView,
   VenueSnapshotView,
   VenueTruthSummaryView,
   TreasuryVenueDetailView,
   TreasuryVenueView,
+  InternalDerivativeSnapshotView,
   RuntimeVerificationOutcome,
   WorkerStatusView,
 } from './types.js';
@@ -208,6 +211,22 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async listVenueSnapshots(venueId: string, limit = 20): Promise<VenueSnapshotView[]> {
     return this.store.listVenueSnapshots(venueId, limit);
+  }
+
+  async getVenueInternalState(venueId: string): Promise<InternalDerivativeSnapshotView | null> {
+    return this.store.getVenueInternalState(venueId);
+  }
+
+  async getVenueComparisonSummary(
+    venueId: string,
+  ): Promise<VenueDerivativeComparisonSummaryView | null> {
+    return this.store.getVenueComparisonSummary(venueId);
+  }
+
+  async getVenueComparisonDetail(
+    venueId: string,
+  ): Promise<VenueDerivativeComparisonDetailView | null> {
+    return this.store.getVenueComparisonDetail(venueId);
   }
 
   async getVenueSummary(): Promise<VenueInventorySummaryView> {

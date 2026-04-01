@@ -39,6 +39,8 @@ export type {
   VenueDerivativePositionStateSnapshot,
   VenueExecutionReferenceEntrySnapshot,
   VenueExecutionReferenceStateSnapshot,
+  VenueTruthDataClassification,
+  VenueTruthDataProvenance,
   VenueExposureEntrySnapshot,
   VenueExposureStateSnapshot,
   VenueHealthState,
@@ -49,6 +51,7 @@ export type {
   VenueTruthAdapter,
   VenueTruthMode,
   VenueTruthSnapshotCompleteness,
+  VenueTruthSourceDepth,
   VenueTruthSourceMetadata,
   VenueTruthSleeve,
   VenueTruthSnapshot,
@@ -63,6 +66,8 @@ export type { SimulatedVenueConfig } from './simulation/simulated-venue-adapter.
 export { SimulatedVenueAdapter } from './simulation/simulated-venue-adapter.js';
 export type { SimulatedTreasuryVenueConfig } from './simulation/simulated-treasury-venue-adapter.js';
 export { SimulatedTreasuryVenueAdapter } from './simulation/simulated-treasury-venue-adapter.js';
+export type { DriftReadonlyTruthAdapterConfig } from './real/drift-readonly-truth-adapter.js';
+export { DriftReadonlyTruthAdapter } from './real/drift-readonly-truth-adapter.js';
 export type { SolanaRpcReadonlyTruthAdapterConfig } from './real/solana-rpc-readonly-truth-adapter.js';
 export { SolanaRpcReadonlyTruthAdapter } from './real/solana-rpc-readonly-truth-adapter.js';
 

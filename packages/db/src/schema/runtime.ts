@@ -460,6 +460,56 @@ export const venueConnectorSnapshots = pgTable(
   }),
 );
 
+export const internalDerivativeSnapshots = pgTable(
+  'internal_derivative_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    venueId: text('venue_id').notNull(),
+    venueName: text('venue_name').notNull(),
+    sourceComponent: text('source_component').notNull(),
+    sourceRunId: text('source_run_id'),
+    sourceReference: text('source_reference'),
+    accountState: jsonb('account_state').notNull().default({}),
+    positionState: jsonb('position_state').notNull().default({}),
+    healthState: jsonb('health_state').notNull().default({}),
+    orderState: jsonb('order_state').notNull().default({}),
+    coverage: jsonb('coverage').notNull().default({}),
+    metadata: jsonb('metadata').notNull().default({}),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    venueIdIdx: index('internal_derivative_snapshots_venue_id_idx').on(t.venueId),
+    sourceRunIdIdx: index('internal_derivative_snapshots_source_run_id_idx').on(t.sourceRunId),
+    capturedAtIdx: index('internal_derivative_snapshots_captured_at_idx').on(t.capturedAt),
+  }),
+);
+
+export const internalDerivativeCurrent = pgTable(
+  'internal_derivative_current',
+  {
+    venueId: text('venue_id').primaryKey(),
+    venueName: text('venue_name').notNull(),
+    latestSnapshotId: uuid('latest_snapshot_id').references(() => internalDerivativeSnapshots.id),
+    sourceComponent: text('source_component').notNull(),
+    sourceRunId: text('source_run_id'),
+    sourceReference: text('source_reference'),
+    accountState: jsonb('account_state').notNull().default({}),
+    positionState: jsonb('position_state').notNull().default({}),
+    healthState: jsonb('health_state').notNull().default({}),
+    orderState: jsonb('order_state').notNull().default({}),
+    coverage: jsonb('coverage').notNull().default({}),
+    metadata: jsonb('metadata').notNull().default({}),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    latestSnapshotIdIdx: index('internal_derivative_current_latest_snapshot_id_idx').on(t.latestSnapshotId),
+    sourceRunIdIdx: index('internal_derivative_current_source_run_id_idx').on(t.sourceRunId),
+    capturedAtIdx: index('internal_derivative_current_captured_at_idx').on(t.capturedAt),
+  }),
+);
+
 export const carryActions = pgTable(
   'carry_actions',
   {

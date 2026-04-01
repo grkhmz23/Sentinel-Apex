@@ -396,14 +396,23 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Connector Inventory')).toBeInTheDocument();
     expect(screen.getByText('Drift Solana Read-Only')).toBeInTheDocument();
     expect(screen.getByText('Derivative-aware venues')).toBeInTheDocument();
+    expect(screen.getByText('Drift-native read-only')).toBeInTheDocument();
     expect(screen.getAllByText('derivative_aware').length).toBeGreaterThan(0);
 
     render(await VenueDetailPage({ params: { venueId: 'drift-solana-readonly' } }));
     expect(screen.getByText('Capability Overview')).toBeInTheDocument();
+    expect(screen.getByText('Reconciliation Coverage')).toBeInTheDocument();
+    expect(screen.getByText('Internal Derivative State')).toBeInTheDocument();
+    expect(screen.getByText('Internal Inventory')).toBeInTheDocument();
+    expect(screen.getByText('Comparison Detail')).toBeInTheDocument();
     expect(screen.getByText('Derivative Account State')).toBeInTheDocument();
-    expect(screen.getByText('Derivative Positions And Health')).toBeInTheDocument();
-    expect(screen.getByText('Order And References')).toBeInTheDocument();
+    expect(screen.getByText('Position Inventory')).toBeInTheDocument();
+    expect(screen.getByText('Health And Margin')).toBeInTheDocument();
+    expect(screen.getByText('Order Inventory')).toBeInTheDocument();
+    expect(screen.getByText('Execution References')).toBeInTheDocument();
     expect(screen.getByText('Snapshot History')).toBeInTheDocument();
+    expect(screen.getByText('authority_subaccount')).toBeInTheDocument();
+    expect(screen.getByText('not_comparable')).toBeInTheDocument();
   });
 
   it('renders error and empty states when data is unavailable', async () => {

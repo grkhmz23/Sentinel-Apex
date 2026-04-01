@@ -46,7 +46,7 @@ import {
   type TreasuryVenueSnapshot,
 } from '@sentinel-apex/treasury';
 import {
-  SolanaRpcReadonlyTruthAdapter,
+  DriftReadonlyTruthAdapter,
   SimulatedVenueAdapter,
   SimulatedTreasuryVenueAdapter,
   type SimulatedVenueConfig,
@@ -61,6 +61,10 @@ import {
 } from '@sentinel-apex/venue-adapters';
 
 import { RuntimeHealthMonitor } from './health-monitor.js';
+import {
+  buildInternalDerivativeSnapshot,
+  type InternalDerivativeTrackedVenueConfig,
+} from './internal-derivative-state.js';
 import { RuntimeReconciliationEngine } from './reconciliation-engine.js';
 import { DatabaseAuditWriter, RuntimeOrderStore, RuntimeStore } from './store.js';
 
@@ -77,6 +81,7 @@ import type {
   PnlSummaryView,
   PortfolioSnapshotView,
   PortfolioSummaryView,
+  InternalDerivativeSnapshotView,
   PositionView,
   RiskBreachView,
   RebalanceExecutionGraphView,
@@ -88,9 +93,12 @@ import type {
   RuntimeStatusView,
   TreasurySummaryView,
   VenueDetailView,
+  VenueDerivativeComparisonDetailView,
+  VenueDerivativeComparisonSummaryView,
   VenueInventoryItemView,
   VenueInventorySummaryView,
   VenueSnapshotView,
+  VenueTruthComparisonCoverageView,
   VenueTruthProfile,
   VenueTruthSummaryView,
 } from './types.js';
@@ -202,6 +210,63 @@ function deriveVenueTruthProfile(snapshot: VenueTruthSnapshot): VenueTruthProfil
   return 'minimal';
 }
 
+function deriveVenueTruthComparisonCoverage(
+  capability: VenueCapabilitySnapshot,
+  snapshot: VenueTruthSnapshot,
+): VenueTruthComparisonCoverageView {
+  const connectorDepth = snapshot.sourceMetadata.connectorDepth
+    ?? (capability.truthMode === 'simulated'
+      ? 'simulation'
+      : capability.executionSupport
+        ? 'execution_capable'
+        : capability.connectorType === 'drift_native_readonly'
+          ? 'drift_native_readonly'
+          : 'generic_rpc_readonly');
+  const isDriftNativeReadonly = connectorDepth === 'drift_native_readonly';
+
+  return {
+    executionReferences: {
+      status: snapshot.truthCoverage.executionReferences.status,
+      reason: snapshot.truthCoverage.executionReferences.reason,
+    },
+    positionInventory: {
+      status: 'unsupported',
+      reason: isDriftNativeReadonly && snapshot.truthCoverage.derivativePositionState.status === 'available'
+        ? 'Decoded Drift position inventory is visible, but the runtime does not yet persist venue-native Drift position projections for direct comparison.'
+        : 'The runtime does not yet maintain a truthful internal position model that can be compared directly against this venue snapshot.',
+    },
+    healthState: {
+      status: 'unsupported',
+      reason: isDriftNativeReadonly && snapshot.truthCoverage.derivativeHealthState.status === 'available'
+        ? 'Drift health and margin metrics are visible, but the runtime does not yet persist an internal canonical health model for direct comparison.'
+        : 'No internal health-state model is available for direct reconciliation against this venue snapshot.',
+    },
+    orderInventory: {
+      status: 'unsupported',
+      reason: isDriftNativeReadonly && snapshot.truthCoverage.orderState.status === 'available'
+        ? 'Decoded Drift open-order inventory is visible, but the runtime does not yet persist a venue-native open-order model for direct comparison.'
+        : 'No venue-native internal open-order inventory is available for direct reconciliation against this venue snapshot.',
+    },
+    notes: isDriftNativeReadonly
+      ? [
+        'Decoded Drift account, position, health, and order sections are operator-visible venue truth.',
+        'Current reconciliation directly compares internal execution references when they are available.',
+      ]
+      : connectorDepth === 'generic_rpc_readonly'
+        ? [
+          'This connector exposes generic read-only truth rather than venue-native Drift decode.',
+          'Execution-reference comparison is the only direct real-venue reconciliation path currently available.',
+        ]
+        : connectorDepth === 'simulation'
+          ? [
+            'Simulated venue truth is generated internally and is not treated as external reconciliation coverage.',
+          ]
+          : [
+            'This connector depth does not currently expose additional direct reconciliation coverage beyond the recorded truth sections.',
+          ],
+  };
+}
+
 export interface DeterministicRuntimeScenario {
   sleeveId?: string;
   executionMode?: 'dry-run' | 'live';
@@ -213,6 +278,7 @@ export interface DeterministicRuntimeScenario {
   venues?: SimulatedVenueConfig[];
   treasuryVenues?: SimulatedTreasuryVenueConfig[];
   truthAdapters?: VenueTruthAdapter[];
+  internalDerivativeTargets?: InternalDerivativeTrackedVenueConfig[];
 }
 
 export interface SentinelRuntimeOptions {
@@ -231,6 +297,7 @@ export interface SentinelRuntimeOptions {
   executionMode: 'dry-run' | 'live';
   liveExecutionEnabled: boolean;
   sleeveId: string;
+  internalDerivativeTargets: Map<string, InternalDerivativeTrackedVenueConfig>;
   logger: Logger;
 }
 
@@ -320,24 +387,62 @@ export class SentinelRuntime {
     for (const adapter of overrides.truthAdapters ?? []) {
       truthAdapters.set(adapter.venueId, adapter);
     }
+    const internalDerivativeTargets = new Map<string, InternalDerivativeTrackedVenueConfig>(
+      (overrides.internalDerivativeTargets ?? []).map((target) => [target.venueId, target] as const),
+    );
     const driftRpcEndpoint = process.env['DRIFT_RPC_ENDPOINT'];
     if (
       !truthAdapters.has('drift-solana-readonly')
       && driftRpcEndpoint !== undefined
       && driftRpcEndpoint !== ''
     ) {
-      const adapter = new SolanaRpcReadonlyTruthAdapter({
+      const adapter = new DriftReadonlyTruthAdapter({
         venueId: 'drift-solana-readonly',
         venueName: 'Drift Solana Read-Only',
         rpcEndpoint: driftRpcEndpoint,
+        ...(process.env['DRIFT_READONLY_ENV'] === undefined
+          ? {}
+          : { driftEnv: process.env['DRIFT_READONLY_ENV'] as 'devnet' | 'mainnet-beta' }),
         ...(process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] === undefined
           ? {}
           : { accountAddress: process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] }),
+        ...(process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] === undefined
+          ? {}
+          : { authorityAddress: process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] }),
+        ...(process.env['DRIFT_READONLY_SUBACCOUNT_ID'] === undefined
+          ? {}
+          : { subaccountId: Number.parseInt(process.env['DRIFT_READONLY_SUBACCOUNT_ID'], 10) }),
         ...(process.env['DRIFT_READONLY_ACCOUNT_LABEL'] === undefined
           ? {}
           : { accountLabel: process.env['DRIFT_READONLY_ACCOUNT_LABEL'] }),
       });
       truthAdapters.set(adapter.venueId, adapter);
+    }
+    if (
+      !internalDerivativeTargets.has('drift-solana-readonly')
+      && (
+        (process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] !== undefined
+          && process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] !== '')
+        || (process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] !== undefined
+          && process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] !== '')
+      )
+    ) {
+      internalDerivativeTargets.set('drift-solana-readonly', {
+        venueId: 'drift-solana-readonly',
+        venueName: 'Drift Solana Read-Only',
+        ...(process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] === undefined
+          ? {}
+          : { accountAddress: process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] }),
+        ...(process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] === undefined
+          ? {}
+          : { authorityAddress: process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] }),
+        ...(process.env['DRIFT_READONLY_SUBACCOUNT_ID'] === undefined
+          ? {}
+          : { subaccountId: Number.parseInt(process.env['DRIFT_READONLY_SUBACCOUNT_ID'], 10) }),
+        ...(process.env['DRIFT_READONLY_ACCOUNT_LABEL'] === undefined
+          ? {}
+          : { accountLabel: process.env['DRIFT_READONLY_ACCOUNT_LABEL'] }),
+      });
     }
 
     const connection = await createDatabaseConnection(connectionString);
@@ -414,6 +519,7 @@ export class SentinelRuntime {
       executionMode,
       liveExecutionEnabled,
       sleeveId,
+      internalDerivativeTargets,
       logger,
     });
 
@@ -690,6 +796,11 @@ export class SentinelRuntime {
 
       const latestPositions = await this.collectPositions();
       await this.options.store.syncPositions(latestPositions);
+      await this.refreshInternalDerivativeState({
+        sourceComponent: 'sentinel-runtime',
+        sourceRunId: runId,
+        sourceReference: runId,
+      });
       await this.refreshVenueTruthInventory();
 
       await this.options.store.completeStrategyRun({
@@ -895,6 +1006,20 @@ export class SentinelRuntime {
     return this.options.store.listVenueSnapshots(venueId, limit);
   }
 
+  async getVenueInternalState(venueId: string): Promise<InternalDerivativeSnapshotView | null> {
+    return this.options.store.getVenueInternalState(venueId);
+  }
+
+  async getVenueComparisonSummary(
+    venueId: string,
+  ): Promise<VenueDerivativeComparisonSummaryView | null> {
+    return this.options.store.getVenueComparisonSummary(venueId);
+  }
+
+  async getVenueComparisonDetail(venueId: string): Promise<VenueDerivativeComparisonDetailView | null> {
+    return this.options.store.getVenueComparisonDetail(venueId);
+  }
+
   async getVenueSummary(): Promise<VenueInventorySummaryView> {
     return this.options.store.getVenueSummary();
   }
@@ -973,6 +1098,53 @@ export class SentinelRuntime {
     await this.options.store.persistVenueConnectorSnapshots({ snapshots });
   }
 
+  private trackedInternalDerivativeVenues(): InternalDerivativeTrackedVenueConfig[] {
+    const tracked = new Map<string, InternalDerivativeTrackedVenueConfig>(
+      Array.from(this.options.internalDerivativeTargets.entries()),
+    );
+
+    for (const adapter of this.options.truthAdapters.values()) {
+      if (!tracked.has(adapter.venueId)) {
+        tracked.set(adapter.venueId, {
+          venueId: adapter.venueId,
+          venueName: adapter.venueName,
+        });
+      }
+    }
+
+    return Array.from(tracked.values());
+  }
+
+  private async refreshInternalDerivativeState(input: {
+    sourceComponent: string;
+    sourceRunId?: string | null;
+    sourceReference?: string | null;
+  }): Promise<void> {
+    const trackedVenues = this.trackedInternalDerivativeVenues();
+    if (trackedVenues.length === 0) {
+      return;
+    }
+
+    const capturedAt = new Date().toISOString();
+    const fillHistory = await this.options.store.listFillHistory();
+    const snapshots = await Promise.all(
+      trackedVenues.map(async (venue) => {
+        const orders = await this.options.store.listOrdersByVenue(venue.venueId);
+        return buildInternalDerivativeSnapshot({
+          venue,
+          orders,
+          fills: fillHistory.filter((fill) => fill.venueId === venue.venueId),
+          capturedAt,
+          sourceComponent: input.sourceComponent,
+          sourceRunId: input.sourceRunId ?? null,
+          sourceReference: input.sourceReference ?? null,
+        });
+      }),
+    );
+
+    await this.options.store.persistInternalDerivativeSnapshots({ snapshots });
+  }
+
   private async collectVenueTruthSnapshots(): Promise<VenueSnapshotView[]> {
     const snapshots: VenueSnapshotView[] = [];
 
@@ -1028,6 +1200,7 @@ export class SentinelRuntime {
       capturedAt: snapshot.capturedAt,
       snapshotCompleteness: snapshot.snapshotCompleteness,
       truthCoverage: snapshot.truthCoverage,
+      comparisonCoverage: deriveVenueTruthComparisonCoverage(capability, snapshot),
       sourceMetadata: snapshot.sourceMetadata,
       accountState: snapshot.accountState,
       balanceState: snapshot.balanceState,
@@ -1740,10 +1913,15 @@ export class SentinelRuntime {
 
     const latestPositions = await this.collectPositions();
     await this.options.store.syncPositions(latestPositions);
+    const lastSuccessfulRunId = await this.options.store.getLatestSuccessfulRunId();
+    await this.refreshInternalDerivativeState({
+      sourceComponent: actorId,
+      sourceRunId: lastSuccessfulRunId,
+      sourceReference: emitAuditEvent ? actorId : lastSuccessfulRunId,
+    });
     await this.refreshVenueTruthInventory();
 
     const currentStatus = await this.options.store.getRuntimeStatus();
-    const lastSuccessfulRunId = await this.options.store.getLatestSuccessfulRunId();
     const lifecycleState: RuntimeLifecycleState = currentStatus.halted ? 'paused' : 'ready';
     await this.options.store.updateRuntimeStatus({
       lifecycleState,
@@ -2396,6 +2574,11 @@ export class SentinelRuntime {
     await this.options.store.completeCarryAction({
       actionId: detail.action.id,
       latestExecutionId: execution.id,
+    });
+    await this.refreshInternalDerivativeState({
+      sourceComponent: 'carry-execution',
+      sourceRunId: detail.action.strategyRunId,
+      sourceReference: execution.id,
     });
     await syncLinkedBundle();
     await this.options.store.auditWriter.write({

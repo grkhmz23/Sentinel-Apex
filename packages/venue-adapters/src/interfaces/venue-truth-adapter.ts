@@ -4,6 +4,12 @@ export type VenueOnboardingState = 'simulated' | 'read_only' | 'ready_for_review
 export type VenueHealthState = 'healthy' | 'degraded' | 'unavailable';
 export type VenueTruthCoverageStatus = 'available' | 'partial' | 'unsupported';
 export type VenueTruthSnapshotCompleteness = 'complete' | 'partial' | 'minimal';
+export type VenueTruthSourceDepth =
+  | 'simulation'
+  | 'generic_rpc_readonly'
+  | 'drift_native_readonly'
+  | 'execution_capable';
+export type VenueTruthDataClassification = 'exact' | 'derived' | 'mixed';
 
 export interface VenueTruthCoverageItem {
   status: VenueTruthCoverageStatus;
@@ -27,6 +33,16 @@ export interface VenueTruthSourceMetadata {
   sourceKind: 'simulation' | 'adapter' | 'json_rpc';
   sourceName: string;
   observedScope: string[];
+  connectorDepth?: VenueTruthSourceDepth;
+  commitment?: string | null;
+  observedSlot?: string | null;
+  provenanceNotes?: string[];
+}
+
+export interface VenueTruthDataProvenance {
+  classification: VenueTruthDataClassification;
+  source: string;
+  notes: string[];
 }
 
 export interface VenueAccountStateSnapshot {
@@ -79,6 +95,7 @@ export interface VenueExposureEntrySnapshot {
 export interface VenueExposureStateSnapshot {
   exposures: VenueExposureEntrySnapshot[];
   methodology: string;
+  provenance?: VenueTruthDataProvenance;
 }
 
 export interface VenueExecutionReferenceEntrySnapshot {
@@ -115,14 +132,24 @@ export interface VenueDerivativeAccountStateSnapshot {
   decoded: boolean;
   authorityAddress: string | null;
   subaccountId: number | null;
+  userName?: string | null;
+  delegateAddress?: string | null;
+  marginMode?: string | null;
+  poolId?: number | null;
+  marginTradingEnabled?: boolean | null;
+  openOrderCount?: number | null;
+  openAuctionCount?: number | null;
+  statusFlags?: string[];
   observedSlot: string | null;
   rpcVersion: string | null;
   dataLength: number | null;
   rawDiscriminatorHex: string | null;
   notes: string[];
+  provenance?: VenueTruthDataProvenance;
 }
 
 export interface VenueDerivativePositionEntrySnapshot {
+  marketIndex?: number | null;
   marketKey: string | null;
   marketSymbol: string | null;
   positionType: 'perp' | 'spot' | 'unknown';
@@ -133,7 +160,12 @@ export interface VenueDerivativePositionEntrySnapshot {
   breakEvenPrice: string | null;
   unrealizedPnlUsd: string | null;
   liquidationPrice: string | null;
+  positionValueUsd?: string | null;
+  openOrders?: number | null;
+  openBids?: string | null;
+  openAsks?: string | null;
   metadata: Record<string, unknown>;
+  provenance?: VenueTruthDataProvenance;
 }
 
 export interface VenueDerivativePositionStateSnapshot {
@@ -141,6 +173,7 @@ export interface VenueDerivativePositionStateSnapshot {
   openPositionCount: number;
   methodology: string;
   notes: string[];
+  provenance?: VenueTruthDataProvenance;
 }
 
 export type VenueDerivativeHealthStatus =
@@ -151,6 +184,7 @@ export type VenueDerivativeHealthStatus =
 
 export interface VenueDerivativeHealthStateSnapshot {
   healthStatus: VenueDerivativeHealthStatus;
+  healthScore?: number | null;
   collateralUsd: string | null;
   marginRatio: string | null;
   leverage: string | null;
@@ -159,13 +193,17 @@ export interface VenueDerivativeHealthStateSnapshot {
   freeCollateralUsd: string | null;
   methodology: string;
   notes: string[];
+  provenance?: VenueTruthDataProvenance;
 }
 
 export interface VenueOrderEntrySnapshot {
+  marketIndex?: number | null;
   venueOrderId: string | null;
   reference: string | null;
   marketKey: string | null;
   marketSymbol: string | null;
+  marketType?: 'perp' | 'spot' | 'unknown';
+  userOrderId?: number | null;
   side: 'buy' | 'sell' | 'unknown';
   status: string;
   orderType: string | null;
@@ -176,6 +214,7 @@ export interface VenueOrderEntrySnapshot {
   slot: string | null;
   placedAt: string | null;
   metadata: Record<string, unknown>;
+  provenance?: VenueTruthDataProvenance;
 }
 
 export interface VenueOrderStateSnapshot {
@@ -184,6 +223,7 @@ export interface VenueOrderStateSnapshot {
   referenceMode: 'none' | 'recent_account_signatures' | 'venue_open_orders';
   methodology: string;
   notes: string[];
+  provenance?: VenueTruthDataProvenance;
 }
 
 export interface VenueCapabilitySnapshot {

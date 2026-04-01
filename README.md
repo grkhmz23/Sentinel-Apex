@@ -1,6 +1,6 @@
 # Sentinel Apex
 
-Sentinel Apex is a TypeScript monorepo for the institutional Solana yield control plane. The current repo includes the internal API, a dedicated runtime worker, an internal ops dashboard, core strategy/risk/execution packages, durable recovery visibility, reconciliation-driven mismatch detection, mismatch-scoped remediation actions, the Atlas Treasury foundation, the Sentinel allocator foundation, carry controlled execution with dedicated execution drill-through, treasury execution drill-through with rebalance-linked budget-application visibility, rebalance bundle coordination with partial-failure rollups and operator recovery semantics, explicit bundle recovery actions for safe child requeue, explicit manual resolution for partial or non-retryable bundles, explicit escalation ownership and handoff workflow for escalated bundles, a cross-bundle escalations queue and triage board, deeper read-only venue-native truth coverage for connector account, balance, exposure-like, recent-reference, and derivative-aware read-only account/order semantics, and a Postgres-first local/dev workflow.
+Sentinel Apex is a TypeScript monorepo for the institutional Solana yield control plane. The current repo includes the internal API, a dedicated runtime worker, an internal ops dashboard, core strategy/risk/execution packages, durable recovery visibility, reconciliation-driven mismatch detection, mismatch-scoped remediation actions, the Atlas Treasury foundation, the Sentinel allocator foundation, carry controlled execution with dedicated execution drill-through, treasury execution drill-through with rebalance-linked budget-application visibility, rebalance bundle coordination with partial-failure rollups and operator recovery semantics, explicit bundle recovery actions for safe child requeue, explicit manual resolution for partial or non-retryable bundles, explicit escalation ownership and handoff workflow for escalated bundles, a cross-bundle escalations queue and triage board, deeper read-only venue-native truth coverage for connector account, exposure-like, recent-reference, and Drift-native account/position/health/order semantics, plus a canonical internal derivative state and comparison layer for honest internal-vs-external Drift-backed reconciliation, and a Postgres-first local/dev workflow.
 
 ## Local Dev Workflow
 
@@ -14,7 +14,12 @@ export OPS_AUTH_SHARED_SECRET=replace-with-at-least-32-characters
 export EXECUTION_MODE=dry-run
 export FEATURE_FLAG_LIVE_EXECUTION=false
 export DRIFT_RPC_ENDPOINT=https://api.mainnet-beta.solana.com
-export DRIFT_READONLY_ACCOUNT_ADDRESS=replace-with-a-public-key
+export DRIFT_READONLY_ENV=mainnet-beta
+# Choose one locator mode:
+export DRIFT_READONLY_ACCOUNT_ADDRESS=replace-with-a-drift-user-account-public-key
+# or
+export DRIFT_READONLY_AUTHORITY_ADDRESS=replace-with-a-drift-authority-public-key
+export DRIFT_READONLY_SUBACCOUNT_ID=0
 export DRIFT_READONLY_ACCOUNT_LABEL="optional human label"
 export RUNTIME_WORKER_CYCLE_INTERVAL_MS=60000
 ```
@@ -80,29 +85,39 @@ The in-repo real connector path remains:
 
 - `drift-solana-readonly`
 
-This connector is real and read-only only. It is not execution-capable and not approved for live use.
+This connector is real and read-only only. It is not execution-capable and not approved for live use. Its current connector depth is `drift_native_readonly`.
 
-With only `DRIFT_RPC_ENDPOINT`, Sentinel captures connectivity-level venue truth. When `DRIFT_READONLY_ACCOUNT_ADDRESS` is also configured, the runtime can additionally capture:
+With only `DRIFT_RPC_ENDPOINT`, Sentinel captures connectivity-level venue truth. When a Drift user locator is also configured through `DRIFT_READONLY_ACCOUNT_ADDRESS` or `DRIFT_READONLY_AUTHORITY_ADDRESS` plus `DRIFT_READONLY_SUBACCOUNT_ID`, the runtime can additionally capture:
 
-- account identity via `getAccountInfo`
-- native SOL balance via `getBalance`
-- SPL token balances via `getTokenAccountsByOwner`
-- balance-derived spot exposure-like state
+- decoded Drift user-account and subaccount identity
+- account metadata via `getAccountInfo`
+- venue-native perp and spot position inventory
+- exposure summaries derived from decoded positions
+- Drift SDK-derived health, collateral, free-collateral, leverage, and margin requirement state
+- venue-native open-order inventory decoded from the Drift user account
 - recent account transaction references via `getSignaturesForAddress`
-- partial derivative-account metadata for program-owned accounts:
-  - owner program
-  - data length
-  - raw discriminator bytes
-  - coarse account-model classification
-- reference-only order-like context derived from recent account signatures
+- source metadata including connector depth, observed slot, and provenance
+- comparison coverage that explains which sections are operator-visible truth versus directly reconciled state
+
+The runtime now also persists a separate internal derivative model for the same venue:
+
+- account identity from runtime operator configuration
+- open-order inventory from canonical runtime orders
+- position inventory derived from canonical fills joined to runtime orders
+- comparison summary and comparison detail views that separate:
+  - matched
+  - mismatched
+  - internal-only
+  - external-only
+  - not-comparable
 
 This path still does not provide:
 
-- venue-native liquidity or capacity truth
-- decoded Drift authority or subaccount semantics
-- Drift-native derivative positions
-- margin or health semantics
-- canonical open-order inventory
+- treasury-style capacity truth
+- generic wallet `balanceState` for the Drift-native connector
+- full Drift market-index reconciliation parity
+- direct internal-versus-external Drift health reconciliation parity
+- canonical placement timestamps for every open order
 - live execution support
 
 Operator-facing venue truth is available through:
@@ -111,6 +126,9 @@ Operator-facing venue truth is available through:
 - `/api/v1/venues/summary`
 - `/api/v1/venues/truth-summary`
 - `/api/v1/venues/:venueId`
+- `/api/v1/venues/:venueId/internal-state`
+- `/api/v1/venues/:venueId/comparison-summary`
+- `/api/v1/venues/:venueId/comparison-detail`
 - `/api/v1/venues/:venueId/snapshots`
 
 Reconciliation also exposes venue-truth findings for:
@@ -120,6 +138,11 @@ Reconciliation also exposes venue-truth findings for:
 - unavailable snapshots
 - partial truth coverage
 - execution-reference mismatch where the connector truth actually exposes recent references
+- stale internal derivative state
+- Drift subaccount identity mismatch
+- Drift position mismatch
+- Drift order-inventory mismatch
+- Drift truth comparison gaps when one side is missing or structurally unsupported
 
 The API is now the control-plane and read surface. Scheduled cycle execution, command processing, recovery work, reconciliation, treasury evaluation, allocator evaluation, and carry evaluation continue to run in the backend services. The ops dashboard is a thin internal UI over those existing API contracts. Treasury evaluation now runs as part of real runtime cycles and can also be queued explicitly from the authenticated treasury page in the ops dashboard. Sentinel allocator evaluation now runs during runtime cycles and can also be queued explicitly, producing persisted current-vs-target sleeve budgets, structured rationale, and rebalance recommendations without hidden execution side effects. Atlas Treasury recommendations can now be approved and executed through the existing runtime worker flow, with explicit simulated/live boundaries, backend risk checks, durable execution history, action/execution drill-through, and venue readiness visibility. Treasury rebalance participation can now also persist explicit proposal-linked treasury action/execution records for budget-state-only changes, so rebalance drill-through can link into treasury detail without pretending every treasury outcome is venue-native. Carry now also has first-class controlled execution semantics: approved strategy opportunities and rebalance-linked carry changes produce explicit carry actions, backend-enforced operational blocked reasons, simulated-vs-live venue state, durable command/execution history, dedicated execution-step drill-through, and dashboard/API visibility without pretending unsupported live deployment exists. Sentinel now also exposes an operator-approved rebalance workflow: allocator runs can emit durable rebalance proposals, operators can approve or reject them, the worker executes explicit rebalance commands, runtime exposes a backend-native proposal execution graph across proposal, command, and downstream sleeve work, rebalance bundles summarize whether the coordinated multi-sleeve workflow is complete, partially applied, blocked, failed, or awaiting intervention, operators can request explicit bundle recovery actions for safely retryable proposal-linked carry and treasury children, operators can explicitly accept partial application or mark a bundle manually resolved, escalated bundles carry explicit ownership, acknowledgement, review, and close workflow, and operators can now triage those escalations from a dedicated cross-bundle queue without hidden automation.
 
@@ -171,7 +194,7 @@ Known limitations:
 - Some package tests are intentionally slow because they boot real runtime/API harnesses.
 - Sandbox restrictions can still prevent long-running service startup flows that bind sockets; validation should prefer direct test/build/typecheck/lint entrypoints over ad hoc manual server startup.
 - Live connector validation remains out of scope; dry-run and simulated execution are the supported default validation posture.
-- Phase 5.4 deepens read-only real connector truth ingestion into derivative-aware account and order/reference semantics. This still does not change the live-execution posture.
+- Phases 5.5 and 5.6 deepen read-only real connector truth ingestion into Drift-native account, position, health, and open-order semantics, then add an internal derivative state and comparison layer on top. This still does not change the live-execution posture.
 
 ## Current Scope
 
@@ -187,14 +210,17 @@ Known limitations:
 - `apps/ops-dashboard` now also includes escalation ownership, handoff, review, and close workflow on rebalance bundles.
 - `apps/ops-dashboard` now also includes a dedicated escalations queue with status, owner, due-state filters, ownership visibility, and safe quick triage actions.
 - `apps/ops-dashboard` now also includes a generic `/venues` inventory and per-venue snapshot history/detail for connector truth, readiness, and truth-depth visibility.
+- `apps/ops-dashboard` now also includes internal derivative state, external derivative truth, comparison coverage, and mismatch/gap detail on per-venue views.
 - `apps/ops-dashboard` now uses explicit operator authentication, durable sessions, and role-aware action gating.
 - Runtime lifecycle, replay, current projections, worker state, and recovery persistence are in `packages/runtime`.
+- `packages/runtime` now also persists internal derivative snapshots and current-state rows used for Drift-oriented internal-vs-external comparison.
 - `packages/allocator` now provides the Sentinel sleeve registry, deterministic budgeting policy, allocator rationale, and rebalance recommendation generation.
 - `packages/allocator` now also provides deterministic rebalance proposal planning and blocked-reason generation for operator-approved sleeve-budget moves.
 - `packages/treasury` now provides the Atlas Treasury policy engine, reserve checks, concentration checks, treasury recommendation logic, and treasury execution-intent planning.
 - `packages/carry` now also provides carry controlled-execution planning, backend readiness evaluation, blocked-reason generation, pre-execution effects, and deterministic reduction-intent planning.
 - Runtime mismatches now support acknowledge, recover, resolve, verify, and reopen lifecycle actions with durable recovery history.
 - Runtime reconciliation now persists explicit runs and findings, and can create or update mismatches from real discrepancies across projections, commands, orders, positions, and supported venue-truth depth.
+- Runtime reconciliation now also emits truthful Drift derivative findings only where both internal and external state are genuinely comparable.
 - Runtime mismatches also support first-class remediation attempts for `rebuild_projections` and `run_cycle`, with durable linkage to commands and recovery outcomes.
 - The API exposes reconciliation runs, findings, summary, and mismatch-linked finding history for operator workflows.
 - The API now also exposes allocator summary, latest sleeve targets, decision history/detail, run history, and explicit allocator evaluation queueing.
@@ -205,6 +231,7 @@ Known limitations:
 - The API now also exposes bundle escalation detail/history and explicit assignment, acknowledgement, review, and close mutations.
 - The API now also exposes an escalations queue, queue summary counts, and an authenticated mine view.
 - The API now also exposes generic venue inventory, venue readiness, venue summary counts, truth-depth summary, and per-venue snapshot detail.
+- The API now also exposes venue internal-state, comparison-summary, and comparison-detail surfaces for operators.
 - The API now also exposes treasury summary, allocations, policy, recommendation/action detail, action-scoped execution history, execution detail, venue readiness/detail, treasury approval, and treasury execution queueing.
 - The API now also exposes carry recommendations/actions, carry action detail, carry execution history/detail, carry venue readiness, carry evaluation queueing, and carry approval-driven execution queueing.
 - Sensitive runtime and control mutations now require authenticated operator identity and backend role authorization.

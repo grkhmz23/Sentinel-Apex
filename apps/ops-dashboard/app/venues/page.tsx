@@ -97,19 +97,22 @@ export default async function VenuesPage(): Promise<JSX.Element> {
           <Panel subtitle="Depth of account, balance, exposure, and reference truth across the venue inventory" title="Truth Depth">
             <DefinitionList
               items={[
+                { label: 'Drift-native read-only', value: String(truthSummary.connectorDepth.drift_native_readonly) },
+                { label: 'Generic RPC read-only', value: String(truthSummary.connectorDepth.generic_rpc_readonly) },
+                { label: 'Execution-capable depth', value: String(truthSummary.connectorDepth.execution_capable) },
                 { label: 'Complete snapshots', value: String(truthSummary.completeSnapshots) },
                 { label: 'Partial snapshots', value: String(truthSummary.partialSnapshots) },
                 { label: 'Minimal snapshots', value: String(truthSummary.minimalSnapshots) },
                 { label: 'Derivative-aware venues', value: String(truthSummary.derivativeAwareVenues) },
                 { label: 'Generic wallet venues', value: String(truthSummary.genericWalletVenues) },
                 { label: 'Capacity-only venues', value: String(truthSummary.capacityOnlyVenues) },
-                { label: 'Account state available', value: String(truthSummary.accountState.available) },
-                { label: 'Balance state available', value: String(truthSummary.balanceState.available) },
-                { label: 'Exposure state available', value: String(truthSummary.exposureState.available) },
-                { label: 'Derivative acct partial', value: String(truthSummary.derivativeAccountState.partial) },
+                { label: 'Decoded derivative accounts', value: String(truthSummary.decodedDerivativeAccountVenues) },
+                { label: 'Decoded derivative positions', value: String(truthSummary.decodedDerivativePositionVenues) },
+                { label: 'Health metric venues', value: String(truthSummary.healthMetricVenues) },
+                { label: 'Venue open-order inventory', value: String(truthSummary.venueOpenOrderInventoryVenues) },
                 { label: 'Derivative positions available', value: String(truthSummary.derivativePositionState.available) },
                 { label: 'Derivative health available', value: String(truthSummary.derivativeHealthState.available) },
-                { label: 'Order state partial', value: String(truthSummary.orderState.partial) },
+                { label: 'Order state available', value: String(truthSummary.orderState.available) },
                 { label: 'Execution refs available', value: String(truthSummary.executionReferences.available) },
               ]}
             />
@@ -140,6 +143,7 @@ export default async function VenuesPage(): Promise<JSX.Element> {
                         <Link href={`/venues/${venue.venueId}`}>{venue.venueName}</Link>
                         <span className="panel__hint">{venue.venueId}</span>
                         <span className="panel__hint">{venue.connectorType}</span>
+                        <span className="panel__hint">{venue.sourceMetadata.connectorDepth ?? 'depth not recorded'}</span>
                       </div>
                     </td>
                     <td>
@@ -172,10 +176,13 @@ export default async function VenuesPage(): Promise<JSX.Element> {
                           acct {venue.truthCoverage.accountState.status}, bal {venue.truthCoverage.balanceState.status}
                         </span>
                         <span className="panel__hint">
-                          deriv acct {venue.truthCoverage.derivativeAccountState.status}, orders {venue.truthCoverage.orderState.status}
+                          deriv acct {venue.truthCoverage.derivativeAccountState.status}, positions {venue.truthCoverage.derivativePositionState.status}
                         </span>
                         <span className="panel__hint">
-                          exp {venue.truthCoverage.exposureState.status}, refs {venue.truthCoverage.executionReferences.status}
+                          health {venue.truthCoverage.derivativeHealthState.status}, orders {venue.truthCoverage.orderState.status}
+                        </span>
+                        <span className="panel__hint">
+                          refs {venue.comparisonCoverage.executionReferences.status}, direct pos compare {venue.comparisonCoverage.positionInventory.status}
                         </span>
                       </div>
                     </td>

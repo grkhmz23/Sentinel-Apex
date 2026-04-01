@@ -218,6 +218,7 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
     const sourceMetadata = {
       sourceKind: 'json_rpc' as const,
       sourceName: 'solana_rpc_readonly',
+      connectorDepth: 'generic_rpc_readonly' as const,
       observedScope: this.config.accountAddress === undefined || this.config.accountAddress === ''
         ? ['cluster_version']
         : [

@@ -106,6 +106,84 @@ export async function venueRoutes(
 
   app.get<{
     Params: { venueId: string };
+  }>(
+    '/api/v1/venues/:venueId/internal-state',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const state = await controlPlane.getVenueInternalState(request.params.venueId);
+      if (state === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Internal derivative state for venue '${request.params.venueId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: state,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { venueId: string };
+  }>(
+    '/api/v1/venues/:venueId/comparison-summary',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const summary = await controlPlane.getVenueComparisonSummary(request.params.venueId);
+      if (summary === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Comparison summary for venue '${request.params.venueId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: summary,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { venueId: string };
+  }>(
+    '/api/v1/venues/:venueId/comparison-detail',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const detail = await controlPlane.getVenueComparisonDetail(request.params.venueId);
+      if (detail === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Comparison detail for venue '${request.params.venueId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: detail,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { venueId: string };
     Querystring: { limit?: string };
   }>(
     '/api/v1/venues/:venueId/snapshots',

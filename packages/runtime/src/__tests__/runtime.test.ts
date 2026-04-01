@@ -55,19 +55,27 @@ class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
       venueId: this.venueId,
       venueName: this.venueName,
       sleeveApplicability: ['carry'],
-      connectorType: 'solana_rpc_readonly',
+      connectorType: 'drift_native_readonly',
       truthMode: 'real' as const,
       readOnlySupport: true,
       executionSupport: false,
       approvedForLiveUse: false,
       onboardingState: 'read_only' as const,
       missingPrerequisites: [],
-      authRequirementsSummary: ['DRIFT_RPC_ENDPOINT', 'DRIFT_READONLY_ACCOUNT_ADDRESS'],
+      authRequirementsSummary: [
+        'DRIFT_RPC_ENDPOINT',
+        'DRIFT_READONLY_ENV',
+        'DRIFT_READONLY_ACCOUNT_ADDRESS or DRIFT_READONLY_AUTHORITY_ADDRESS',
+      ],
       healthy: true,
       healthState: 'healthy' as const,
       degradedReason: null,
       metadata: {
+        driftEnv: 'mainnet-beta',
+        commitment: 'confirmed',
         endpointConfigured: true,
+        accountAddressConfigured: true,
+        executionPosture: 'read_only',
       },
     };
   }
@@ -76,14 +84,14 @@ class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
     return {
       venueId: this.venueId,
       venueName: this.venueName,
-      snapshotType: 'solana_rpc_account_state',
+      snapshotType: 'drift_native_user_account',
       snapshotSuccessful: true,
       healthy: true,
       healthState: 'healthy' as const,
-      summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+      summary: 'Drift-native read-only snapshot captured for Apex Carry with 2 positions, 2 open orders, and health score 84.',
       errorMessage: null,
       capturedAt: '2026-03-31T12:00:00.000Z',
-      snapshotCompleteness: 'partial',
+      snapshotCompleteness: 'complete',
       truthCoverage: {
         accountState: {
           status: 'available',
@@ -91,60 +99,68 @@ class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
           limitations: [],
         },
         balanceState: {
-          status: 'available',
-          reason: null,
+          status: 'unsupported',
+          reason: 'Drift-native read-only decode exposes collateral inventory via derivative positions rather than generic wallet balances.',
           limitations: [],
         },
         capacityState: {
           status: 'unsupported',
-          reason: 'Generic Solana RPC does not expose venue capacity.',
+          reason: 'Read-only Drift connector does not expose treasury-style venue capacity.',
           limitations: [],
         },
         exposureState: {
           status: 'available',
           reason: null,
-          limitations: ['Exposure is balance-derived and does not include venue-native derivatives.'],
+          limitations: ['Exposure rows are operator-facing derived views over decoded Drift positions.'],
         },
         derivativeAccountState: {
-          status: 'partial',
-          reason: 'Program-owned account metadata is visible, but venue-native derivative decoding is not implemented.',
-          limitations: ['Authority, subaccount, positions, and health require a venue SDK or IDL-backed decoder.'],
+          status: 'available',
+          reason: null,
+          limitations: [],
         },
         derivativePositionState: {
-          status: 'unsupported',
-          reason: 'Generic Solana RPC does not decode venue-native derivative positions.',
-          limitations: [],
+          status: 'available',
+          reason: null,
+          limitations: ['Inventory is venue-native; valuation fields are Drift SDK calculations over current market and oracle state.'],
         },
         derivativeHealthState: {
-          status: 'unsupported',
-          reason: 'Generic Solana RPC does not decode venue-native margin or health state.',
-          limitations: [],
+          status: 'available',
+          reason: null,
+          limitations: ['Health and margin metrics are Drift SDK calculations over venue-native state.'],
         },
         orderState: {
-          status: 'partial',
-          reason: 'Order context is reference-only and derived from recent account signatures.',
-          limitations: ['Order state is limited to reference-only recent signatures and not venue-native open orders.'],
+          status: 'available',
+          reason: null,
+          limitations: ['placedAt is intentionally null because the read-only path does not backfill per-order timestamps.'],
         },
         executionReferences: {
           status: 'available',
           reason: null,
-          limitations: ['Execution references are limited to recent account signatures.'],
+          limitations: ['Execution references are recent Solana signatures for the tracked Drift user account.'],
         },
       },
       sourceMetadata: {
-        sourceKind: 'json_rpc',
-        sourceName: 'solana_rpc_readonly',
+        sourceKind: 'adapter',
+        sourceName: 'drift_native_readonly',
+        connectorDepth: 'drift_native_readonly',
+        commitment: 'confirmed',
+        observedSlot: '123',
         observedScope: [
-          'account_identity',
-          'native_balance',
+          'drift_user_account_lookup',
+          'drift_user_account_decode',
+          'drift_position_inventory',
+          'drift_margin_health',
+          'drift_open_orders',
           'recent_signatures',
-          'derivative_account_metadata',
-          'order_reference_context',
+        ],
+        provenanceNotes: [
+          'This connector is read-only and never signs or submits transactions.',
+          'Derivative health and valuation metrics are Drift SDK calculations over decoded user, market, and oracle state.',
         ],
       },
       accountState: {
         accountAddress: 'readonly-account',
-        accountLabel: 'Runtime test wallet',
+        accountLabel: 'Apex Carry',
         accountExists: true,
         ownerProgram: 'drift-program',
         executable: false,
@@ -152,82 +168,202 @@ class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
         nativeBalanceDisplay: '12.000000000',
         observedSlot: '123',
         rentEpoch: '0',
-        dataLength: 0,
+        dataLength: 512,
       },
-      balanceState: {
-        balances: [{
-          assetKey: 'SOL',
-          assetSymbol: 'SOL',
-          assetType: 'native',
-          accountAddress: 'readonly-account',
-          amountAtomic: '12000000000',
-          amountDisplay: '12.000000000',
-          decimals: 9,
-          observedSlot: '123',
-        }],
-        totalTrackedBalances: 1,
-        observedSlot: '123',
-      },
+      balanceState: null,
       capacityState: null,
       exposureState: {
         exposures: [{
-          exposureKey: 'SOL:readonly-account',
-          exposureType: 'balance_derived_spot',
-          assetKey: 'SOL',
-          quantity: '12000000000',
-          quantityDisplay: '12.000000000',
+          exposureKey: 'perp:0:readonly-account',
+          exposureType: 'position',
+          assetKey: 'BTC-PERP',
+          quantity: '0.75',
+          quantityDisplay: '0.75',
           accountAddress: 'readonly-account',
         }],
-        methodology: 'balance_derived_spot_exposure',
+        methodology: 'drift_position_inventory_exposure',
+        provenance: {
+          classification: 'derived',
+          source: 'drift_sdk_margin_math',
+          notes: ['Exposure rows were derived from decoded Drift position inventory.'],
+        },
       },
       derivativeAccountState: {
         venue: this.venueId,
         accountAddress: 'readonly-account',
-        accountLabel: 'Runtime test wallet',
+        accountLabel: 'Apex Carry',
         accountExists: true,
         ownerProgram: 'drift-program',
         accountModel: 'program_account',
-        venueAccountType: null,
-        decoded: false,
-        authorityAddress: null,
-        subaccountId: null,
+        venueAccountType: 'drift_user',
+        decoded: true,
+        authorityAddress: 'drift-authority',
+        subaccountId: 0,
+        userName: 'Apex Carry',
+        delegateAddress: 'drift-delegate',
+        marginMode: 'default',
+        poolId: 0,
+        marginTradingEnabled: true,
+        openOrderCount: 2,
+        openAuctionCount: 0,
+        statusFlags: ['protected_maker'],
         observedSlot: '123',
         rpcVersion: '1.18.0',
         dataLength: 512,
         rawDiscriminatorHex: '0102030405060708',
         notes: [
-          'Program-owned account metadata was captured from raw RPC.',
-          'Venue-native decode is unavailable in the current repo because no Drift or Anchor decoder is present.',
+          'The Drift user account was decoded directly with the Drift SDK account coder.',
+          'Order inventory in this snapshot comes directly from the user account, while health and liquidation metrics are SDK-derived.',
         ],
+        provenance: {
+          classification: 'exact',
+          source: 'drift_user_account_decode',
+          notes: ['Values were decoded directly from the Drift user account.'],
+        },
       },
-      derivativePositionState: null,
-      derivativeHealthState: null,
-      orderState: {
-        openOrderCount: null,
-        openOrders: [{
-          venueOrderId: null,
-          reference: 'sig-runtime-test-1',
-          marketKey: null,
-          marketSymbol: null,
-          side: 'unknown',
-          status: 'confirmed',
-          orderType: null,
-          price: null,
-          quantity: null,
-          reduceOnly: null,
-          accountAddress: 'readonly-account',
-          slot: '123',
-          placedAt: '2026-03-31T11:59:00.000Z',
-          metadata: {
-            referenceOnly: true,
+      derivativePositionState: {
+        positions: [
+          {
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            positionType: 'perp',
+            side: 'long',
+            baseAssetAmount: '0.75',
+            quoteAssetAmount: '-51250',
+            entryPrice: '68333.333333',
+            breakEvenPrice: '68400.000000',
+            unrealizedPnlUsd: '950.250000',
+            liquidationPrice: '52100.000000',
+            positionValueUsd: '52125.000000',
+            openOrders: 1,
+            openBids: '0.10',
+            openAsks: '0',
+            metadata: {},
+            provenance: {
+              classification: 'mixed',
+              source: 'drift_user_account_with_market_context',
+              notes: ['Inventory is exact while valuation uses Drift SDK market context.'],
+            },
           },
-        }],
-        referenceMode: 'recent_account_signatures',
-        methodology: 'recent_account_signatures_reference_context',
-        notes: [
-          'This section is reference-only context derived from recent account signatures.',
-          'It is not a venue-native open-orders decode and may include non-order transactions.',
+          {
+            marketIndex: 1,
+            marketKey: 'spot:1',
+            marketSymbol: 'SOL',
+            positionType: 'spot',
+            side: 'long',
+            baseAssetAmount: '12.500000000',
+            quoteAssetAmount: null,
+            entryPrice: null,
+            breakEvenPrice: null,
+            unrealizedPnlUsd: null,
+            liquidationPrice: '102.100000',
+            positionValueUsd: '1875.000000',
+            openOrders: 1,
+            openBids: null,
+            openAsks: null,
+            metadata: {},
+            provenance: {
+              classification: 'mixed',
+              source: 'drift_user_account_with_market_context',
+              notes: ['Spot balance identity is exact while valuation uses Drift spot-market context.'],
+            },
+          },
         ],
+        openPositionCount: 2,
+        methodology: 'drift_user_account_with_market_context',
+        notes: [
+          'Perp and spot inventory was decoded from the Drift user account.',
+          'Valuation and liquidation fields used subscribed Drift market and oracle state where required.',
+        ],
+        provenance: {
+          classification: 'mixed',
+          source: 'drift_user_account_with_market_context',
+          notes: ['Inventory is exact venue-native state while valuation fields are SDK-derived.'],
+        },
+      },
+      derivativeHealthState: {
+        healthStatus: 'healthy',
+        healthScore: 84,
+        collateralUsd: '153450.250000',
+        marginRatio: '0.2841',
+        leverage: '2.1100',
+        maintenanceMarginRequirementUsd: '18050.000000',
+        initialMarginRequirementUsd: '26250.000000',
+        freeCollateralUsd: '109150.250000',
+        methodology: 'drift_sdk_margin_calculation',
+        notes: [
+          'Health, collateral, leverage, and margin metrics are derived from decoded Drift user, market, and oracle state.',
+        ],
+        provenance: {
+          classification: 'derived',
+          source: 'drift_sdk_margin_math',
+          notes: ['All health and margin metrics are SDK-derived from venue-native state.'],
+        },
+      },
+      orderState: {
+        openOrderCount: 2,
+        openOrders: [
+          {
+            marketIndex: 0,
+            venueOrderId: '901',
+            reference: '41',
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            marketType: 'perp',
+            userOrderId: 41,
+            side: 'buy',
+            status: 'open',
+            orderType: 'limit',
+            price: '68000.000000',
+            quantity: '0.100000000',
+            reduceOnly: false,
+            accountAddress: 'readonly-account',
+            slot: '123',
+            placedAt: null,
+            metadata: {},
+            provenance: {
+              classification: 'exact',
+              source: 'drift_user_account_decode',
+              notes: ['Open-order inventory was decoded directly from the Drift user account.'],
+            },
+          },
+          {
+            marketIndex: 1,
+            venueOrderId: '902',
+            reference: '42',
+            marketKey: 'spot:1',
+            marketSymbol: 'SOL',
+            marketType: 'spot',
+            userOrderId: 42,
+            side: 'sell',
+            status: 'open',
+            orderType: 'limit',
+            price: '151.250000',
+            quantity: '4.500000000',
+            reduceOnly: false,
+            accountAddress: 'readonly-account',
+            slot: '123',
+            placedAt: null,
+            metadata: {},
+            provenance: {
+              classification: 'exact',
+              source: 'drift_user_account_decode',
+              notes: ['Open-order inventory was decoded directly from the Drift user account.'],
+            },
+          },
+        ],
+        referenceMode: 'venue_open_orders',
+        methodology: 'drift_user_account_open_orders',
+        notes: [
+          'Open-order inventory was decoded directly from the Drift user account.',
+          'placedAt remains null because this read-only path does not backfill transaction timestamps for each order.',
+        ],
+        provenance: {
+          classification: 'exact',
+          source: 'drift_user_account_decode',
+          notes: ['Open-order inventory was decoded directly from the Drift user account.'],
+        },
       },
       executionReferenceState: {
         referenceLookbackLimit: 10,
@@ -244,7 +380,12 @@ class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
         oldestReferenceAt: '2026-03-31T11:59:00.000Z',
       },
       payload: {
-        balanceSol: '12.000000000',
+        accountAddress: 'readonly-account',
+        authorityAddress: 'drift-authority',
+        subaccountId: 0,
+        openOrderCount: 2,
+        openPositionCount: 2,
+        healthScore: 84,
       },
       metadata: {},
     };
@@ -438,7 +579,7 @@ describe('SentinelRuntime', () => {
     await runtime.close();
   });
 
-  it('persists generic venue truth inventory and real read-only snapshots', async () => {
+  it('persists Drift-native venue truth inventory and real read-only snapshots', async () => {
     const runtime = await createRuntime({
       truthAdapters: [new StubReadonlyVenueTruthAdapter()],
     });
@@ -453,9 +594,45 @@ describe('SentinelRuntime', () => {
     expect(venues.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthProfile).toBe('derivative_aware');
     expect(summary.realReadOnly).toBeGreaterThan(0);
     expect(summary.derivativeAware).toBeGreaterThan(0);
-    expect(detail?.venue.truthCoverage.derivativeAccountState.status).toBe('partial');
-    expect(detail?.snapshots[0]?.snapshotType).toBe('solana_rpc_account_state');
-    expect(detail?.snapshots[0]?.orderState?.referenceMode).toBe('recent_account_signatures');
+    expect(detail?.venue.truthCoverage.derivativeAccountState.status).toBe('available');
+    expect(detail?.venue.sourceMetadata.connectorDepth).toBe('drift_native_readonly');
+    expect(detail?.snapshots[0]?.snapshotType).toBe('drift_native_user_account');
+    expect(detail?.snapshots[0]?.orderState?.referenceMode).toBe('venue_open_orders');
+    expect(detail?.snapshots[0]?.derivativePositionState?.positions.length).toBeGreaterThan(0);
+    expect(detail?.snapshots[0]?.derivativeHealthState?.healthScore).toBe(84);
+
+    await runtime.close();
+  });
+
+  it('persists canonical internal derivative state from real order and fill flows', async () => {
+    const runtime = await createRuntime({
+      internalDerivativeTargets: [
+        {
+          venueId: 'sim-venue-a',
+          venueName: 'Simulated Venue A',
+          authorityAddress: 'sim-authority-a',
+          subaccountId: 0,
+          accountLabel: 'Internal Derivative Test Account',
+        },
+      ],
+    });
+
+    await runtime.runCycle('runtime-internal-derivative-state-test');
+
+    const state = await runtime.getVenueInternalState('sim-venue-a');
+
+    expect(state).not.toBeNull();
+    expect(state?.venueId).toBe('sim-venue-a');
+    expect(state?.coverage.accountState.status).toBe('available');
+    expect(state?.coverage.positionState.status).toBe('available');
+    expect(state?.coverage.healthState.status).toBe('unsupported');
+    expect(state?.coverage.orderState.status).toBe('available');
+    expect(state?.accountState?.authorityAddress).toBe('sim-authority-a');
+    expect(state?.positionState?.openPositionCount).toBeGreaterThan(0);
+    expect(state?.positionState?.positions[0]?.provenance.source).toBe('runtime_fill_ledger');
+    expect(state?.orderState?.openOrderCount).toBe(0);
+    expect(state?.healthState?.healthStatus).toBe('unknown');
+    expect(state?.healthState?.provenance.classification).toBe('estimated');
 
     await runtime.close();
   });

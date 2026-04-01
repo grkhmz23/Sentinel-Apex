@@ -123,6 +123,7 @@ export class RuntimeReconciliationEngine {
         ...(await this.detectOrderStateFindings(input.sourceComponent, detectedAt)),
         ...(await this.detectPositionExposureFindings(input.sourceComponent, detectedAt)),
         ...(await this.detectVenueTruthFindings(input.sourceComponent, detectedAt)),
+        ...(await this.detectDerivativeComparisonFindings(input.sourceComponent, detectedAt)),
       ];
 
       const linkedMismatchIds = new Set<string>();
@@ -778,6 +779,7 @@ export class RuntimeReconciliationEngine {
           snapshotFreshness: venue.snapshotFreshness,
           healthState: venue.healthState,
           truthProfile: venue.truthProfile,
+          connectorDepth: venue.sourceMetadata.connectorDepth ?? null,
           lastSnapshotAt: venue.lastSnapshotAt,
           lastSuccessfulSnapshotAt: venue.lastSuccessfulSnapshotAt,
         },
@@ -787,6 +789,7 @@ export class RuntimeReconciliationEngine {
         details: {
           venueName: venue.venueName,
           latestSnapshotSummary: venue.latestSnapshotSummary,
+          comparisonCoverage: venue.comparisonCoverage,
         },
         detectedAt,
       });
@@ -813,6 +816,7 @@ export class RuntimeReconciliationEngine {
         actualState: {
           healthState: venue.healthState,
           truthProfile: venue.truthProfile,
+          connectorDepth: venue.sourceMetadata.connectorDepth ?? null,
           latestSnapshotType: venue.latestSnapshotType,
           latestErrorMessage: venue.latestErrorMessage,
           lastSnapshotAt: venue.lastSnapshotAt,
@@ -823,6 +827,7 @@ export class RuntimeReconciliationEngine {
         details: {
           venueName: venue.venueName,
           latestSnapshotSummary: venue.latestSnapshotSummary,
+          comparisonCoverage: venue.comparisonCoverage,
         },
         detectedAt,
       });
@@ -856,7 +861,9 @@ export class RuntimeReconciliationEngine {
         actualState: {
           truthProfile: venue.truthProfile,
           snapshotCompleteness: venue.snapshotCompleteness,
+          connectorDepth: venue.sourceMetadata.connectorDepth ?? null,
           truthCoverage: venue.truthCoverage,
+          comparisonCoverage: venue.comparisonCoverage,
           lastSnapshotAt: venue.lastSnapshotAt,
         },
         delta: {
@@ -867,6 +874,7 @@ export class RuntimeReconciliationEngine {
           venueName: venue.venueName,
           latestSnapshotSummary: venue.latestSnapshotSummary,
           sourceMetadata: venue.sourceMetadata,
+          comparisonCoverage: venue.comparisonCoverage,
           derivativeCoverage: {
             derivativeAccountState: venue.truthCoverage.derivativeAccountState,
             derivativePositionState: venue.truthCoverage.derivativePositionState,
@@ -926,11 +934,240 @@ export class RuntimeReconciliationEngine {
           latestSnapshotSummary: venue.latestSnapshotSummary,
           orderReferenceMode: latestSnapshot[0]?.orderState?.referenceMode ?? 'none',
           orderCoverage: latestSnapshot[0]?.truthCoverage.orderState ?? null,
+          connectorDepth: venue.sourceMetadata.connectorDepth ?? null,
+          comparisonCoverage: venue.comparisonCoverage,
         },
         detectedAt,
       });
       if (executionReferenceMismatch !== null) {
         results.push(executionReferenceMismatch);
+      }
+    }
+
+    return results;
+  }
+
+  private async detectDerivativeComparisonFindings(
+    sourceComponent: string,
+    detectedAt: Date,
+  ): Promise<ReconciliationCandidateFinding[]> {
+    const results: ReconciliationCandidateFinding[] = [];
+    const venues = await this.store.listVenues(500);
+
+    for (const venue of venues) {
+      if (venue.truthMode !== 'real' || venue.truthProfile !== 'derivative_aware') {
+        continue;
+      }
+
+      const [comparisonDetail, sourceWatermark] = await Promise.all([
+        this.store.getVenueComparisonDetail(venue.venueId),
+        this.store.getInternalDerivativeSourceWatermark(venue.venueId),
+      ]);
+      if (comparisonDetail === null) {
+        continue;
+      }
+
+      const staleInternalState = await this.toCandidateFinding({
+        dedupeKey: `stale_internal_derivative_state:${venue.venueId}`,
+        findingType: 'stale_internal_derivative_state',
+        active: sourceWatermark !== null
+          && (
+            comparisonDetail.summary.internalSnapshotAt === null
+            || sourceWatermark > comparisonDetail.summary.internalSnapshotAt
+          ),
+        severity: 'medium',
+        sourceComponent,
+        subsystem: 'internal_derivative_state',
+        venueId: venue.venueId,
+        entityType: 'venue_connector',
+        entityId: venue.venueId,
+        summaryActive: `Internal derivative state for ${venue.venueId} is stale relative to persisted internal order or fill facts.`,
+        summaryResolved: `Internal derivative state for ${venue.venueId} is current against persisted internal order and fill facts.`,
+        expectedState: {
+          internalSnapshotAt: sourceWatermark ?? comparisonDetail.summary.internalSnapshotAt,
+        },
+        actualState: {
+          internalSnapshotAt: comparisonDetail.summary.internalSnapshotAt,
+          sourceWatermark,
+        },
+        delta: {
+          venueName: venue.venueName,
+        },
+        details: {
+          comparisonSummary: comparisonDetail.summary,
+        },
+        detectedAt,
+      });
+      if (staleInternalState !== null) {
+        results.push(staleInternalState);
+      }
+
+      const gapSectionCandidates: Array<{
+        section: string;
+        coverage: typeof comparisonDetail.summary.subaccountIdentity;
+        externallyAvailable: boolean;
+      }> = [
+        {
+          section: 'subaccountIdentity',
+          coverage: comparisonDetail.summary.subaccountIdentity,
+          externallyAvailable: venue.truthCoverage.derivativeAccountState.status === 'available',
+        },
+        {
+          section: 'positionInventory',
+          coverage: comparisonDetail.summary.positionInventory,
+          externallyAvailable: venue.truthCoverage.derivativePositionState.status === 'available',
+        },
+        {
+          section: 'healthState',
+          coverage: comparisonDetail.summary.healthState,
+          externallyAvailable: venue.truthCoverage.derivativeHealthState.status === 'available',
+        },
+        {
+          section: 'orderInventory',
+          coverage: comparisonDetail.summary.orderInventory,
+          externallyAvailable: venue.truthCoverage.orderState.status === 'available',
+        },
+      ];
+      const gapSections = gapSectionCandidates
+        .filter((candidate) => candidate.externallyAvailable && candidate.coverage.status !== 'available')
+        .map(({ section, coverage }) => ({
+          section,
+          coverage,
+        }));
+
+      const comparisonGap = await this.toCandidateFinding({
+        dedupeKey: `drift_truth_comparison_gap:${venue.venueId}`,
+        findingType: 'drift_truth_comparison_gap',
+        active: gapSections.length > 0,
+        severity: 'low',
+        sourceComponent,
+        subsystem: 'derivative_truth_comparison',
+        venueId: venue.venueId,
+        entityType: 'venue_connector',
+        entityId: venue.venueId,
+        summaryActive: `Derivative truth comparison for ${venue.venueId} remains partial or unsupported for ${gapSections.length} section(s).`,
+        summaryResolved: `Derivative truth comparison for ${venue.venueId} now covers every externally supported internal section.`,
+        expectedState: {
+          subaccountIdentity: 'available_or_external_unsupported',
+          positionInventory: 'available_or_external_unsupported',
+          healthState: 'available_or_external_unsupported',
+          orderInventory: 'available_or_external_unsupported',
+        },
+        actualState: {
+          comparisonSummary: comparisonDetail.summary,
+        },
+        delta: {
+          gapSections: gapSections.map((gap) => ({
+            section: gap.section,
+            status: gap.coverage.status,
+            reason: gap.coverage.reason,
+          })),
+        },
+        details: {
+          venueName: venue.venueName,
+          comparisonSummary: comparisonDetail.summary,
+        },
+        detectedAt,
+      });
+      if (comparisonGap !== null) {
+        results.push(comparisonGap);
+      }
+
+      const subaccountMismatch = await this.toCandidateFinding({
+        dedupeKey: `drift_subaccount_identity_mismatch:${venue.venueId}`,
+        findingType: 'drift_subaccount_identity_mismatch',
+        active: comparisonDetail.accountComparison.comparable
+          && comparisonDetail.accountComparison.status === 'mismatched',
+        severity: 'high',
+        sourceComponent,
+        subsystem: 'derivative_truth_comparison',
+        venueId: venue.venueId,
+        entityType: 'derivative_account',
+        entityId: venue.venueId,
+        summaryActive: `Internal derivative account identity for ${venue.venueId} does not match external Drift-native account truth.`,
+        summaryResolved: `Internal derivative account identity for ${venue.venueId} matches external Drift-native account truth.`,
+        expectedState: comparisonDetail.accountComparison.internalState === null
+          ? {}
+          : { ...comparisonDetail.accountComparison.internalState },
+        actualState: comparisonDetail.accountComparison.externalState === null
+          ? {}
+          : { ...comparisonDetail.accountComparison.externalState },
+        delta: {
+          notes: comparisonDetail.accountComparison.notes,
+        },
+        details: {
+          venueName: venue.venueName,
+        },
+        detectedAt,
+      });
+      if (subaccountMismatch !== null) {
+        results.push(subaccountMismatch);
+      }
+
+      for (const comparison of comparisonDetail.positionComparisons) {
+        const positionMismatch = await this.toCandidateFinding({
+          dedupeKey: `drift_position_mismatch:${venue.venueId}:${comparison.comparisonKey}`,
+          findingType: 'drift_position_mismatch',
+          active: comparison.status === 'mismatched'
+            || comparison.status === 'internal_only'
+            || comparison.status === 'external_only',
+          severity: comparison.status === 'matched'
+            ? 'low'
+            : comparison.status === 'mismatched'
+              ? 'high'
+              : 'medium',
+          sourceComponent,
+          subsystem: 'derivative_truth_comparison',
+          venueId: venue.venueId,
+          entityType: 'derivative_position',
+          entityId: comparison.comparisonKey,
+          summaryActive: `Internal derivative position ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift-native truth.`,
+          summaryResolved: `Internal derivative position ${comparison.comparisonKey} on ${venue.venueId} matches external Drift-native truth.`,
+          expectedState: comparison.internalPosition === null ? {} : { ...comparison.internalPosition },
+          actualState: comparison.externalPosition === null ? {} : { ...comparison.externalPosition },
+          delta: {
+            quantityDelta: comparison.quantityDelta,
+            status: comparison.status,
+          },
+          details: {
+            notes: comparison.notes,
+          },
+          detectedAt,
+        });
+        if (positionMismatch !== null) {
+          results.push(positionMismatch);
+        }
+      }
+
+      for (const comparison of comparisonDetail.orderComparisons) {
+        const orderMismatch = await this.toCandidateFinding({
+          dedupeKey: `drift_order_inventory_mismatch:${venue.venueId}:${comparison.comparisonKey}`,
+          findingType: 'drift_order_inventory_mismatch',
+          active: comparison.status === 'mismatched'
+            || comparison.status === 'internal_only'
+            || comparison.status === 'external_only',
+          severity: comparison.status === 'matched' ? 'low' : 'medium',
+          sourceComponent,
+          subsystem: 'derivative_truth_comparison',
+          venueId: venue.venueId,
+          entityType: 'derivative_order',
+          entityId: comparison.comparisonKey,
+          summaryActive: `Internal open-order inventory for ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift-native truth.`,
+          summaryResolved: `Internal open-order inventory for ${comparison.comparisonKey} on ${venue.venueId} matches external Drift-native truth.`,
+          expectedState: comparison.internalOrder === null ? {} : { ...comparison.internalOrder },
+          actualState: comparison.externalOrder === null ? {} : { ...comparison.externalOrder },
+          delta: {
+            remainingSizeDelta: comparison.remainingSizeDelta,
+            status: comparison.status,
+          },
+          details: {
+            notes: comparison.notes,
+          },
+          detectedAt,
+        });
+        if (orderMismatch !== null) {
+          results.push(orderMismatch);
+        }
       }
     }
 

@@ -5,10 +5,19 @@ import {
   allocatorRebalanceProposals,
   carryActions,
   createDatabaseConnection,
+  type DatabaseConnection,
   treasuryActionExecutions,
   treasuryActions,
 } from '@sentinel-apex/db';
-import type { RuntimeControlPlane, RuntimeWorker } from '@sentinel-apex/runtime';
+import {
+  DatabaseAuditWriter,
+  RuntimeStore,
+} from '@sentinel-apex/runtime';
+import type {
+  InternalDerivativeSnapshotView,
+  RuntimeControlPlane,
+  RuntimeWorker,
+} from '@sentinel-apex/runtime';
 import type {
   VenueCapabilitySnapshot,
   VenueTruthAdapter,
@@ -62,14 +71,14 @@ function createStubVenueTruthSnapshot(
   return {
     venueId,
     venueName,
-    snapshotType: 'solana_rpc_account_state',
+    snapshotType: 'drift_native_user_account',
     snapshotSuccessful: true,
     healthy: true,
     healthState: 'healthy',
-    summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+    summary: `Drift-native read-only snapshot captured for ${venueName} with 2 positions, 2 open orders, and health score 84.`,
     errorMessage: null,
     capturedAt: freshCapturedAt(),
-    snapshotCompleteness: 'partial',
+    snapshotCompleteness: 'complete',
     truthCoverage: {
       accountState: {
         status: 'available',
@@ -77,55 +86,63 @@ function createStubVenueTruthSnapshot(
         limitations: [],
       },
       balanceState: {
-        status: 'available',
-        reason: null,
+        status: 'unsupported',
+        reason: 'Drift-native read-only decode exposes collateral inventory via derivative positions rather than generic wallet balances.',
         limitations: [],
       },
       capacityState: {
         status: 'unsupported',
-        reason: 'Generic Solana RPC does not expose venue capacity.',
+        reason: 'Read-only Drift connector does not expose treasury-style venue capacity.',
         limitations: [],
       },
       exposureState: {
         status: 'available',
         reason: null,
-        limitations: ['Exposure is balance-derived and does not include venue-native derivatives.'],
+        limitations: ['Exposure rows are operator-facing derived views over decoded Drift positions.'],
       },
       derivativeAccountState: {
-        status: 'partial',
-        reason: 'Program-owned account metadata is visible, but venue-native derivative decoding is not implemented.',
-        limitations: ['Authority, subaccount, positions, and health require a venue SDK or IDL-backed decoder.'],
+        status: 'available',
+        reason: null,
+        limitations: [],
       },
       derivativePositionState: {
-        status: 'unsupported',
-        reason: 'Generic Solana RPC does not decode venue-native derivative positions.',
-        limitations: [],
+        status: 'available',
+        reason: null,
+        limitations: ['Inventory is venue-native; valuation fields are Drift SDK calculations over current market and oracle state.'],
       },
       derivativeHealthState: {
-        status: 'unsupported',
-        reason: 'Generic Solana RPC does not decode venue-native margin or health state.',
-        limitations: [],
+        status: 'available',
+        reason: null,
+        limitations: ['Health and margin metrics are Drift SDK calculations over venue-native state.'],
       },
       orderState: {
-        status: 'partial',
-        reason: 'Order context is reference-only and derived from recent account signatures.',
-        limitations: ['Order state is limited to reference-only recent signatures and not venue-native open orders.'],
+        status: 'available',
+        reason: null,
+        limitations: ['placedAt is intentionally null because the read-only path does not backfill per-order timestamps.'],
       },
       executionReferences: {
         status: 'available',
         reason: null,
-        limitations: ['Execution references are limited to recent account signatures.'],
+        limitations: ['Execution references are recent Solana signatures for the tracked Drift user account.'],
       },
     },
     sourceMetadata: {
-      sourceKind: 'json_rpc',
-      sourceName: 'solana_rpc_readonly',
+      sourceKind: 'adapter',
+      sourceName: 'drift_native_readonly',
+      connectorDepth: 'drift_native_readonly',
+      commitment: 'confirmed',
+      observedSlot: '123',
       observedScope: [
-        'account_identity',
-        'native_balance',
+        'drift_user_account_lookup',
+        'drift_user_account_decode',
+        'drift_position_inventory',
+        'drift_margin_health',
+        'drift_open_orders',
         'recent_signatures',
-        'derivative_account_metadata',
-        'order_reference_context',
+      ],
+      provenanceNotes: [
+        'This connector is read-only and never signs or submits transactions.',
+        'Derivative health and valuation metrics are Drift SDK calculations over decoded user, market, and oracle state.',
       ],
     },
     accountState: {
@@ -138,33 +155,25 @@ function createStubVenueTruthSnapshot(
       nativeBalanceDisplay: '12.000000000',
       observedSlot: '123',
       rentEpoch: '0',
-      dataLength: 0,
+      dataLength: 512,
     },
-    balanceState: {
-      balances: [{
-        assetKey: 'SOL',
-        assetSymbol: 'SOL',
-        assetType: 'native',
-        accountAddress: `${venueId}-account`,
-        amountAtomic: '12000000000',
-        amountDisplay: '12.000000000',
-        decimals: 9,
-        observedSlot: '123',
-      }],
-      totalTrackedBalances: 1,
-      observedSlot: '123',
-    },
+    balanceState: null,
     capacityState: null,
     exposureState: {
       exposures: [{
-        exposureKey: `SOL:${venueId}-account`,
-        exposureType: 'balance_derived_spot',
-        assetKey: 'SOL',
-        quantity: '12000000000',
-        quantityDisplay: '12.000000000',
+        exposureKey: `perp:0:${venueId}-account`,
+        exposureType: 'position',
+        assetKey: 'BTC-PERP',
+        quantity: '0.75',
+        quantityDisplay: '0.75',
         accountAddress: `${venueId}-account`,
       }],
-      methodology: 'balance_derived_spot_exposure',
+      methodology: 'drift_position_inventory_exposure',
+      provenance: {
+        classification: 'derived',
+        source: 'drift_sdk_margin_math',
+        notes: ['Exposure rows were derived from decoded Drift position inventory.'],
+      },
     },
     derivativeAccountState: {
       venue: venueId,
@@ -173,47 +182,175 @@ function createStubVenueTruthSnapshot(
       accountExists: true,
       ownerProgram: 'drift-program',
       accountModel: 'program_account',
-      venueAccountType: null,
-      decoded: false,
-      authorityAddress: null,
-      subaccountId: null,
+      venueAccountType: 'drift_user',
+      decoded: true,
+      authorityAddress: `${venueId}-authority`,
+      subaccountId: 0,
+      userName: venueName,
+      delegateAddress: `${venueId}-delegate`,
+      marginMode: 'default',
+      poolId: 0,
+      marginTradingEnabled: true,
+      openOrderCount: 2,
+      openAuctionCount: 0,
+      statusFlags: ['protected_maker'],
       observedSlot: '123',
       rpcVersion: '1.18.0',
       dataLength: 512,
       rawDiscriminatorHex: '0102030405060708',
       notes: [
-        'Program-owned account metadata was captured from raw RPC.',
-        'Venue-native decode is unavailable in the current repo because no Drift or Anchor decoder is present.',
+        'The Drift user account was decoded directly with the Drift SDK account coder.',
+        'Order inventory in this snapshot comes directly from the user account, while health and liquidation metrics are SDK-derived.',
       ],
+      provenance: {
+        classification: 'exact',
+        source: 'drift_user_account_decode',
+        notes: ['Values were decoded directly from the Drift user account.'],
+      },
     },
-    derivativePositionState: null,
-    derivativeHealthState: null,
-    orderState: {
-      openOrderCount: null,
-      openOrders: [{
-        venueOrderId: null,
-        reference: `${venueId}-sig-1`,
-        marketKey: null,
-        marketSymbol: null,
-        side: 'unknown',
-        status: 'confirmed',
-        orderType: null,
-        price: null,
-        quantity: null,
-        reduceOnly: null,
-        accountAddress: `${venueId}-account`,
-        slot: '123',
-        placedAt: '2026-03-31T11:59:00.000Z',
-        metadata: {
-          referenceOnly: true,
+    derivativePositionState: {
+      positions: [
+        {
+          marketIndex: 0,
+          marketKey: 'perp:0',
+          marketSymbol: 'BTC-PERP',
+          positionType: 'perp',
+          side: 'long',
+          baseAssetAmount: '0.75',
+          quoteAssetAmount: '-51250',
+          entryPrice: '68333.333333',
+          breakEvenPrice: '68400.000000',
+          unrealizedPnlUsd: '950.250000',
+          liquidationPrice: '52100.000000',
+          positionValueUsd: '52125.000000',
+          openOrders: 1,
+          openBids: '0.10',
+          openAsks: '0',
+          metadata: {},
+          provenance: {
+            classification: 'mixed',
+            source: 'drift_user_account_with_market_context',
+            notes: ['Inventory is exact while valuation uses Drift SDK market context.'],
+          },
         },
-      }],
-      referenceMode: 'recent_account_signatures',
-      methodology: 'recent_account_signatures_reference_context',
-      notes: [
-        'This section is reference-only context derived from recent account signatures.',
-        'It is not a venue-native open-orders decode and may include non-order transactions.',
+        {
+          marketIndex: 1,
+          marketKey: 'spot:1',
+          marketSymbol: 'SOL',
+          positionType: 'spot',
+          side: 'long',
+          baseAssetAmount: '12.500000000',
+          quoteAssetAmount: null,
+          entryPrice: null,
+          breakEvenPrice: null,
+          unrealizedPnlUsd: null,
+          liquidationPrice: '102.100000',
+          positionValueUsd: '1875.000000',
+          openOrders: 1,
+          openBids: null,
+          openAsks: null,
+          metadata: {},
+          provenance: {
+            classification: 'mixed',
+            source: 'drift_user_account_with_market_context',
+            notes: ['Spot balance identity is exact while valuation uses Drift spot-market context.'],
+          },
+        },
       ],
+      openPositionCount: 2,
+      methodology: 'drift_user_account_with_market_context',
+      notes: [
+        'Perp and spot inventory was decoded from the Drift user account.',
+        'Valuation and liquidation fields used subscribed Drift market and oracle state where required.',
+      ],
+      provenance: {
+        classification: 'mixed',
+        source: 'drift_user_account_with_market_context',
+        notes: ['Inventory is exact venue-native state while valuation fields are SDK-derived.'],
+      },
+    },
+    derivativeHealthState: {
+      healthStatus: 'healthy',
+      healthScore: 84,
+      collateralUsd: '153450.250000',
+      marginRatio: '0.2841',
+      leverage: '2.1100',
+      maintenanceMarginRequirementUsd: '18050.000000',
+      initialMarginRequirementUsd: '26250.000000',
+      freeCollateralUsd: '109150.250000',
+      methodology: 'drift_sdk_margin_calculation',
+      notes: [
+        'Health, collateral, leverage, and margin metrics are derived from decoded Drift user, market, and oracle state.',
+      ],
+      provenance: {
+        classification: 'derived',
+        source: 'drift_sdk_margin_math',
+        notes: ['All health and margin metrics are SDK-derived from venue-native state.'],
+      },
+    },
+    orderState: {
+      openOrderCount: 2,
+      openOrders: [
+        {
+          marketIndex: 0,
+          venueOrderId: '901',
+          reference: '41',
+          marketKey: 'perp:0',
+          marketSymbol: 'BTC-PERP',
+          marketType: 'perp',
+          userOrderId: 41,
+          side: 'buy',
+          status: 'open',
+          orderType: 'limit',
+          price: '68000.000000',
+          quantity: '0.100000000',
+          reduceOnly: false,
+          accountAddress: `${venueId}-account`,
+          slot: '123',
+          placedAt: null,
+          metadata: {},
+          provenance: {
+            classification: 'exact',
+            source: 'drift_user_account_decode',
+            notes: ['Open-order inventory was decoded directly from the Drift user account.'],
+          },
+        },
+        {
+          marketIndex: 1,
+          venueOrderId: '902',
+          reference: '42',
+          marketKey: 'spot:1',
+          marketSymbol: 'SOL',
+          marketType: 'spot',
+          userOrderId: 42,
+          side: 'sell',
+          status: 'open',
+          orderType: 'limit',
+          price: '151.250000',
+          quantity: '4.500000000',
+          reduceOnly: false,
+          accountAddress: `${venueId}-account`,
+          slot: '123',
+          placedAt: null,
+          metadata: {},
+          provenance: {
+            classification: 'exact',
+            source: 'drift_user_account_decode',
+            notes: ['Open-order inventory was decoded directly from the Drift user account.'],
+          },
+        },
+      ],
+      referenceMode: 'venue_open_orders',
+      methodology: 'drift_user_account_open_orders',
+      notes: [
+        'Open-order inventory was decoded directly from the Drift user account.',
+        'placedAt remains null because this read-only path does not backfill transaction timestamps for each order.',
+      ],
+      provenance: {
+        classification: 'exact',
+        source: 'drift_user_account_decode',
+        notes: ['Open-order inventory was decoded directly from the Drift user account.'],
+      },
     },
     executionReferenceState: {
       referenceLookbackLimit: 10,
@@ -230,11 +367,196 @@ function createStubVenueTruthSnapshot(
       oldestReferenceAt: '2026-03-31T11:59:00.000Z',
     },
     payload: {
-      balanceSol: '12.000000000',
+      accountAddress: `${venueId}-account`,
+      authorityAddress: `${venueId}-authority`,
+      subaccountId: 0,
+      openOrderCount: 2,
+      openPositionCount: 2,
+      healthScore: 84,
     },
     metadata: {},
     ...overrides,
   };
+}
+
+function createInternalDerivativeSnapshot(
+  venueId: string,
+  venueName: string,
+): Omit<InternalDerivativeSnapshotView, 'id' | 'updatedAt'> {
+  return {
+    venueId,
+    venueName,
+    sourceComponent: 'sentinel-runtime',
+    sourceRunId: 'run-1',
+    sourceReference: 'carry-action-1',
+    capturedAt: freshCapturedAt(),
+    coverage: {
+      accountState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      positionState: {
+        status: 'available',
+        reason: null,
+        limitations: [],
+      },
+      healthState: {
+        status: 'unsupported',
+        reason: 'No canonical internal health model exists yet for direct comparison.',
+        limitations: ['Health remains intentionally unsupported until a canonical internal model exists.'],
+      },
+      orderState: {
+        status: 'partial',
+        reason: 'One internal open order does not yet have a venue order id for direct comparison.',
+        limitations: ['Orders without a venue order id remain canonical internally but only partially comparable externally.'],
+      },
+    },
+    accountState: {
+      venueId,
+      venueName,
+      configured: true,
+      accountLocatorMode: 'authority_subaccount',
+      accountAddress: null,
+      authorityAddress: `${venueId}-authority`,
+      subaccountId: 0,
+      accountLabel: venueName,
+      methodology: 'runtime_operator_config',
+      notes: ['Internal account identity comes from runtime configuration.'],
+      provenance: {
+        classification: 'canonical',
+        source: 'runtime_derivative_tracking_config',
+        notes: ['Internal account identity is configured by the operator.'],
+      },
+    },
+    positionState: {
+      positions: [
+        {
+          positionKey: 'perp:BTC',
+          asset: 'BTC',
+          marketType: 'perp',
+          side: 'long',
+          netQuantity: '0.75',
+          averageEntryPrice: '68333.333333',
+          executedBuyQuantity: '1',
+          executedSellQuantity: '0.25',
+          fillCount: 2,
+          sourceOrderCount: 1,
+          firstFilledAt: '2026-03-31T11:58:00.000Z',
+          lastFilledAt: '2026-03-31T11:59:00.000Z',
+          metadata: {
+            instrumentType: 'perpetual',
+          },
+          provenance: {
+            classification: 'derived',
+            source: 'runtime_fills_joined_to_orders',
+            notes: ['Internal positions are reconstructed from persisted fills joined to internal order metadata.'],
+          },
+        },
+      ],
+      openPositionCount: 1,
+      methodology: 'runtime_fills_joined_to_orders',
+      notes: ['Internal derivative positions are reconstructed from canonical fills.'],
+      provenance: {
+        classification: 'derived',
+        source: 'runtime_fills_joined_to_orders',
+        notes: ['Internal derivative positions are reconstructed from canonical fills.'],
+      },
+    },
+    healthState: {
+      healthStatus: 'unknown',
+      methodology: 'unsupported_internal_health_model',
+      notes: ['No truthful internal Drift health computation path is currently implemented.'],
+      provenance: {
+        classification: 'estimated',
+        source: 'unsupported_internal_health_model',
+        notes: ['Health remains intentionally unsupported until the runtime has a canonical venue-aligned internal model.'],
+      },
+    },
+    orderState: {
+      openOrderCount: 2,
+      comparableOpenOrderCount: 1,
+      nonComparableOpenOrderCount: 1,
+      openOrders: [
+        {
+          orderKey: '901',
+          clientOrderId: 'client-order-1',
+          venueOrderId: '901',
+          asset: 'BTC',
+          marketType: 'perp',
+          side: 'buy',
+          status: 'open',
+          requestedSize: '0.100000000',
+          filledSize: '0',
+          remainingSize: '0.100000000',
+          requestedPrice: '68000.000000',
+          reduceOnly: false,
+          executionMode: 'dry-run',
+          comparableByVenueOrderId: true,
+          submittedAt: '2026-03-31T11:58:30.000Z',
+          completedAt: null,
+          updatedAt: freshCapturedAt(),
+          metadata: {
+            instrumentType: 'perpetual',
+          },
+          provenance: {
+            classification: 'canonical',
+            source: 'runtime_orders_table',
+            notes: ['Open-order inventory comes from persisted runtime order records.'],
+          },
+        },
+        {
+          orderKey: 'client-order-2',
+          clientOrderId: 'client-order-2',
+          venueOrderId: null,
+          asset: 'SOL',
+          marketType: 'spot',
+          side: 'sell',
+          status: 'open',
+          requestedSize: '4.500000000',
+          filledSize: '0',
+          remainingSize: '4.500000000',
+          requestedPrice: '151.250000',
+          reduceOnly: false,
+          executionMode: 'dry-run',
+          comparableByVenueOrderId: false,
+          submittedAt: '2026-03-31T11:58:35.000Z',
+          completedAt: null,
+          updatedAt: freshCapturedAt(),
+          metadata: {
+            instrumentType: 'spot',
+          },
+          provenance: {
+            classification: 'canonical',
+            source: 'runtime_orders_table',
+            notes: ['This internal order exists canonically before a venue order id is assigned.'],
+          },
+        },
+      ],
+      methodology: 'runtime_orders_table',
+      notes: ['Open-order inventory comes directly from persisted internal order state.'],
+      provenance: {
+        classification: 'canonical',
+        source: 'runtime_orders_table',
+        notes: ['Open-order inventory is based on persisted runtime orders.'],
+      },
+    },
+    metadata: {
+      testFixture: 'phase-5-6-api',
+    },
+  };
+}
+
+async function persistInternalDerivativeSnapshot(
+  connectionString: string,
+  snapshot: Omit<InternalDerivativeSnapshotView, 'id' | 'updatedAt'>,
+): Promise<DatabaseConnection> {
+  const connection = await createDatabaseConnection(connectionString);
+  const store = new RuntimeStore(connection.db, new DatabaseAuditWriter(connection.db));
+  await store.persistInternalDerivativeSnapshots({
+    snapshots: [snapshot],
+  });
+  return connection;
 }
 
 function operatorHeaders(
@@ -284,18 +606,24 @@ class StubReadonlyVenueTruthAdapter implements VenueTruthAdapter {
       venueId: this.venueId,
       venueName: this.venueName,
       sleeveApplicability: ['carry'],
-      connectorType: 'solana_rpc_readonly',
+      connectorType: 'drift_native_readonly',
       truthMode: 'real' as const,
       readOnlySupport: true,
       executionSupport: false,
       approvedForLiveUse: false,
       onboardingState: 'read_only' as const,
       missingPrerequisites: [],
-      authRequirementsSummary: ['DRIFT_RPC_ENDPOINT', 'DRIFT_READONLY_ACCOUNT_ADDRESS'],
+      authRequirementsSummary: [
+        'DRIFT_RPC_ENDPOINT',
+        'DRIFT_READONLY_ENV',
+        'DRIFT_READONLY_ACCOUNT_ADDRESS or DRIFT_READONLY_AUTHORITY_ADDRESS',
+      ],
       healthy: true,
       healthState: 'healthy' as const,
       degradedReason: null,
-      metadata: {},
+      metadata: {
+        executionPosture: 'read_only',
+      },
       ...this.capabilityOverrides,
     } as VenueCapabilitySnapshot;
   }
@@ -707,11 +1035,14 @@ describe('runtime-backed API routes', () => {
     const summaryBody = summaryResponse.json<{ data: { realReadOnly: number; derivativeAware: number } }>();
     const truthSummaryBody = truthSummaryResponse.json<{
       data: {
-        partialSnapshots: number;
+        connectorDepth: { drift_native_readonly: number };
+        completeSnapshots: number;
         derivativeAwareVenues: number;
+        decodedDerivativeAccountVenues: number;
+        decodedDerivativePositionVenues: number;
         accountState: { available: number };
-        derivativeAccountState: { partial: number };
-        orderState: { partial: number };
+        derivativeAccountState: { available: number };
+        orderState: { available: number };
         executionReferences: { available: number };
       };
     }>();
@@ -732,8 +1063,9 @@ describe('runtime-backed API routes', () => {
           snapshotType: string;
           truthProfile: string;
           accountState: { accountAddress: string | null } | null;
-          derivativeAccountState: { accountModel: string; rawDiscriminatorHex: string | null } | null;
-          balanceState: { balances: Array<{ assetKey: string }> } | null;
+          derivativeAccountState: { accountModel: string; rawDiscriminatorHex: string | null; decoded: boolean } | null;
+          derivativePositionState: { positions: Array<{ marketSymbol: string | null }> } | null;
+          derivativeHealthState: { healthScore: number | null } | null;
           orderState: { referenceMode: string; openOrders: Array<{ reference: string | null }> } | null;
           executionReferenceState: { references: Array<{ reference: string }> } | null;
         }>;
@@ -751,36 +1083,185 @@ describe('runtime-backed API routes', () => {
     expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthMode).toBe('real');
     expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthProfile).toBe('derivative_aware');
     expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.readOnlySupport).toBe(true);
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.snapshotCompleteness).toBe('partial');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.snapshotCompleteness).toBe('complete');
     expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.accountState.status).toBe('available');
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.derivativeAccountState.status).toBe('partial');
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.orderState.status).toBe('partial');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.derivativeAccountState.status).toBe('available');
+    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.orderState.status).toBe('available');
     expect(summaryBody.data.realReadOnly).toBeGreaterThan(0);
     expect(summaryBody.data.derivativeAware).toBeGreaterThan(0);
-    expect(truthSummaryBody.data.partialSnapshots).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.connectorDepth.drift_native_readonly).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.completeSnapshots).toBeGreaterThan(0);
     expect(truthSummaryBody.data.derivativeAwareVenues).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.decodedDerivativeAccountVenues).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.decodedDerivativePositionVenues).toBeGreaterThan(0);
     expect(truthSummaryBody.data.accountState.available).toBeGreaterThan(0);
-    expect(truthSummaryBody.data.derivativeAccountState.partial).toBeGreaterThan(0);
-    expect(truthSummaryBody.data.orderState.partial).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.derivativeAccountState.available).toBeGreaterThan(0);
+    expect(truthSummaryBody.data.orderState.available).toBeGreaterThan(0);
     expect(truthSummaryBody.data.executionReferences.available).toBeGreaterThan(0);
     expect(detailBody.data.venue.venueId).toBe('drift-solana-readonly');
     expect(detailBody.data.venue.truthProfile).toBe('derivative_aware');
-    expect(detailBody.data.venue.snapshotCompleteness).toBe('partial');
-    expect(detailBody.data.venue.truthCoverage.derivativeAccountState.status).toBe('partial');
-    expect(detailBody.data.venue.truthCoverage.orderState.status).toBe('partial');
+    expect(detailBody.data.venue.snapshotCompleteness).toBe('complete');
+    expect(detailBody.data.venue.truthCoverage.derivativeAccountState.status).toBe('available');
+    expect(detailBody.data.venue.truthCoverage.orderState.status).toBe('available');
     expect(detailBody.data.venue.truthCoverage.executionReferences.status).toBe('available');
-    expect(detailBody.data.snapshots[0]?.snapshotType).toBe('solana_rpc_account_state');
+    expect(detailBody.data.snapshots[0]?.snapshotType).toBe('drift_native_user_account');
     expect(detailBody.data.snapshots[0]?.truthProfile).toBe('derivative_aware');
     expect(detailBody.data.snapshots[0]?.accountState?.accountAddress).toContain('drift-solana-readonly-account');
     expect(detailBody.data.snapshots[0]?.derivativeAccountState?.accountModel).toBe('program_account');
+    expect(detailBody.data.snapshots[0]?.derivativeAccountState?.decoded).toBe(true);
     expect(detailBody.data.snapshots[0]?.derivativeAccountState?.rawDiscriminatorHex).toBe('0102030405060708');
-    expect(detailBody.data.snapshots[0]?.balanceState?.balances.length).toBeGreaterThan(0);
-    expect(detailBody.data.snapshots[0]?.orderState?.referenceMode).toBe('recent_account_signatures');
+    expect(detailBody.data.snapshots[0]?.derivativePositionState?.positions.length).toBeGreaterThan(0);
+    expect(detailBody.data.snapshots[0]?.derivativeHealthState?.healthScore).toBe(84);
+    expect(detailBody.data.snapshots[0]?.orderState?.referenceMode).toBe('venue_open_orders');
     expect(detailBody.data.snapshots[0]?.orderState?.openOrders.length).toBeGreaterThan(0);
     expect(detailBody.data.snapshots[0]?.executionReferenceState?.references.length).toBeGreaterThan(0);
-    expect(snapshotsBody.data[0]?.snapshotType).toBe('solana_rpc_account_state');
-    expect(snapshotsBody.data[0]?.snapshotCompleteness).toBe('partial');
-    expect(snapshotsBody.data[0]?.truthCoverage.balanceState.status).toBe('available');
+    expect(snapshotsBody.data[0]?.snapshotType).toBe('drift_native_user_account');
+    expect(snapshotsBody.data[0]?.snapshotCompleteness).toBe('complete');
+    expect(snapshotsBody.data[0]?.truthCoverage.balanceState.status).toBe('unsupported');
+  });
+
+  it('exposes internal derivative state and internal-vs-external comparison routes through the API', async () => {
+    await app.close();
+    await worker.stop();
+
+    const harness = await createApiHarness({
+      truthAdapters: [new StubReadonlyVenueTruthAdapter()],
+    });
+    connectionString = harness.connectionString;
+    controlPlane = harness.controlPlane;
+    worker = harness.worker;
+    app = await createApp({ controlPlane });
+    await app.ready();
+
+    await waitFor(
+      () => controlPlane.getVenue('drift-solana-readonly'),
+      (detail) => detail !== null && detail.snapshots.length > 0,
+    );
+
+    const writerConnection = await persistInternalDerivativeSnapshot(
+      connectionString,
+      createInternalDerivativeSnapshot('drift-solana-readonly', 'Drift Solana Read-Only'),
+    );
+
+    try {
+      const [
+        internalStateResponse,
+        comparisonSummaryResponse,
+        comparisonDetailResponse,
+        venueDetailResponse,
+      ] = await Promise.all([
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/drift-solana-readonly/internal-state',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/drift-solana-readonly/comparison-summary',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/drift-solana-readonly/comparison-detail',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/drift-solana-readonly',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+      ]);
+
+      expect(internalStateResponse.statusCode).toBe(200);
+      expect(comparisonSummaryResponse.statusCode).toBe(200);
+      expect(comparisonDetailResponse.statusCode).toBe(200);
+      expect(venueDetailResponse.statusCode).toBe(200);
+
+      const internalStateBody = internalStateResponse.json<{
+        data: {
+          venueId: string;
+          coverage: {
+            accountState: { status: string };
+            positionState: { status: string };
+            healthState: { status: string };
+            orderState: { status: string };
+          };
+          positionState: { openPositionCount: number; positions: Array<{ positionKey: string; netQuantity: string }> } | null;
+          orderState: { openOrderCount: number; comparableOpenOrderCount: number; nonComparableOpenOrderCount: number } | null;
+          healthState: { healthStatus: string; methodology: string } | null;
+        };
+      }>();
+      const comparisonSummaryBody = comparisonSummaryResponse.json<{
+        data: {
+          subaccountIdentity: { status: string };
+          positionInventory: { status: string };
+          healthState: { status: string };
+          orderInventory: { status: string };
+          matchedPositionCount: number;
+          matchedOrderCount: number;
+        };
+      }>();
+      const comparisonDetailBody = comparisonDetailResponse.json<{
+        data: {
+          accountComparison: { status: string };
+          healthComparison: { status: string; comparable: boolean };
+          positionComparisons: Array<{ comparisonKey: string; status: string; quantityDelta: string | null }>;
+          orderComparisons: Array<{ comparisonKey: string; status: string; remainingSizeDelta: string | null }>;
+        };
+      }>();
+      const venueDetailBody = venueDetailResponse.json<{
+        data: {
+          internalState: {
+            coverage: { orderState: { status: string } };
+          } | null;
+          comparisonSummary: {
+            healthState: { status: string };
+            orderInventory: { status: string };
+          };
+          comparisonDetail: {
+            accountComparison: { status: string };
+          };
+        };
+      }>();
+
+      expect(internalStateBody.data.venueId).toBe('drift-solana-readonly');
+      expect(internalStateBody.data.coverage.accountState.status).toBe('available');
+      expect(internalStateBody.data.coverage.positionState.status).toBe('available');
+      expect(internalStateBody.data.coverage.healthState.status).toBe('unsupported');
+      expect(internalStateBody.data.coverage.orderState.status).toBe('partial');
+      expect(internalStateBody.data.positionState?.openPositionCount).toBe(1);
+      expect(internalStateBody.data.positionState?.positions[0]?.positionKey).toBe('perp:BTC');
+      expect(internalStateBody.data.positionState?.positions[0]?.netQuantity).toBe('0.75');
+      expect(internalStateBody.data.orderState?.openOrderCount).toBe(2);
+      expect(internalStateBody.data.orderState?.comparableOpenOrderCount).toBe(1);
+      expect(internalStateBody.data.orderState?.nonComparableOpenOrderCount).toBe(1);
+      expect(internalStateBody.data.healthState?.healthStatus).toBe('unknown');
+      expect(internalStateBody.data.healthState?.methodology).toBe('unsupported_internal_health_model');
+
+      expect(comparisonSummaryBody.data.subaccountIdentity.status).toBe('available');
+      expect(comparisonSummaryBody.data.positionInventory.status).toBe('available');
+      expect(comparisonSummaryBody.data.healthState.status).toBe('unsupported');
+      expect(comparisonSummaryBody.data.orderInventory.status).toBe('partial');
+      expect(comparisonSummaryBody.data.matchedPositionCount).toBe(1);
+      expect(comparisonSummaryBody.data.matchedOrderCount).toBe(1);
+
+      expect(comparisonDetailBody.data.accountComparison.status).toBe('matched');
+      expect(comparisonDetailBody.data.healthComparison.status).toBe('not_comparable');
+      expect(comparisonDetailBody.data.healthComparison.comparable).toBe(false);
+      expect(comparisonDetailBody.data.positionComparisons[0]?.comparisonKey).toBe('perp:BTC');
+      expect(comparisonDetailBody.data.positionComparisons[0]?.status).toBe('matched');
+      expect(comparisonDetailBody.data.positionComparisons[0]?.quantityDelta).toBe('0');
+      expect(comparisonDetailBody.data.orderComparisons[0]?.comparisonKey).toBe('901');
+      expect(comparisonDetailBody.data.orderComparisons[0]?.status).toBe('matched');
+      expect(comparisonDetailBody.data.orderComparisons[0]?.remainingSizeDelta).toBe('0');
+
+      expect(venueDetailBody.data.internalState?.coverage.orderState.status).toBe('partial');
+      expect(venueDetailBody.data.comparisonSummary.healthState.status).toBe('unsupported');
+      expect(venueDetailBody.data.comparisonSummary.orderInventory.status).toBe('partial');
+      expect(venueDetailBody.data.comparisonDetail.accountComparison.status).toBe('matched');
+    } finally {
+      await writerConnection.close();
+    }
   });
 
   it('surfaces missing, stale, and unavailable real venue truth through the reconciliation API', async () => {
@@ -791,12 +1272,12 @@ describe('runtime-backed API routes', () => {
       'drift-solana-missing',
       'Drift Solana Missing',
       {
-        snapshotType: 'solana_rpc_error',
+        snapshotType: 'drift_native_error',
         snapshotSuccessful: false,
         healthy: false,
         healthState: 'degraded',
-        summary: 'Read-only balance snapshot is not available yet.',
-        errorMessage: 'Account balance has not been captured yet.',
+        summary: 'Drift-native snapshot is not available yet.',
+        errorMessage: 'Drift user account has not been captured yet.',
         capturedAt: freshCapturedAt(),
         payload: {},
       },
@@ -815,18 +1296,18 @@ describe('runtime-backed API routes', () => {
           'Drift Solana Stale',
           {
             capturedAt: '2020-01-01T00:00:00.000Z',
-            payload: { balanceSol: '6.500000000' },
+            payload: { healthScore: 84 },
           },
         ),
         new StubReadonlyVenueTruthAdapter(
           'drift-solana-unavailable',
           'Drift Solana Unavailable',
           {
-            snapshotType: 'solana_rpc_error',
+            snapshotType: 'drift_native_error',
             snapshotSuccessful: false,
             healthy: false,
             healthState: 'unavailable',
-            summary: 'Read-only RPC snapshot failed.',
+            summary: 'Drift-native read-only snapshot failed.',
             errorMessage: 'RPC getVersion failed with status 503.',
             capturedAt: freshCapturedAt(),
             payload: {},
@@ -883,14 +1364,14 @@ describe('runtime-backed API routes', () => {
     ).toBe(true);
 
     missingAdapter.setSnapshotOverrides({
-      snapshotType: 'solana_rpc_account_state',
+      snapshotType: 'drift_native_user_account',
       snapshotSuccessful: true,
       healthy: true,
       healthState: 'healthy',
-      summary: 'Read-only Solana account snapshot captured with reference-only derivative coverage.',
+      summary: 'Drift-native read-only snapshot captured for Drift Solana Missing with 2 positions, 2 open orders, and health score 84.',
       errorMessage: null,
       capturedAt: freshCapturedAt(),
-      payload: { balanceSol: '12.000000000' },
+      payload: { healthScore: 84 },
     });
 
     const cycleCommandRecord = await controlPlane.enqueueCommand('run_cycle', 'operator-user', {

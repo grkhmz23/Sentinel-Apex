@@ -30,6 +30,8 @@ import {
   carryVenueSnapshots,
   executionEvents,
   fills,
+  internalDerivativeCurrent,
+  internalDerivativeSnapshots,
   orders,
   portfolioCurrent,
   portfolioSnapshots,
@@ -67,7 +69,11 @@ import type {
   TreasuryPolicy,
 } from '@sentinel-apex/treasury';
 
+import { buildVenueDerivativeComparisonDetail } from './internal-derivative-state.js';
+
 import type {
+  InternalDerivativeCoverageView,
+  InternalDerivativeSnapshotView,
   AllocatorDecisionDetailView,
   AllocatorRecommendationView,
   AllocatorRunView,
@@ -166,9 +172,12 @@ import type {
   TreasuryPolicyView,
   TreasurySummaryView,
   VenueAccountStateSnapshot,
+  VenueTruthComparisonCoverageView,
   VenueDerivativeAccountStateSnapshot,
   VenueDerivativeHealthStateSnapshot,
   VenueDerivativePositionStateSnapshot,
+  VenueDerivativeComparisonDetailView,
+  VenueDerivativeComparisonSummaryView,
   VenueDetailView,
   VenueExecutionReferenceStateSnapshot,
   VenueExposureStateSnapshot,
@@ -179,6 +188,7 @@ import type {
   VenueOrderStateSnapshot,
   VenueSnapshotFreshness,
   VenueSnapshotView,
+  VenueTruthConnectorDepthSummaryView,
   VenueTruthCoverage,
   VenueTruthSnapshotCompleteness,
   VenueTruthProfile,
@@ -366,11 +376,169 @@ function serialiseVenueSnapshotPayload(snapshot: VenueSnapshotView): Record<stri
   };
 }
 
+interface PersistedInternalDerivativeSections {
+  coverage: InternalDerivativeCoverageView;
+  accountState: InternalDerivativeSnapshotView['accountState'];
+  positionState: InternalDerivativeSnapshotView['positionState'];
+  healthState: InternalDerivativeSnapshotView['healthState'];
+  orderState: InternalDerivativeSnapshotView['orderState'];
+}
+
+interface PersistedInternalDerivativeRowShape {
+  coverage: unknown;
+  accountState: unknown;
+  positionState: unknown;
+  healthState: unknown;
+  orderState: unknown;
+}
+
+function defaultInternalDerivativeCoverage(): InternalDerivativeCoverageView {
+  return {
+    accountState: coverageItem('unsupported', 'No internal derivative account state is currently persisted.', []),
+    positionState: coverageItem('unsupported', 'No internal derivative position state is currently persisted.', []),
+    healthState: coverageItem('unsupported', 'No internal derivative health state is currently persisted.', []),
+    orderState: coverageItem('unsupported', 'No internal derivative order state is currently persisted.', []),
+  };
+}
+
+function coverageItem(
+  status: InternalDerivativeCoverageView['accountState']['status'],
+  reason: string | null,
+  limitations: string[],
+): InternalDerivativeCoverageView['accountState'] {
+  return {
+    status,
+    reason,
+    limitations,
+  };
+}
+
+function deserialiseInternalDerivativeSections(
+  row: PersistedInternalDerivativeRowShape,
+): PersistedInternalDerivativeSections {
+  const coverage = asJsonObject(row.coverage);
+  const accountState = asJsonObject(row.accountState);
+  const positionState = asJsonObject(row.positionState);
+  const healthState = asJsonObject(row.healthState);
+  const orderState = asJsonObject(row.orderState);
+
+  return {
+    coverage: coverage['accountState'] !== undefined
+      ? row.coverage as InternalDerivativeCoverageView
+      : defaultInternalDerivativeCoverage(),
+    accountState: accountState['venueId'] !== undefined
+      ? row.accountState as InternalDerivativeSnapshotView['accountState']
+      : null,
+    positionState: Array.isArray(positionState['positions'])
+      ? row.positionState as InternalDerivativeSnapshotView['positionState']
+      : null,
+    healthState: healthState['methodology'] !== undefined
+      ? row.healthState as InternalDerivativeSnapshotView['healthState']
+      : null,
+    orderState: Array.isArray(orderState['openOrders'])
+      ? row.orderState as InternalDerivativeSnapshotView['orderState']
+      : null,
+  };
+}
+
+function mapInternalDerivativeSnapshotRow(
+  row: typeof internalDerivativeSnapshots.$inferSelect,
+): InternalDerivativeSnapshotView {
+  const sections = deserialiseInternalDerivativeSections(row);
+
+  return {
+    id: row.id,
+    venueId: row.venueId,
+    venueName: row.venueName,
+    sourceComponent: row.sourceComponent,
+    sourceRunId: row.sourceRunId ?? null,
+    sourceReference: row.sourceReference ?? null,
+    capturedAt: row.capturedAt.toISOString(),
+    updatedAt: row.createdAt.toISOString(),
+    coverage: sections.coverage,
+    accountState: sections.accountState,
+    positionState: sections.positionState,
+    healthState: sections.healthState,
+    orderState: sections.orderState,
+    metadata: asJsonObject(row.metadata),
+  };
+}
+
+function mapInternalDerivativeCurrentRow(
+  row: typeof internalDerivativeCurrent.$inferSelect,
+): InternalDerivativeSnapshotView {
+  const sections = deserialiseInternalDerivativeSections(row);
+
+  return {
+    id: row.latestSnapshotId ?? row.venueId,
+    venueId: row.venueId,
+    venueName: row.venueName,
+    sourceComponent: row.sourceComponent,
+    sourceRunId: row.sourceRunId ?? null,
+    sourceReference: row.sourceReference ?? null,
+    capturedAt: row.capturedAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    coverage: sections.coverage,
+    accountState: sections.accountState,
+    positionState: sections.positionState,
+    healthState: sections.healthState,
+    orderState: sections.orderState,
+    metadata: asJsonObject(row.metadata),
+  };
+}
+
 function createVenueTruthCoverageAggregate(): VenueTruthSummaryView['accountState'] {
   return {
     available: 0,
     partial: 0,
     unsupported: 0,
+  };
+}
+
+function createVenueTruthConnectorDepthSummary(): VenueTruthConnectorDepthSummaryView {
+  return {
+    simulation: 0,
+    generic_rpc_readonly: 0,
+    drift_native_readonly: 0,
+    execution_capable: 0,
+  };
+}
+
+function inferVenueTruthSourceDepth(input: {
+  connectorType: string;
+  truthMode: VenueTruthMode;
+  executionSupport: boolean;
+  sourceMetadata: VenueTruthSourceMetadata;
+}): keyof VenueTruthConnectorDepthSummaryView {
+  if (input.sourceMetadata.connectorDepth !== undefined) {
+    return input.sourceMetadata.connectorDepth;
+  }
+
+  if (input.truthMode === 'simulated' || input.sourceMetadata.sourceKind === 'simulation') {
+    return 'simulation';
+  }
+
+  if (input.executionSupport) {
+    return 'execution_capable';
+  }
+
+  if (
+    input.connectorType === 'drift_native_readonly'
+    || input.sourceMetadata.sourceName === 'drift_native_readonly'
+  ) {
+    return 'drift_native_readonly';
+  }
+
+  return 'generic_rpc_readonly';
+}
+
+function comparisonCoverageItem(
+  status: VenueTruthComparisonCoverageView['executionReferences']['status'],
+  reason: string | null,
+): VenueTruthComparisonCoverageView['executionReferences'] {
+  return {
+    status,
+    reason,
   };
 }
 
@@ -400,6 +568,68 @@ function deriveVenueTruthProfile(
   }
 
   return 'minimal';
+}
+
+function deriveVenueTruthComparisonCoverage(input: {
+  connectorType: string;
+  truthMode: VenueTruthMode;
+  executionSupport: boolean;
+  snapshotData: PersistedVenueSnapshotPayload;
+}): VenueTruthComparisonCoverageView {
+  const connectorDepth = inferVenueTruthSourceDepth({
+    connectorType: input.connectorType,
+    truthMode: input.truthMode,
+    executionSupport: input.executionSupport,
+    sourceMetadata: input.snapshotData.sourceMetadata,
+  });
+  const isDriftNativeReadonly = connectorDepth === 'drift_native_readonly';
+  const executionReferenceCoverage = input.snapshotData.truthCoverage.executionReferences;
+
+  return {
+    executionReferences: executionReferenceCoverage.status === 'available'
+      ? comparisonCoverageItem('available', null)
+      : comparisonCoverageItem(
+        executionReferenceCoverage.status,
+        executionReferenceCoverage.reason
+          ?? 'Recent execution references are not available for comparison.',
+      ),
+    positionInventory: comparisonCoverageItem(
+      'unsupported',
+      isDriftNativeReadonly && input.snapshotData.truthCoverage.derivativePositionState.status === 'available'
+        ? 'Decoded Drift position inventory is visible, but the runtime does not yet persist venue-native Drift position projections for direct comparison.'
+        : 'The runtime does not yet maintain a truthful internal position model that can be compared directly against this venue snapshot.',
+    ),
+    healthState: comparisonCoverageItem(
+      'unsupported',
+      isDriftNativeReadonly && input.snapshotData.truthCoverage.derivativeHealthState.status === 'available'
+        ? 'Drift health and margin metrics are visible, but the runtime does not yet persist an internal canonical health model for direct comparison.'
+        : 'No internal health-state model is available for direct reconciliation against this venue snapshot.',
+    ),
+    orderInventory: comparisonCoverageItem(
+      'unsupported',
+      isDriftNativeReadonly && input.snapshotData.truthCoverage.orderState.status === 'available'
+        ? 'Decoded Drift open-order inventory is visible, but the runtime does not yet persist a venue-native open-order model for direct comparison.'
+        : 'No venue-native internal open-order inventory is available for direct reconciliation against this venue snapshot.',
+    ),
+    notes: isDriftNativeReadonly
+      ? [
+        'Decoded Drift account, position, health, and order sections are operator-visible venue truth.',
+        'Current reconciliation directly compares internal execution references when they are available.',
+        'Direct internal-versus-external Drift position, health, and order comparisons remain intentionally unsupported until the runtime persists matching canonical internal models.',
+      ]
+      : connectorDepth === 'generic_rpc_readonly'
+        ? [
+          'This connector exposes generic read-only truth rather than venue-native Drift decode.',
+          'Execution-reference comparison is the only direct real-venue reconciliation path currently available.',
+        ]
+        : connectorDepth === 'simulation'
+          ? [
+            'Simulated venue truth is generated internally and is not treated as external reconciliation coverage.',
+          ]
+          : [
+            'This connector depth does not currently expose additional direct reconciliation coverage beyond the recorded truth sections.',
+          ],
+  };
 }
 
 function serialiseMap(map: Map<string, string>): Record<string, string> {
@@ -691,6 +921,11 @@ function createFindingTypeCounts(): Record<RuntimeReconciliationFindingType, num
     venue_truth_unavailable: 0,
     venue_truth_partial_coverage: 0,
     venue_execution_reference_mismatch: 0,
+    drift_position_mismatch: 0,
+    drift_order_inventory_mismatch: 0,
+    drift_subaccount_identity_mismatch: 0,
+    drift_truth_comparison_gap: 0,
+    stale_internal_derivative_state: 0,
   };
 }
 
@@ -1074,6 +1309,12 @@ function mapVenueSnapshotRow(
     capturedAt: row.capturedAt.toISOString(),
     snapshotCompleteness: snapshotData.snapshotCompleteness,
     truthCoverage: snapshotData.truthCoverage,
+    comparisonCoverage: deriveVenueTruthComparisonCoverage({
+      connectorType: row.connectorType,
+      truthMode: row.truthMode as VenueTruthMode,
+      executionSupport: row.executionSupport,
+      snapshotData,
+    }),
     sourceMetadata: snapshotData.sourceMetadata,
     accountState: snapshotData.accountState,
     balanceState: snapshotData.balanceState,
@@ -1122,6 +1363,12 @@ function mapVenueInventoryItem(
     lastSnapshotAt: latest.capturedAt.toISOString(),
     lastSuccessfulSnapshotAt: lastSuccessfulSnapshotAt?.toISOString() ?? null,
     truthCoverage: snapshotData.truthCoverage,
+    comparisonCoverage: deriveVenueTruthComparisonCoverage({
+      connectorType: latest.connectorType,
+      truthMode: latest.truthMode as VenueTruthMode,
+      executionSupport: latest.executionSupport,
+      snapshotData,
+    }),
     sourceMetadata: snapshotData.sourceMetadata,
     metadata: asJsonObject(latest.metadata),
   };
@@ -3054,9 +3301,14 @@ export class RuntimeStore {
       derivativeAwareVenues: 0,
       genericWalletVenues: 0,
       capacityOnlyVenues: 0,
+      connectorDepth: createVenueTruthConnectorDepthSummary(),
       completeSnapshots: 0,
       partialSnapshots: 0,
       minimalSnapshots: 0,
+      decodedDerivativeAccountVenues: 0,
+      decodedDerivativePositionVenues: 0,
+      healthMetricVenues: 0,
+      venueOpenOrderInventoryVenues: 0,
       accountState: createVenueTruthCoverageAggregate(),
       balanceState: createVenueTruthCoverageAggregate(),
       capacityState: createVenueTruthCoverageAggregate(),
@@ -3077,12 +3329,32 @@ export class RuntimeStore {
         summary.capacityOnlyVenues += 1;
       }
 
+      summary.connectorDepth[inferVenueTruthSourceDepth({
+        connectorType: venue.connectorType,
+        truthMode: venue.truthMode,
+        executionSupport: venue.executionSupport,
+        sourceMetadata: venue.sourceMetadata,
+      })] += 1;
+
       if (venue.snapshotCompleteness === 'complete') {
         summary.completeSnapshots += 1;
       } else if (venue.snapshotCompleteness === 'partial') {
         summary.partialSnapshots += 1;
       } else {
         summary.minimalSnapshots += 1;
+      }
+
+      if (venue.truthCoverage.derivativeAccountState.status === 'available') {
+        summary.decodedDerivativeAccountVenues += 1;
+      }
+      if (venue.truthCoverage.derivativePositionState.status === 'available') {
+        summary.decodedDerivativePositionVenues += 1;
+      }
+      if (venue.truthCoverage.derivativeHealthState.status === 'available') {
+        summary.healthMetricVenues += 1;
+      }
+      if (venue.truthCoverage.orderState.status === 'available') {
+        summary.venueOpenOrderInventoryVenues += 1;
       }
 
       summary.accountState[venue.truthCoverage.accountState.status] += 1;
@@ -3115,19 +3387,91 @@ export class RuntimeStore {
   }
 
   async getVenue(venueId: string): Promise<VenueDetailView | null> {
-    const [inventory, snapshots] = await Promise.all([
+    const [inventory, snapshots, internalState, comparisonDetail] = await Promise.all([
       this.listVenues(500),
       this.listVenueSnapshots(venueId, 20),
+      this.getVenueInternalState(venueId),
+      this.getVenueComparisonDetail(venueId),
     ]);
     const venue = inventory.find((item) => item.venueId === venueId) ?? null;
-    if (venue === null) {
+    if (venue === null || comparisonDetail === null) {
       return null;
     }
 
     return {
       venue,
       snapshots,
+      internalState,
+      comparisonSummary: comparisonDetail.summary,
+      comparisonDetail,
     };
+  }
+
+  async getVenueInternalState(venueId: string): Promise<InternalDerivativeSnapshotView | null> {
+    const [row] = await this.db
+      .select()
+      .from(internalDerivativeCurrent)
+      .where(eq(internalDerivativeCurrent.venueId, venueId))
+      .limit(1);
+
+    return row === undefined ? null : mapInternalDerivativeCurrentRow(row);
+  }
+
+  async listInternalDerivativeSnapshots(
+    venueId: string,
+    limit = 20,
+  ): Promise<InternalDerivativeSnapshotView[]> {
+    const rows = await this.db
+      .select()
+      .from(internalDerivativeSnapshots)
+      .where(eq(internalDerivativeSnapshots.venueId, venueId))
+      .orderBy(desc(internalDerivativeSnapshots.capturedAt), desc(internalDerivativeSnapshots.createdAt))
+      .limit(limit);
+
+    return rows.map(mapInternalDerivativeSnapshotRow);
+  }
+
+  async getVenueComparisonSummary(
+    venueId: string,
+  ): Promise<VenueDerivativeComparisonSummaryView | null> {
+    const detail = await this.getVenueComparisonDetail(venueId);
+    return detail?.summary ?? null;
+  }
+
+  async getVenueComparisonDetail(
+    venueId: string,
+  ): Promise<VenueDerivativeComparisonDetailView | null> {
+    const [internalState, snapshots, venueRows, activeFindings] = await Promise.all([
+      this.getVenueInternalState(venueId),
+      this.listVenueSnapshots(venueId, 1),
+      this.db
+        .select({
+          venueId: venueConnectorSnapshots.venueId,
+          venueName: venueConnectorSnapshots.venueName,
+        })
+        .from(venueConnectorSnapshots)
+        .where(eq(venueConnectorSnapshots.venueId, venueId))
+        .orderBy(desc(venueConnectorSnapshots.capturedAt))
+        .limit(1),
+      this.listReconciliationFindings({
+        limit: 100,
+        status: 'active',
+        venueId,
+      }),
+    ]);
+
+    const venueRow = venueRows[0];
+    if (venueRow === undefined) {
+      return null;
+    }
+
+    return buildVenueDerivativeComparisonDetail({
+      venueId,
+      venueName: venueRow.venueName,
+      internalState,
+      externalSnapshot: snapshots[0] ?? null,
+      activeFindings,
+    });
   }
 
   async listExpectedVenueExecutionReferences(venueId: string, limit = 100): Promise<string[]> {
@@ -3642,6 +3986,7 @@ export class RuntimeStore {
     findingType?: RuntimeReconciliationFindingType;
     severity?: RuntimeReconciliationFindingSeverity;
     status?: RuntimeReconciliationFindingStatus;
+    venueId?: string;
     mismatchId?: string;
     reconciliationRunId?: string;
   }): Promise<RuntimeReconciliationFindingView[]> {
@@ -3649,6 +3994,7 @@ export class RuntimeStore {
       input.findingType !== undefined ? eq(runtimeReconciliationFindings.findingType, input.findingType) : undefined,
       input.severity !== undefined ? eq(runtimeReconciliationFindings.severity, input.severity) : undefined,
       input.status !== undefined ? eq(runtimeReconciliationFindings.status, input.status) : undefined,
+      input.venueId !== undefined ? eq(runtimeReconciliationFindings.venueId, input.venueId) : undefined,
       input.mismatchId !== undefined ? eq(runtimeReconciliationFindings.mismatchId, input.mismatchId) : undefined,
       input.reconciliationRunId !== undefined
         ? eq(runtimeReconciliationFindings.reconciliationRunId, input.reconciliationRunId)
@@ -4521,6 +4867,44 @@ export class RuntimeStore {
       reduceOnly: row.reduceOnly,
       filledAt: row.filledAt,
     }));
+  }
+
+  async getInternalDerivativeSourceWatermark(venueId: string): Promise<string | null> {
+    const [latestOrder, latestFill] = await Promise.all([
+      this.db
+        .select({
+          updatedAt: orders.updatedAt,
+        })
+        .from(orders)
+        .where(eq(orders.venueId, venueId))
+        .orderBy(desc(orders.updatedAt))
+        .limit(1)
+        .then((rows) => rows[0]?.updatedAt ?? null),
+      this.db
+        .select({
+          filledAt: fills.filledAt,
+        })
+        .from(fills)
+        .innerJoin(orders, eq(fills.clientOrderId, orders.clientOrderId))
+        .where(eq(orders.venueId, venueId))
+        .orderBy(desc(fills.filledAt))
+        .limit(1)
+        .then((rows) => rows[0]?.filledAt ?? null),
+    ]);
+
+    if (latestOrder === null && latestFill === null) {
+      return null;
+    }
+
+    const watermark = latestOrder === null
+      ? latestFill
+      : latestFill === null
+        ? latestOrder
+        : latestOrder > latestFill
+          ? latestOrder
+          : latestFill;
+
+    return watermark?.toISOString() ?? null;
   }
 
   async listRiskBreaches(limit: number): Promise<RiskBreachView[]> {
@@ -7589,6 +7973,71 @@ export class RuntimeStore {
         capturedAt: new Date(snapshot.capturedAt),
       })),
     );
+  }
+
+  async persistInternalDerivativeSnapshots(input: {
+    snapshots: Array<Omit<InternalDerivativeSnapshotView, 'id' | 'updatedAt'>>;
+  }): Promise<void> {
+    for (const snapshot of input.snapshots) {
+      const [inserted] = await this.db
+        .insert(internalDerivativeSnapshots)
+        .values({
+          venueId: snapshot.venueId,
+          venueName: snapshot.venueName,
+          sourceComponent: snapshot.sourceComponent,
+          sourceRunId: snapshot.sourceRunId,
+          sourceReference: snapshot.sourceReference,
+          accountState: snapshot.accountState ?? {},
+          positionState: snapshot.positionState ?? {},
+          healthState: snapshot.healthState ?? {},
+          orderState: snapshot.orderState ?? {},
+          coverage: snapshot.coverage,
+          metadata: snapshot.metadata,
+          capturedAt: new Date(snapshot.capturedAt),
+        })
+        .returning();
+
+      if (inserted === undefined) {
+        throw new Error('RuntimeStore.persistInternalDerivativeSnapshots: internal derivative snapshot was not persisted');
+      }
+
+      await this.db
+        .insert(internalDerivativeCurrent)
+        .values({
+          venueId: snapshot.venueId,
+          venueName: snapshot.venueName,
+          latestSnapshotId: inserted.id,
+          sourceComponent: snapshot.sourceComponent,
+          sourceRunId: snapshot.sourceRunId,
+          sourceReference: snapshot.sourceReference,
+          accountState: snapshot.accountState ?? {},
+          positionState: snapshot.positionState ?? {},
+          healthState: snapshot.healthState ?? {},
+          orderState: snapshot.orderState ?? {},
+          coverage: snapshot.coverage,
+          metadata: snapshot.metadata,
+          capturedAt: new Date(snapshot.capturedAt),
+          updatedAt: new Date(snapshot.capturedAt),
+        })
+        .onConflictDoUpdate({
+          target: internalDerivativeCurrent.venueId,
+          set: {
+            venueName: snapshot.venueName,
+            latestSnapshotId: inserted.id,
+            sourceComponent: snapshot.sourceComponent,
+            sourceRunId: snapshot.sourceRunId,
+            sourceReference: snapshot.sourceReference,
+            accountState: snapshot.accountState ?? {},
+            positionState: snapshot.positionState ?? {},
+            healthState: snapshot.healthState ?? {},
+            orderState: snapshot.orderState ?? {},
+            coverage: snapshot.coverage,
+            metadata: snapshot.metadata,
+            capturedAt: new Date(snapshot.capturedAt),
+            updatedAt: new Date(snapshot.capturedAt),
+          },
+        });
+    }
   }
 
   async createCarryActions(input: {

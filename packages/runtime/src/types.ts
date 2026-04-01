@@ -35,12 +35,17 @@ import type {
   VenueCapacityStateSnapshot,
   VenueDerivativeAccountStateSnapshot,
   VenueDerivativeHealthStateSnapshot,
+  VenueDerivativePositionEntrySnapshot,
   VenueDerivativePositionStateSnapshot,
   VenueExecutionReferenceStateSnapshot,
   VenueExposureStateSnapshot,
+  VenueOrderEntrySnapshot,
   VenueOrderStateSnapshot,
   VenueTruthCoverage,
+  VenueTruthCoverageStatus,
+  VenueTruthSourceDepth,
   VenueTruthSnapshotCompleteness,
+  VenueTruthDataProvenance,
   VenueTruthSourceMetadata,
 } from '@sentinel-apex/venue-adapters';
 
@@ -84,7 +89,12 @@ export type RuntimeReconciliationFindingType =
   | 'stale_venue_truth_snapshot'
   | 'venue_truth_unavailable'
   | 'venue_truth_partial_coverage'
-  | 'venue_execution_reference_mismatch';
+  | 'venue_execution_reference_mismatch'
+  | 'drift_position_mismatch'
+  | 'drift_order_inventory_mismatch'
+  | 'drift_subaccount_identity_mismatch'
+  | 'drift_truth_comparison_gap'
+  | 'stale_internal_derivative_state';
 
 export interface RuntimeStatusView {
   executionMode: 'dry-run' | 'live';
@@ -1332,6 +1342,9 @@ export type {
   VenueExecutionReferenceStateSnapshot,
   VenueExposureStateSnapshot,
   VenueOrderStateSnapshot,
+  VenueTruthCoverageStatus,
+  VenueTruthDataProvenance,
+  VenueTruthSourceDepth,
   VenueTruthCoverage,
   VenueTruthSnapshotCompleteness,
   VenueTruthSourceMetadata,
@@ -1343,14 +1356,234 @@ export interface VenueTruthCoverageAggregateView {
   unsupported: number;
 }
 
+export interface VenueTruthComparisonCoverageItemView {
+  status: VenueTruthCoverageStatus;
+  reason: string | null;
+}
+
+export interface VenueTruthComparisonCoverageView {
+  executionReferences: VenueTruthComparisonCoverageItemView;
+  positionInventory: VenueTruthComparisonCoverageItemView;
+  healthState: VenueTruthComparisonCoverageItemView;
+  orderInventory: VenueTruthComparisonCoverageItemView;
+  notes: string[];
+}
+
+export type InternalDerivativeDataClassification = 'canonical' | 'derived' | 'estimated';
+export type InternalDerivativeMarketType = 'perp' | 'spot' | 'unknown';
+export type InternalDerivativePositionSide = 'long' | 'short' | 'flat';
+export type InternalDerivativeComparisonStatus =
+  | 'matched'
+  | 'mismatched'
+  | 'internal_only'
+  | 'external_only'
+  | 'not_comparable';
+export type InternalDerivativeAccountLocatorMode =
+  | 'user_account_address'
+  | 'authority_subaccount'
+  | 'unconfigured';
+
+export interface InternalDerivativeCoverageItemView {
+  status: VenueTruthCoverageStatus;
+  reason: string | null;
+  limitations: string[];
+}
+
+export interface InternalDerivativeCoverageView {
+  accountState: InternalDerivativeCoverageItemView;
+  positionState: InternalDerivativeCoverageItemView;
+  healthState: InternalDerivativeCoverageItemView;
+  orderState: InternalDerivativeCoverageItemView;
+}
+
+export interface InternalDerivativeDataProvenanceView {
+  classification: InternalDerivativeDataClassification;
+  source: string;
+  notes: string[];
+}
+
+export interface InternalDerivativeAccountStateView {
+  venueId: string;
+  venueName: string;
+  configured: boolean;
+  accountLocatorMode: InternalDerivativeAccountLocatorMode;
+  accountAddress: string | null;
+  authorityAddress: string | null;
+  subaccountId: number | null;
+  accountLabel: string | null;
+  methodology: string;
+  notes: string[];
+  provenance: InternalDerivativeDataProvenanceView;
+}
+
+export interface InternalDerivativePositionEntryView {
+  positionKey: string;
+  asset: string;
+  marketType: InternalDerivativeMarketType;
+  side: InternalDerivativePositionSide;
+  netQuantity: string;
+  averageEntryPrice: string | null;
+  executedBuyQuantity: string;
+  executedSellQuantity: string;
+  fillCount: number;
+  sourceOrderCount: number;
+  firstFilledAt: string | null;
+  lastFilledAt: string | null;
+  metadata: Record<string, unknown>;
+  provenance: InternalDerivativeDataProvenanceView;
+}
+
+export interface InternalDerivativePositionStateView {
+  positions: InternalDerivativePositionEntryView[];
+  openPositionCount: number;
+  methodology: string;
+  notes: string[];
+  provenance: InternalDerivativeDataProvenanceView;
+}
+
+export interface InternalDerivativeOrderEntryView {
+  orderKey: string;
+  clientOrderId: string;
+  venueOrderId: string | null;
+  asset: string;
+  marketType: InternalDerivativeMarketType;
+  side: 'buy' | 'sell';
+  status: string;
+  requestedSize: string;
+  filledSize: string;
+  remainingSize: string;
+  requestedPrice: string | null;
+  reduceOnly: boolean;
+  executionMode: string;
+  comparableByVenueOrderId: boolean;
+  submittedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+  provenance: InternalDerivativeDataProvenanceView;
+}
+
+export interface InternalDerivativeOrderStateView {
+  openOrderCount: number;
+  comparableOpenOrderCount: number;
+  nonComparableOpenOrderCount: number;
+  openOrders: InternalDerivativeOrderEntryView[];
+  methodology: string;
+  notes: string[];
+  provenance: InternalDerivativeDataProvenanceView;
+}
+
+export interface InternalDerivativeHealthStateView {
+  healthStatus: 'unknown';
+  methodology: string;
+  notes: string[];
+  provenance: InternalDerivativeDataProvenanceView;
+}
+
+export interface InternalDerivativeSnapshotView {
+  id: string;
+  venueId: string;
+  venueName: string;
+  sourceComponent: string;
+  sourceRunId: string | null;
+  sourceReference: string | null;
+  capturedAt: string;
+  updatedAt: string;
+  coverage: InternalDerivativeCoverageView;
+  accountState: InternalDerivativeAccountStateView | null;
+  positionState: InternalDerivativePositionStateView | null;
+  healthState: InternalDerivativeHealthStateView | null;
+  orderState: InternalDerivativeOrderStateView | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface VenueDerivativeAccountComparisonView {
+  comparable: boolean;
+  status: InternalDerivativeComparisonStatus;
+  internalState: InternalDerivativeAccountStateView | null;
+  externalState: VenueDerivativeAccountStateSnapshot | null;
+  notes: string[];
+}
+
+export interface VenueDerivativePositionComparisonView {
+  comparisonKey: string;
+  asset: string;
+  marketType: InternalDerivativeMarketType;
+  comparable: boolean;
+  status: InternalDerivativeComparisonStatus;
+  quantityDelta: string | null;
+  internalPosition: InternalDerivativePositionEntryView | null;
+  externalPosition: VenueDerivativePositionEntrySnapshot | null;
+  notes: string[];
+}
+
+export interface VenueDerivativeOrderComparisonView {
+  comparisonKey: string;
+  comparable: boolean;
+  status: InternalDerivativeComparisonStatus;
+  remainingSizeDelta: string | null;
+  internalOrder: InternalDerivativeOrderEntryView | null;
+  externalOrder: VenueOrderEntrySnapshot | null;
+  notes: string[];
+}
+
+export interface VenueDerivativeHealthComparisonView {
+  comparable: boolean;
+  status: InternalDerivativeComparisonStatus;
+  internalState: InternalDerivativeHealthStateView | null;
+  externalState: VenueDerivativeHealthStateSnapshot | null;
+  notes: string[];
+}
+
+export interface VenueDerivativeComparisonSummaryView {
+  internalSnapshotAt: string | null;
+  externalSnapshotAt: string | null;
+  subaccountIdentity: VenueTruthComparisonCoverageItemView;
+  positionInventory: VenueTruthComparisonCoverageItemView;
+  healthState: VenueTruthComparisonCoverageItemView;
+  orderInventory: VenueTruthComparisonCoverageItemView;
+  matchedPositionCount: number;
+  mismatchedPositionCount: number;
+  matchedOrderCount: number;
+  mismatchedOrderCount: number;
+  activeFindingCount: number;
+  activeMismatchCount: number;
+  notes: string[];
+}
+
+export interface VenueDerivativeComparisonDetailView {
+  venueId: string;
+  venueName: string;
+  internalState: InternalDerivativeSnapshotView | null;
+  externalSnapshot: VenueSnapshotView | null;
+  summary: VenueDerivativeComparisonSummaryView;
+  accountComparison: VenueDerivativeAccountComparisonView;
+  positionComparisons: VenueDerivativePositionComparisonView[];
+  orderComparisons: VenueDerivativeOrderComparisonView[];
+  healthComparison: VenueDerivativeHealthComparisonView;
+  activeFindings: RuntimeReconciliationFindingView[];
+}
+
+export interface VenueTruthConnectorDepthSummaryView {
+  simulation: number;
+  generic_rpc_readonly: number;
+  drift_native_readonly: number;
+  execution_capable: number;
+}
+
 export interface VenueTruthSummaryView {
   totalVenues: number;
   derivativeAwareVenues: number;
   genericWalletVenues: number;
   capacityOnlyVenues: number;
+  connectorDepth: VenueTruthConnectorDepthSummaryView;
   completeSnapshots: number;
   partialSnapshots: number;
   minimalSnapshots: number;
+  decodedDerivativeAccountVenues: number;
+  decodedDerivativePositionVenues: number;
+  healthMetricVenues: number;
+  venueOpenOrderInventoryVenues: number;
   accountState: VenueTruthCoverageAggregateView;
   balanceState: VenueTruthCoverageAggregateView;
   capacityState: VenueTruthCoverageAggregateView;
@@ -1386,6 +1619,7 @@ export interface VenueInventoryItemView {
   lastSnapshotAt: string;
   lastSuccessfulSnapshotAt: string | null;
   truthCoverage: VenueTruthCoverage;
+  comparisonCoverage: VenueTruthComparisonCoverageView;
   sourceMetadata: VenueTruthSourceMetadata;
   metadata: Record<string, unknown>;
 }
@@ -1415,6 +1649,7 @@ export interface VenueSnapshotView {
   capturedAt: string;
   snapshotCompleteness: VenueTruthSnapshotCompleteness;
   truthCoverage: VenueTruthCoverage;
+  comparisonCoverage: VenueTruthComparisonCoverageView;
   sourceMetadata: VenueTruthSourceMetadata;
   accountState: VenueAccountStateSnapshot | null;
   balanceState: VenueBalanceStateSnapshot | null;
@@ -1431,6 +1666,9 @@ export interface VenueSnapshotView {
 export interface VenueDetailView {
   venue: VenueInventoryItemView;
   snapshots: VenueSnapshotView[];
+  internalState: InternalDerivativeSnapshotView | null;
+  comparisonSummary: VenueDerivativeComparisonSummaryView;
+  comparisonDetail: VenueDerivativeComparisonDetailView;
 }
 
 export interface VenueInventorySummaryView {
@@ -1618,6 +1856,9 @@ export interface RuntimeReadApi {
   listVenues(limit?: number): Promise<VenueInventoryItemView[]>;
   getVenue(venueId: string): Promise<VenueDetailView | null>;
   listVenueSnapshots(venueId: string, limit?: number): Promise<VenueSnapshotView[]>;
+  getVenueInternalState(venueId: string): Promise<InternalDerivativeSnapshotView | null>;
+  getVenueComparisonSummary(venueId: string): Promise<VenueDerivativeComparisonSummaryView | null>;
+  getVenueComparisonDetail(venueId: string): Promise<VenueDerivativeComparisonDetailView | null>;
   getVenueSummary(): Promise<VenueInventorySummaryView>;
   getVenueTruthSummary(): Promise<VenueTruthSummaryView>;
   listVenueReadiness(limit?: number): Promise<VenueInventoryItemView[]>;

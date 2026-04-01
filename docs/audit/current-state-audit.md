@@ -61,6 +61,11 @@ Repo: `/workspaces/Sentinel-Apex`
   - generic venue connector inventory and append-only venue truth snapshot history across simulated and real read-only connectors
   - richer venue-truth depth with typed account-state, balance-state, capacity-state, exposure-state, execution-reference state, derivative-account metadata, derivative/order coverage, completeness, coverage, source metadata, and venue truth profiles
   - explicit venue-truth reconciliation coverage for missing, stale, unavailable, partial, and execution-reference mismatch states on real connector snapshots, including derivative-aware partial posture where supported
+  - connector-depth and comparison-coverage projections that distinguish simulation, generic RPC read-only, Drift-native read-only decode, and the narrower direct reconciliation coverage the runtime can actually support
+  - canonical internal derivative account state from runtime tracking config, canonical internal open-order inventory from persisted runtime orders, durable internal position inventory derived from fills, and explicit unsupported internal health state
+  - durable internal derivative snapshot history plus current-state views for per-venue operator inspection and reconciliation use
+  - derivative comparison detail and summary views that distinguish matched, mismatched, internal-only, external-only, and not-comparable state
+  - truthful derivative reconciliation findings for stale internal derivative state, Drift subaccount identity mismatch, Drift position mismatch, Drift order-inventory mismatch, and comparison gaps where one side is missing or structurally unsupported
 - `packages/allocator` now provides:
   - Sentinel sleeve registry for Carry and Treasury
   - deterministic portfolio-level budgeting policy
@@ -77,7 +82,7 @@ Repo: `/workspaces/Sentinel-Apex`
   - treasury execution-time effect modeling
 - `packages/venue-adapters` now also provides treasury-specific venue abstractions and explicit simulated treasury adapters.
 - `packages/venue-adapters` now also provides carry capability metadata and explicit simulated carry execution capability reporting.
-- `packages/venue-adapters` now also provides a generic venue-truth contract plus an explicit real read-only Solana JSON-RPC adapter with partial derivative-account metadata and reference-only order context where generic RPC can support it honestly.
+- `packages/venue-adapters` now also provides a generic venue-truth contract, the existing generic Solana JSON-RPC truth adapter, and a dedicated Drift-native read-only adapter with decoded user/subaccount semantics, venue-native position inventory, Drift SDK health and margin calculations, open-order inventory, provenance metadata, and explicit unsupported boundaries where decode or comparison depth is unavailable.
 - `packages/db` now also persists treasury state in:
   - `treasury_runs`
   - `treasury_venue_snapshots`
@@ -108,6 +113,9 @@ Repo: `/workspaces/Sentinel-Apex`
   - `carry_execution_steps`
 - `packages/db` now also persists generic venue-truth history in:
   - `venue_connector_snapshots`
+- `packages/db` now also persists internal derivative comparison state in:
+  - `internal_derivative_snapshots`
+  - `internal_derivative_current`
 - `apps/api` serves portfolio, risk, orders, positions, opportunities, events, runtime status, worker status, mismatch history, and control surfaces from persisted runtime-backed state.
 - `apps/api` now also serves treasury summary, allocations, policy, recommendations, action detail, execution detail, venue readiness/detail, treasury approval, and explicit treasury execution queueing.
 - `apps/api` now also serves action-scoped treasury execution history and richer treasury execution detail with proposal linkage where available.
@@ -119,7 +127,7 @@ Repo: `/workspaces/Sentinel-Apex`
 - `apps/api` now also serves bundle manual-resolution options, manual-resolution history/detail, and explicit operator closure mutations.
 - `apps/api` now also serves bundle escalation detail/history plus explicit assignment, acknowledgement, review, and close mutations.
 - `apps/api` now also serves escalations queue, queue summary counts, and an authenticated mine query for cross-bundle operator triage.
-- `apps/api` now also serves generic venue inventory, readiness, summary counts, truth-depth summary, richer venue detail, and snapshot history.
+- `apps/api` now also serves generic venue inventory, readiness, summary counts, truth-depth summary, richer venue detail, snapshot history, connector-depth rollups, comparison-coverage views for Drift-native read-only truth, per-venue internal derivative state, and comparison summary/detail views.
 - `apps/api` now also serves carry recommendations/actions, carry action detail, action-scoped carry execution history, dedicated carry execution detail, carry venue capability state, explicit carry evaluation queueing, and carry approval-driven execution queueing.
 - `apps/runtime-worker` executes scheduled cycles, processes runtime commands, and persists scheduler/recovery visibility independently of the API process.
 - `apps/ops-dashboard` now provides an internal Next.js operator UI for overview, mismatch inspection, reconciliation visibility, recovery and command inspection, and safe action dispatch through the existing runtime API.
@@ -142,8 +150,8 @@ Repo: `/workspaces/Sentinel-Apex`
   - escalation ownership, assignee, due-at, and review-status visibility on bundle detail
   - durable escalation handoff and follow-up history
   - an escalations queue page with cross-bundle filters, ownership visibility, due-state badges, and safe queue-level triage actions
-  - a generic venues inventory page with real-vs-simulated, read-only-vs-execution-capable, freshness, truth-depth summary, and snapshot-history drill-through
-  - per-venue truth detail with completeness, coverage, account state, balances, exposure-like state, and recent reference visibility
+  - a generic venues inventory page with real-vs-simulated, read-only-vs-execution-capable, connector-depth, freshness, truth-depth summary, and snapshot-history drill-through
+  - per-venue truth detail with completeness, coverage, connector depth, provenance, decoded derivative account state, position inventory, health/margin state, open-order inventory, internal derivative state, comparison coverage/detail, and recent reference visibility
   - a first controlled-execution carry page with recommendation/actionability visibility, blocked reasons, execution history, venue readiness, and carry action drill-through
   - dedicated carry execution list/detail drill-through with step-level outcomes and timeline visibility
 - Root validation ergonomics now also provide:
@@ -156,7 +164,7 @@ Repo: `/workspaces/Sentinel-Apex`
 - Existing runtime actor/audit fields are now populated from authenticated operator identity for dashboard-driven actions instead of client-supplied placeholders.
 - Local/dev Postgres workflow now exists through `pnpm db:start`, `pnpm db:health`, `pnpm db:migrate`, `pnpm db:reset`, and `pnpm db:stop`.
 - Treasury venue readiness now exposes explicit simulated-vs-real, read-only-vs-execution-capable, onboarding state, and missing-prerequisite metadata to operators.
-- Generic venue truth now also exposes canonical connector type, sleeve applicability, truth source, snapshot freshness, health, last successful snapshot time, completeness, coverage, and typed account/balance/exposure/reference depth where supported.
+- Generic venue truth now also exposes canonical connector type, sleeve applicability, truth source, snapshot freshness, health, last successful snapshot time, completeness, coverage, connector depth, comparison coverage, provenance, and typed account/exposure/derivative/reference depth where supported.
 - Deterministic carry simulation is now materially more credible:
   - funding opportunities use mark price instead of placeholder price `1`
   - minimum funding-rate threshold is enforced
@@ -180,9 +188,15 @@ Repo: `/workspaces/Sentinel-Apex`
 - Broader operator workflows beyond treasury drill-through, especially command detail and richer recovery navigation.
 - Full production-grade live carry connectors and venue onboarding beyond explicit simulated/read-only posture.
 - Broad real execution-capable venue connectors beyond the single read-only truth path.
-- Venue-native liquidity or capacity truth for the current generic Solana RPC connector.
-- Decoded Drift-native authority, subaccount, derivative position, and health semantics beyond the raw program-account metadata the current runtime can capture.
-- Canonical venue-native open-order inventory beyond the reference-only recent-signature context the current runtime can capture today.
+- Venue-native liquidity or treasury-style capacity truth for the current read-only connectors.
+- Full Drift market-index reconciliation parity; current direct comparison depth is truthful but narrower:
+  - account identity when both internal and external sections exist
+  - open-order inventory when venue order ids exist internally and externally
+  - position inventory at `asset + marketType` granularity
+- Direct internal-versus-external Drift health reconciliation; external Drift health exists, but internal health remains intentionally unsupported.
+- Multi-account or portfolio-level Drift aggregation beyond a single configured read-only user locator.
+- Generic wallet-balance `balanceState` and treasury-style capacity truth for the Drift-native connector, which intentionally models derivative collateral and positions instead.
+- Full venue-native order lifecycle parity such as canonical per-order placement timestamps or broader market/orderbook state beyond what Drift user-account decode and recent signatures currently provide.
 - Operator management workflows beyond bootstrap and direct DB-backed setup.
 - Production-grade live venue integration.
 - Live approval for any Phase 5.x real connector.
@@ -197,91 +211,40 @@ Repo: `/workspaces/Sentinel-Apex`
 
 Commands run against the real repo state:
 
-- `pnpm install`
-- `pnpm install --frozen-lockfile`
+- `pnpm lint`
 - `pnpm validate:ci`
-- `pnpm test`
-- `pnpm --filter @sentinel-apex/runtime build`
 - `pnpm --filter @sentinel-apex/runtime typecheck`
 - `pnpm --filter @sentinel-apex/runtime lint`
+- `pnpm --filter @sentinel-apex/runtime test -- src/__tests__/internal-derivative-state.test.ts`
+- `pnpm --filter @sentinel-apex/api test -- src/__tests__/runtime-api.test.ts`
+- `pnpm --filter @sentinel-apex/ops-dashboard typecheck`
+- `pnpm --filter @sentinel-apex/ops-dashboard test -- src/app-pages.test.tsx`
 
 Targeted validation also run during implementation:
 
-- `pnpm --filter @sentinel-apex/runtime build`
-- `pnpm --filter @sentinel-apex/api build`
-- `pnpm --filter @sentinel-apex/carry test`
-- `pnpm --filter @sentinel-apex/strategy-engine test`
-- `pnpm --filter @sentinel-apex/runtime test`
-- `pnpm --filter @sentinel-apex/api test`
-- `pnpm --filter @sentinel-apex/db build`
-- `pnpm --filter @sentinel-apex/runtime build`
+- `pnpm --filter @sentinel-apex/venue-adapters typecheck`
+- `pnpm --filter @sentinel-apex/venue-adapters lint`
 - `pnpm --filter @sentinel-apex/runtime typecheck`
-- `pnpm --filter @sentinel-apex/runtime test`
-- `pnpm --filter @sentinel-apex/api build`
+- `pnpm --filter @sentinel-apex/runtime lint`
+- `pnpm --filter @sentinel-apex/runtime test -- src/__tests__/internal-derivative-state.test.ts`
 - `pnpm --filter @sentinel-apex/api typecheck`
-- `pnpm --filter @sentinel-apex/api test`
-- `pnpm install`
-- `pnpm --filter @sentinel-apex/runtime build`
-- `pnpm --filter @sentinel-apex/runtime typecheck`
-- `pnpm --filter @sentinel-apex/api typecheck`
+- `pnpm --filter @sentinel-apex/api test -- src/__tests__/runtime-api.test.ts`
 - `pnpm --filter @sentinel-apex/ops-dashboard typecheck`
 - `pnpm --filter @sentinel-apex/ops-dashboard lint`
-- `pnpm --filter @sentinel-apex/ops-dashboard build`
-- `pnpm --filter @sentinel-apex/ops-dashboard test`
-- `pnpm install`
-- `pnpm --filter @sentinel-apex/shared build`
-- `pnpm --filter @sentinel-apex/db build`
-- `pnpm --filter @sentinel-apex/api typecheck`
-- `pnpm --filter @sentinel-apex/api test`
-- `pnpm --filter @sentinel-apex/ops-dashboard typecheck`
-- `pnpm --filter @sentinel-apex/ops-dashboard lint`
-- `pnpm --filter @sentinel-apex/ops-dashboard build`
-- `pnpm --filter @sentinel-apex/ops-dashboard test`
-- `pnpm --filter @sentinel-apex/venue-adapters build`
-- `pnpm --filter @sentinel-apex/treasury build`
-- `pnpm --filter @sentinel-apex/treasury test`
-- `pnpm --filter @sentinel-apex/runtime build`
-- `pnpm --filter @sentinel-apex/runtime test`
-- `pnpm --filter @sentinel-apex/api typecheck`
-- `pnpm --filter @sentinel-apex/api test`
-- `pnpm --filter @sentinel-apex/ops-dashboard typecheck`
-- `pnpm --filter @sentinel-apex/ops-dashboard build`
-- `pnpm --filter @sentinel-apex/ops-dashboard test`
-- `CI=1 pnpm build`
-- `CI=1 pnpm typecheck`
-- `CI=1 pnpm lint`
-- `CI=1 pnpm test`
-- `pnpm --filter @sentinel-apex/venue-adapters build`
-- `pnpm --filter @sentinel-apex/runtime typecheck`
-- `pnpm --filter @sentinel-apex/runtime build`
-- `pnpm --filter @sentinel-apex/runtime test`
-- `pnpm --filter @sentinel-apex/api typecheck`
-- `pnpm --filter @sentinel-apex/api build`
-- `pnpm --filter @sentinel-apex/api test`
-- `pnpm --filter @sentinel-apex/ops-dashboard typecheck`
-- `pnpm --filter @sentinel-apex/ops-dashboard build`
-- `pnpm --filter @sentinel-apex/ops-dashboard test`
-- `pnpm --filter @sentinel-apex/venue-adapters test`
-- `pnpm validate:ci`
+- `pnpm --filter @sentinel-apex/ops-dashboard test -- src/app-pages.test.tsx`
 
 Results:
 
-- `pnpm validate:ci` now passes the canonical root `build`, `typecheck`, `lint`, and `test` contract.
-- Phase 5.3 targeted build, typecheck, lint, and test commands for `venue-adapters`, `runtime`, `api`, and `ops-dashboard` pass on the current tree.
-- `pnpm install --frozen-lockfile` now also passes, which matches the new CI workflow entrypoint.
-- `pnpm test` also passes after the Turbo `test.outputs` warning cleanup, so the root test gate no longer reports false missing-output warnings.
-- Root lint no longer fails on hidden runtime/venue-adapter issues discovered during this pass.
-- Repo-owned lint noise was reduced by removing the misleading `decimal.js` import warning and suppressing unsupported-TypeScript parser banners in ESLint output.
-- Turbo task invalidation is now more trustworthy because root/package config changes participate in cache invalidation.
-- `packages/db` now participates in root lint/test orchestration consistently with the rest of the repo.
-- Remaining non-failing noise during tests comes from Vitest/Vite CJS deprecation output and from `apps/runtime-worker` intentionally having no test files while still exposing a standard `test` script.
+- `pnpm lint` passes on the current tree.
+- `pnpm validate:ci` passes the canonical root `build`, `typecheck`, `lint`, and `test` contract on the current tree.
+- The earlier lint instability investigation did not end in a Turbo config change. The real repo-owned blocker was unresolved lint debt in `packages/runtime/src/store.ts`, and root validation became green once that was fixed.
+- Targeted validation for `runtime`, `api`, `ops-dashboard`, and `venue-adapters` also passes on the current tree.
+- Remaining non-failing noise during tests is limited to Vitest/Vite CJS deprecation output and normal simulated-adapter test logs.
 
 ## Recommended Next Actions
 
-1. Expand venue-truth depth beyond generic Solana RPC into venue-native derivative positions, liquidity, and richer execution history only when a real connector can supply that truth honestly.
-2. Add stronger freshness and projection-age detectors if runtime metadata evolves to support stricter staleness policies.
-3. Decide whether some remediation actions should auto-attach operator resolution hints once a deterministic success condition is observed.
-4. Add admin-facing operator management and stronger session lifecycle tooling only if internal operational complexity justifies it.
-5. Expand the ops dashboard from the current treasury and allocator foundations into richer command detail and finding-to-mismatch-to-remediation navigation.
-6. Add real treasury connectors only after venue approvals and operational runbooks are ready.
-7. Decide whether approved rebalance budget state should later translate into treasury venue actions and carry deployment workflows under separate operator controls.
+1. Add a truthful internal health and margin model so Drift health can move from operator-visible-only to directly comparable.
+2. Increase position comparison depth from `asset + marketType` to fuller Drift market identity only when internal state can support it honestly.
+3. Decide whether some derivative comparison gaps should auto-link to operator remediation guidance once stable mismatch patterns are observed.
+4. Expand the ops dashboard from the current venue-detail comparison view into richer finding-to-mismatch-to-remediation drill-through.
+5. Add real treasury or execution-capable connectors only after venue approvals and separate operational runbooks are ready.

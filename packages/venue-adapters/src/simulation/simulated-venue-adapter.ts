@@ -346,6 +346,7 @@ export class SimulatedVenueAdapter implements VenueAdapter {
       sourceMetadata: {
         sourceKind: 'simulation',
         sourceName: 'simulated_market_adapter',
+        connectorDepth: 'simulation',
         observedScope: ['balances', 'positions', 'status'],
       },
       accountState: null,

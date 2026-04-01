@@ -35,6 +35,8 @@ export {
   opsOperators,
   opsOperatorSessions,
   executionEvents,
+  internalDerivativeCurrent,
+  internalDerivativeSnapshots,
   runtimeCommands,
   runtimeMismatchRemediations,
   runtimeMismatches,

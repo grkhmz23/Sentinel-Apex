@@ -91,7 +91,10 @@ const envSchema = z
 
     // ── Drift / on-chain ─────────────────────────────────────────────────────
     DRIFT_RPC_ENDPOINT: z.string().optional(),
+    DRIFT_READONLY_ENV: z.enum(['devnet', 'mainnet-beta']).optional(),
     DRIFT_READONLY_ACCOUNT_ADDRESS: z.string().optional(),
+    DRIFT_READONLY_AUTHORITY_ADDRESS: z.string().optional(),
+    DRIFT_READONLY_SUBACCOUNT_ID: z.coerce.number().int().min(0).optional(),
     DRIFT_READONLY_ACCOUNT_LABEL: z.string().optional(),
 
     DRIFT_PRIVATE_KEY: z.string().optional(),
