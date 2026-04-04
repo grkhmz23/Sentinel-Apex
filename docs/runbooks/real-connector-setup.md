@@ -2,11 +2,42 @@
 
 ## Scope
 
-Phases 5.5 and 5.6 still support read-only real connector setup only. The current in-repo real path is:
+Phases 5.5 through 6.0 support two real connector profiles:
 
 - `drift-solana-readonly`
+- `drift-solana-devnet-carry`
 
-This venue now uses a dedicated Drift-native read-only decode path. It remains read-only, not execution-capable, and not approved for live use.
+`drift-solana-readonly` remains the mainnet-beta read-only truth path.
+
+`drift-solana-devnet-carry` is the first execution-capable connector, but its scope is intentionally narrow:
+
+- devnet only
+- carry sleeve only
+- BTC-PERP only
+- reduce-only market orders only
+
+Phase 5.9 promotion rules still apply. No real connector is auto-approved.
+
+## Phase 6.0 Devnet Execution Addendum
+
+Use a separate devnet shell for the execution-capable connector:
+
+```bash
+export DRIFT_RPC_ENDPOINT=https://api.devnet.solana.com
+export DRIFT_READONLY_ENV=devnet
+export DRIFT_EXECUTION_ENV=devnet
+export DRIFT_PRIVATE_KEY=replace-with-devnet-secret-key
+export DRIFT_EXECUTION_SUBACCOUNT_ID=0
+export DRIFT_EXECUTION_ACCOUNT_LABEL="Hackathon Devnet Carry"
+```
+
+Important:
+
+- `DRIFT_PRIVATE_KEY` is used to derive the execution authority and Drift devnet account
+- keep `DRIFT_RPC_ENDPOINT` and `DRIFT_READONLY_ENV` aligned to devnet when using the Phase 6.0 path
+- this path does not support opening new exposure; it only reduces an existing BTC-PERP position
+- promotion approval is still required before real execution
+- `EXECUTION_MODE=live` and `FEATURE_FLAG_LIVE_EXECUTION=true` are required before the runtime can use the real connector
 
 ## Required Environment
 
@@ -39,6 +70,14 @@ Locator rules:
 - derivative comparison detail in `/api/v1/venues/:venueId/comparison-detail`
 - snapshot history in `/api/v1/venues/:venueId/snapshots`
 - dashboard visibility on `/venues`
+- promotion summary visibility on `/api/v1/venues/promotion-summary`
+- per-venue promotion detail on `/api/v1/venues/:venueId/promotion`
+- per-venue promotion eligibility detail on `/api/v1/venues/:venueId/promotion/eligibility`
+- for `drift-solana-devnet-carry` only:
+  - explicit execution-capable devnet posture metadata
+  - real BTC-PERP reduce-only order submission
+  - persisted Solana transaction signatures as execution references
+  - carry execution detail that distinguishes `real` from `simulated`
 - runtime-ingested JSON-RPC version check
 - decoded Drift user-account identity and subaccount semantics
 - account identity and raw account metadata for the configured user locator
@@ -51,20 +90,26 @@ Locator rules:
 - canonical internal derivative account state from runtime config
 - canonical internal open-order inventory from runtime orders
 - durable internal position inventory derived from runtime fills
+- derived internal health posture from persisted portfolio and risk projections
+- normalized internal market identity on positions and open orders where persisted metadata or honest derivation allows it
+- earlier market identity propagation through strategy intents, carry planned orders, runtime orders, carry execution steps, execution events, and fills when the runtime truly captures venue-native metadata
 - reconciliation findings for missing, stale, unavailable, partial, and execution-reference mismatch states where justified
-- truthful derivative comparison findings for subaccount identity, position inventory, order inventory, comparison gaps, and stale internal derivative state where justified
+- truthful derivative comparison findings for subaccount identity, position inventory, order inventory, partial health comparison, partial market-identity comparison, market-identity gaps, exact market-identity mismatches, comparison gaps, and stale internal derivative state where justified
 
 ## What This Does Not Enable
 
 - venue-native liquidity or treasury-style capacity truth
 - generic wallet `balanceState` for this connector
-- full Drift market-index reconciliation parity
-- direct internal-versus-external Drift health comparison
+- full Drift market-index reconciliation parity for every internal row
+- exact internal-versus-external Drift collateral, margin-ratio, and requirement comparison
 - canonical per-order placement timestamps for every decoded open order
-- order placement
-- carry execution
+- broad order placement
+- broad carry execution
 - treasury execution
-- live approval
+- mainnet execution
+- automatic live approval
+- increase-carry-exposure through the real connector
+- spot or non-BTC perp execution through the real connector
 
 ## Local Expectations
 
@@ -77,6 +122,18 @@ Locator rules:
 - prefer `DRIFT_READONLY_AUTHORITY_ADDRESS` plus `DRIFT_READONLY_SUBACCOUNT_ID` when operators know the Drift authority but do not want to manage raw user account addresses
 - keep `DRIFT_READONLY_ENV` aligned with the target cluster and deployed Drift environment
 - this path remains strictly read-only even though it now decodes richer venue-native truth
+- do not treat fresh read-only truth as approval for sensitive execution
+- use the promotion endpoints only as inspection surfaces for this connector, not as a path to live enablement
+
+For the Phase 6.0 devnet execution path:
+
+- switch to a dedicated devnet shell
+- set `DRIFT_RPC_ENDPOINT=https://api.devnet.solana.com`
+- set `DRIFT_READONLY_ENV=devnet`
+- set `DRIFT_EXECUTION_ENV=devnet`
+- provide a devnet-only `DRIFT_PRIVATE_KEY`
+- keep the supported scope limited to reducing an existing BTC-PERP position
+- do not treat `approved_for_live` as permission for anything broader than this connector's declared devnet contract
 
 ## Interpreting Snapshot State
 
@@ -118,15 +175,22 @@ Locator rules:
 - `comparisonCoverage.executionReferences.status=available`
   - the runtime can directly compare persisted execution references against recent venue signatures
 - `comparisonCoverage.positionInventory.status=available`
-  - the runtime can directly compare internal and external inventory at `asset + marketType` granularity
+  - the runtime can directly compare internal and external inventory for rows that can be aligned through a truthful normalized market identity
 - `comparisonCoverage.orderInventory.status=partial`
   - internal open-order inventory exists, but direct comparison is limited to orders that already have a venue order id
-- `comparisonCoverage.healthState.status=unsupported`
-  - external Drift health is visible, but the runtime still does not maintain a truthful internal health model
+- `/api/v1/venues/:venueId/comparison-summary -> marketIdentity.status=partial`
+  - some rows align through exact market identity, while others still fall back to derived symbols or remain identity-gapped
+- carry action and carry execution detail surfaces now expose `marketIdentity.provenance`, `confidence`, and `capturedAtStage`
+  - this tells operators whether identity was carried from earlier strategy or venue-native metadata, or only derived later
+- `comparisonCoverage.healthState.status=partial`
+  - the runtime now maintains a derived internal health posture, but only band-level health comparison is truthful
 
 ## What Operators Should Monitor
 
 - `/api/v1/venues`, `/api/v1/venues/truth-summary`, and `/api/v1/venues/:venueId` for latest truth depth
+- `/api/v1/venues/promotion-summary` for global promotion posture rollups
+- `/api/v1/venues/:venueId/promotion` for durable posture, evidence, and history
+- `/api/v1/venues/:venueId/promotion/eligibility` for current blockers and eligibility state
 - `/api/v1/venues/:venueId/internal-state` for canonical internal derivative posture
 - `/api/v1/venues/:venueId/comparison-summary` for section-level comparison coverage and status
 - `/api/v1/venues/:venueId/comparison-detail` for account, position, order, and health comparison details
@@ -139,6 +203,10 @@ Locator rules:
 - `/api/v1/runtime/reconciliation/findings?findingType=stale_internal_derivative_state`
 - `/api/v1/runtime/reconciliation/findings?findingType=drift_truth_comparison_gap`
 - `/api/v1/runtime/reconciliation/findings?findingType=drift_subaccount_identity_mismatch`
+- `/api/v1/runtime/reconciliation/findings?findingType=drift_partial_health_comparison`
+- `/api/v1/runtime/reconciliation/findings?findingType=drift_partial_market_identity_comparison`
+- `/api/v1/runtime/reconciliation/findings?findingType=drift_position_identity_gap`
+- `/api/v1/runtime/reconciliation/findings?findingType=drift_market_identity_mismatch`
 - `/api/v1/runtime/reconciliation/findings?findingType=drift_position_mismatch`
 - `/api/v1/runtime/reconciliation/findings?findingType=drift_order_inventory_mismatch`
 

@@ -51,6 +51,33 @@ function toneForTruthProfile(
   return 'bad';
 }
 
+function toneForCapabilityClass(
+  capabilityClass: string,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (capabilityClass === 'execution_capable') {
+    return 'good';
+  }
+  if (capabilityClass === 'real_readonly') {
+    return 'warn';
+  }
+  return 'neutral';
+}
+
+function toneForPromotionPosture(
+  posture: string,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (posture === 'approved_for_live') {
+    return 'good';
+  }
+  if (posture === 'promotion_pending' || posture === 'execution_capable_unapproved') {
+    return 'warn';
+  }
+  if (posture === 'rejected' || posture === 'suspended') {
+    return 'bad';
+  }
+  return 'neutral';
+}
+
 export default async function VenuesPage(): Promise<JSX.Element> {
   const session = await requireDashboardSession('/venues');
   const state = await loadVenuesPageData();
@@ -64,6 +91,16 @@ export default async function VenuesPage(): Promise<JSX.Element> {
   }
 
   const { venues, summary, truthSummary } = state.data;
+  const promotionPending = venues.filter((venue) => venue.promotion?.promotionStatus === 'pending_review').length;
+  const approvedAndEligible = venues.filter((venue) => venue.promotion?.sensitiveExecutionEligible).length;
+  const suspended = venues.filter((venue) => venue.promotion?.promotionStatus === 'suspended').length;
+  const blockedByEvidence = venues.filter((venue) => {
+    const promotion = venue.promotion;
+    return promotion !== undefined
+      && promotion.capabilityClass === 'execution_capable'
+      && !promotion.sensitiveExecutionEligible
+      && promotion.blockers.length > 0;
+  }).length;
 
   return (
     <AppShell session={session}>
@@ -87,6 +124,10 @@ export default async function VenuesPage(): Promise<JSX.Element> {
                 { label: 'Generic wallet', value: String(summary.genericWallet) },
                 { label: 'Capacity only', value: String(summary.capacityOnly) },
                 { label: 'Approved live', value: String(summary.approvedForLiveUse) },
+                { label: 'Promotion pending', value: String(promotionPending) },
+                { label: 'Approved and eligible', value: String(approvedAndEligible) },
+                { label: 'Suspended', value: String(suspended) },
+                { label: 'Blocked by evidence', value: String(blockedByEvidence) },
                 { label: 'Degraded', value: String(summary.degraded) },
                 { label: 'Unavailable', value: String(summary.unavailable) },
                 { label: 'Stale', value: String(summary.stale) },
@@ -129,6 +170,7 @@ export default async function VenuesPage(): Promise<JSX.Element> {
                   <th>Venue</th>
                   <th>Truth</th>
                   <th>Capabilities</th>
+                  <th>Promotion</th>
                   <th>Health</th>
                   <th>Depth</th>
                   <th>Freshness</th>
@@ -158,6 +200,21 @@ export default async function VenuesPage(): Promise<JSX.Element> {
                         <span>{venue.executionSupport ? 'Execution-capable' : venue.readOnlySupport ? 'Read-only' : 'Unsupported'}</span>
                         <StatusBadge label={venue.onboardingState} tone={toneForOnboarding(venue.onboardingState)} />
                         <span className="panel__hint">{venue.approvedForLiveUse ? 'Approved for live' : 'Not approved for live'}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="stack stack--compact">
+                        <StatusBadge
+                          label={venue.promotion?.capabilityClass ?? 'unknown'}
+                          tone={toneForCapabilityClass(venue.promotion?.capabilityClass ?? 'unknown')}
+                        />
+                        <StatusBadge
+                          label={venue.promotion?.effectivePosture ?? 'unknown'}
+                          tone={toneForPromotionPosture(venue.promotion?.effectivePosture ?? 'unknown')}
+                        />
+                        <span className="panel__hint">
+                          {venue.promotion?.sensitiveExecutionEligible ? 'Eligible for sensitive execution' : 'Not eligible for sensitive execution'}
+                        </span>
                       </div>
                     </td>
                     <td>

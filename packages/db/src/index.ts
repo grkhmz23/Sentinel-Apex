@@ -40,6 +40,8 @@ export {
   runtimeReconciliationFindings,
   runtimeReconciliationRuns,
   runtimeRecoveryEvents,
+  venueConnectorPromotionEvents,
+  venueConnectorPromotions,
   venueConnectorSnapshots,
   riskCurrent,
   riskSnapshots,

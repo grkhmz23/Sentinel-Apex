@@ -328,7 +328,28 @@ export class CarryControlledExecutionPlanner {
             'venue_capability',
             `Carry venue ${venueId} is not approved for live use.`,
             'Complete onboarding and live-enable review before using live carry execution.',
-            { venueId },
+            {
+              venueId,
+              promotionStatus: capability.promotionStatus,
+            },
+          ));
+        }
+
+        if (
+          capability.venueMode === 'live'
+          && capability.approvedForLiveUse
+          && !capability.sensitiveExecutionEligible
+        ) {
+          blockedReasons.push(buildBlockedReason(
+            'venue_live_ineligible',
+            'venue_capability',
+            `Carry venue ${venueId} is approved for live use but currently ineligible for sensitive execution.`,
+            'Restore connector truth freshness and health, then re-run carry evaluation before executing.',
+            {
+              venueId,
+              promotionStatus: capability.promotionStatus,
+              blockers: capability.promotionBlockedReasons,
+            },
           ));
         }
 

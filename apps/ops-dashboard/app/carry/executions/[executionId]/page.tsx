@@ -13,6 +13,95 @@ import { loadCarryExecutionDetailPageData } from '../../../../src/lib/runtime-ap
 
 export const dynamic = 'force-dynamic';
 
+function formatMarketIdentityLabel(
+  identity: {
+    marketSymbol: string | null;
+    marketKey: string | null;
+    normalizedKey: string | null;
+  } | null,
+): string {
+  if (identity === null) {
+    return 'Unsupported';
+  }
+
+  return identity.marketSymbol ?? identity.marketKey ?? identity.normalizedKey ?? 'Unsupported';
+}
+
+function formatMarketIdentityDetail(
+  identity: {
+    provenance: string;
+    confidence: string;
+    capturedAtStage: string;
+    source: string;
+  } | null,
+): string {
+  if (identity === null) {
+    return 'No persisted market identity.';
+  }
+
+  return `${identity.provenance} / ${identity.confidence} via ${identity.capturedAtStage} (${identity.source})`;
+}
+
+function formatExecutionModes(value: unknown): string {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value.join(', ')
+    : 'Not recorded';
+}
+
+function formatStepExecutionMode(
+  outcome: Record<string, unknown> | null | undefined,
+  simulated: boolean,
+): string {
+  const mode = outcome?.['executionMode'];
+  if (mode === 'real' || mode === 'simulated') {
+    return mode;
+  }
+
+  return simulated ? 'simulated' : 'Not recorded';
+}
+
+function toneForPostTradeConfirmation(
+  status: string | null | undefined,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (status === 'confirmed_full') {
+    return 'good';
+  }
+  if (
+    status === 'confirmed_partial'
+    || status === 'confirmed_partial_event_only'
+    || status === 'confirmed_partial_position_only'
+    || status === 'pending_event'
+    || status === 'pending_position_delta'
+  ) {
+    return 'warn';
+  }
+  if (
+    status === 'missing_reference'
+    || status === 'invalid_position_delta'
+    || status === 'insufficient_context'
+    || status === 'conflicting_event'
+    || status === 'conflicting_event_vs_position'
+  ) {
+    return 'bad';
+  }
+  return 'neutral';
+}
+
+function toneForEventCorrelation(
+  status: string | null | undefined,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (status === 'event_matched_strong') {
+    return 'good';
+  }
+  if (status === 'event_matched_probable') {
+    return 'warn';
+  }
+  if (status === 'conflicting_event') {
+    return 'bad';
+  }
+  return 'neutral';
+}
+
 export default async function CarryExecutionDetailPage(
   { params }: { params: { executionId: string } },
 ): Promise<JSX.Element> {
@@ -53,6 +142,15 @@ export default async function CarryExecutionDetailPage(
                 { label: 'Status', value: <StatusBadge label={detail.execution.status} tone={carryStatusTone(detail.execution.status)} /> },
                 { label: 'Mode', value: <StatusBadge label={detail.execution.executionMode} tone={carryModeTone(detail.execution.executionMode)} /> },
                 { label: 'Simulation', value: detail.execution.simulated ? 'Simulated' : 'Real connector path' },
+                { label: 'Execution modes', value: formatExecutionModes(detail.execution.outcome['executionModes']) },
+                {
+                  label: 'Post-trade truth',
+                  value: detail.steps.every((step) => step.postTradeConfirmation === null)
+                    ? 'Not recorded'
+                    : detail.steps
+                      .map((step) => step.postTradeConfirmation?.status ?? 'not_recorded')
+                      .join(', '),
+                },
                 { label: 'Requested by', value: detail.execution.requestedBy },
                 { label: 'Started by', value: detail.execution.startedBy ?? 'Unavailable' },
                 { label: 'Command', value: detail.command?.commandId ?? 'No linked command' },
@@ -128,7 +226,12 @@ export default async function CarryExecutionDetailPage(
                   <tr>
                     <th>Intent</th>
                     <th>Venue</th>
+                    <th>Market</th>
+                    <th>Identity</th>
                     <th>Status</th>
+                    <th>Execution mode</th>
+                    <th>Post-trade truth</th>
+                    <th>Venue event</th>
                     <th>Requested</th>
                     <th>Reference</th>
                     <th>Outcome</th>
@@ -149,7 +252,33 @@ export default async function CarryExecutionDetailPage(
                           <span className="panel__hint">{step.venueMode}{step.simulated ? ' / simulated' : ''}</span>
                         </div>
                       </td>
+                      <td>{formatMarketIdentityLabel(step.marketIdentity)}</td>
+                      <td>{formatMarketIdentityDetail(step.marketIdentity)}</td>
                       <td><StatusBadge label={step.status} tone={carryStatusTone(step.status)} /></td>
+                      <td>{formatStepExecutionMode(step.outcome, step.simulated)}</td>
+                      <td>
+                        {step.postTradeConfirmation === null ? 'Not recorded' : (
+                          <div className="stack stack--compact">
+                            <StatusBadge
+                              label={step.postTradeConfirmation.status}
+                              tone={toneForPostTradeConfirmation(step.postTradeConfirmation.status)}
+                            />
+                            <span className="panel__hint">{step.postTradeConfirmation.evidenceBasis}</span>
+                            <span className="panel__hint">{step.postTradeConfirmation.summary}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {step.postTradeConfirmation?.eventEvidence === null || step.postTradeConfirmation?.eventEvidence === undefined ? 'Not recorded' : (
+                          <div className="stack stack--compact">
+                            <StatusBadge
+                              label={`${step.postTradeConfirmation.eventEvidence.correlationStatus} / ${step.postTradeConfirmation.eventEvidence.correlationConfidence}`}
+                              tone={toneForEventCorrelation(step.postTradeConfirmation.eventEvidence.correlationStatus)}
+                            />
+                            <span className="panel__hint">{step.postTradeConfirmation.eventEvidence.summary}</span>
+                          </div>
+                        )}
+                      </td>
                       <td>{step.requestedPrice ?? 'Market'} / {step.orderType}</td>
                       <td>{step.executionReference ?? step.venueOrderId ?? step.clientOrderId ?? 'Unavailable'}</td>
                       <td>{step.outcomeSummary ?? step.lastError ?? 'Pending'}</td>

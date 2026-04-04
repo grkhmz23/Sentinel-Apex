@@ -21,6 +21,27 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return payload.data;
 }
 
+async function requestVenues<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(`/api/venues${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: T;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
 export async function triggerCycle(): Promise<unknown> {
   return request('/cycles/run', { method: 'POST' });
 }
@@ -368,6 +389,50 @@ export async function executeTreasuryAction(actionId: string): Promise<unknown> 
   }
 
   return payload.data;
+}
+
+export async function requestConnectorPromotion(
+  venueId: string,
+  note?: string,
+): Promise<unknown> {
+  return requestVenues(`/${venueId}/promotion/request`, {
+    method: 'POST',
+    body: JSON.stringify({
+      ...(note !== undefined ? { note } : {}),
+    }),
+  });
+}
+
+export async function approveConnectorPromotion(
+  venueId: string,
+  note?: string,
+): Promise<unknown> {
+  return requestVenues(`/${venueId}/promotion/approve`, {
+    method: 'POST',
+    body: JSON.stringify({
+      ...(note !== undefined ? { note } : {}),
+    }),
+  });
+}
+
+export async function rejectConnectorPromotion(
+  venueId: string,
+  note: string,
+): Promise<unknown> {
+  return requestVenues(`/${venueId}/promotion/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function suspendConnectorPromotion(
+  venueId: string,
+  note: string,
+): Promise<unknown> {
+  return requestVenues(`/${venueId}/promotion/suspend`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
 }
 
 export async function postMismatchAction(

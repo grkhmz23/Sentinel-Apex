@@ -1,6 +1,8 @@
 # Sentinel Apex
 
-Sentinel Apex is a TypeScript monorepo for the institutional Solana yield control plane. The current repo includes the internal API, a dedicated runtime worker, an internal ops dashboard, core strategy/risk/execution packages, durable recovery visibility, reconciliation-driven mismatch detection, mismatch-scoped remediation actions, the Atlas Treasury foundation, the Sentinel allocator foundation, carry controlled execution with dedicated execution drill-through, treasury execution drill-through with rebalance-linked budget-application visibility, rebalance bundle coordination with partial-failure rollups and operator recovery semantics, explicit bundle recovery actions for safe child requeue, explicit manual resolution for partial or non-retryable bundles, explicit escalation ownership and handoff workflow for escalated bundles, a cross-bundle escalations queue and triage board, deeper read-only venue-native truth coverage for connector account, exposure-like, recent-reference, and Drift-native account/position/health/order semantics, plus a canonical internal derivative state and comparison layer for honest internal-vs-external Drift-backed reconciliation, and a Postgres-first local/dev workflow.
+Sentinel Apex is a TypeScript monorepo for the institutional Solana yield control plane. The current repo includes the internal API, a dedicated runtime worker, an internal ops dashboard, core strategy/risk/execution packages, durable recovery visibility, reconciliation-driven mismatch detection, mismatch-scoped remediation actions, the Atlas Treasury foundation, the Sentinel allocator foundation, carry controlled execution with dedicated execution drill-through, treasury execution drill-through with rebalance-linked budget-application visibility, rebalance bundle coordination with partial-failure rollups and operator recovery semantics, explicit bundle recovery actions for safe child requeue, explicit manual resolution for partial or non-retryable bundles, explicit escalation ownership and handoff workflow for escalated bundles, a cross-bundle escalations queue and triage board, deeper read-only venue-native truth coverage for connector account, exposure-like, recent-reference, and Drift-native account/position/health/order semantics, plus a richer internal derivative state and comparison layer with derived internal health posture, normalized market identity, earlier venue-native market metadata propagation through intent/order/execution/fill history, exact-identity promotion where the internal side truly captured stronger metadata, a first narrow devnet execution-capable connector path, and a Postgres-first local/dev workflow.
+
+Phase 6.0 adds the first honest real execution path on top of the Phase 5.9 promotion workflow. Connector capability, operator approval state, and current live-readiness eligibility remain separate concepts. Approval is explicit and durable. Current sensitive-execution eligibility is recomputed from real persisted truth and can be lost when connector evidence becomes stale, degraded, or incomplete.
 
 ## Local Dev Workflow
 
@@ -23,6 +25,21 @@ export DRIFT_READONLY_SUBACCOUNT_ID=0
 export DRIFT_READONLY_ACCOUNT_LABEL="optional human label"
 export RUNTIME_WORKER_CYCLE_INTERVAL_MS=60000
 ```
+
+Optional Phase 6.0 devnet execution env for the first real connector path:
+
+```bash
+export EXECUTION_MODE=live
+export FEATURE_FLAG_LIVE_EXECUTION=true
+export DRIFT_RPC_ENDPOINT=https://api.devnet.solana.com
+export DRIFT_READONLY_ENV=devnet
+export DRIFT_EXECUTION_ENV=devnet
+export DRIFT_PRIVATE_KEY=replace-with-devnet-secret-key
+export DRIFT_EXECUTION_SUBACCOUNT_ID=0
+export DRIFT_EXECUTION_ACCOUNT_LABEL="Hackathon Devnet Carry"
+```
+
+Use the optional block only in a dedicated devnet shell. It is not compatible with the default mainnet-beta read-only example above.
 
 Start local Postgres and apply migrations:
 
@@ -81,7 +98,7 @@ Mutation endpoints are now operator-authorized in addition to API-key protected.
 
 ## Read-Only Venue Truth
 
-The in-repo real connector path remains:
+The in-repo read-only real connector path remains:
 
 - `drift-solana-readonly`
 
@@ -104,6 +121,9 @@ The runtime now also persists a separate internal derivative model for the same 
 - account identity from runtime operator configuration
 - open-order inventory from canonical runtime orders
 - position inventory derived from canonical fills joined to runtime orders
+- derived internal health posture from persisted portfolio and risk projections
+- normalized market identity on internal positions and orders
+- canonical market identity propagated through strategy intents, carry planned orders, runtime orders, carry execution steps, execution events, and fills when the pipeline truly knows more than `asset + marketType`
 - comparison summary and comparison detail views that separate:
   - matched
   - mismatched
@@ -115,10 +135,41 @@ This path still does not provide:
 
 - treasury-style capacity truth
 - generic wallet `balanceState` for the Drift-native connector
-- full Drift market-index reconciliation parity
-- direct internal-versus-external Drift health reconciliation parity
+- exact Drift health parity across collateral, margin-ratio, and requirement fields
+- exact internal market-index parity for every row when persisted internal metadata never carried it
 - canonical placement timestamps for every open order
 - live execution support
+
+## First Real Devnet Execution Path
+
+Phase 6.0 adds one execution-capable connector:
+
+- `drift-solana-devnet-carry`
+
+Its supported scope is intentionally narrow:
+
+- devnet only
+- carry sleeve only
+- BTC-PERP reduce-only market orders only
+- real Solana transaction signatures persisted as execution references
+
+This path reuses the existing carry action approval and runtime command rail. It does not add:
+
+- generic order entry
+- treasury-native real execution
+- increase-carry-exposure execution
+- mainnet execution
+- silent fallback from real to simulated
+
+Operator-facing inspection for this path is available through:
+
+- `/api/v1/venues/drift-solana-devnet-carry`
+- `/api/v1/venues/drift-solana-devnet-carry/promotion`
+- `/api/v1/venues/drift-solana-devnet-carry/promotion/eligibility`
+- `/api/v1/carry/actions/:actionId`
+- `/api/v1/carry/executions/:executionId`
+
+The ops dashboard surfaces the same truth on `/venues/:venueId` and `/carry/executions/:executionId`.
 
 Operator-facing venue truth is available through:
 
@@ -140,11 +191,61 @@ Reconciliation also exposes venue-truth findings for:
 - execution-reference mismatch where the connector truth actually exposes recent references
 - stale internal derivative state
 - Drift subaccount identity mismatch
+- Drift partial health comparison
+- Drift partial market-identity comparison
+- Drift position identity gap
+- Drift market-identity mismatch where exact internal identity exists
 - Drift position mismatch
 - Drift order-inventory mismatch
 - Drift truth comparison gaps when one side is missing or structurally unsupported
 
 The API is now the control-plane and read surface. Scheduled cycle execution, command processing, recovery work, reconciliation, treasury evaluation, allocator evaluation, and carry evaluation continue to run in the backend services. The ops dashboard is a thin internal UI over those existing API contracts. Treasury evaluation now runs as part of real runtime cycles and can also be queued explicitly from the authenticated treasury page in the ops dashboard. Sentinel allocator evaluation now runs during runtime cycles and can also be queued explicitly, producing persisted current-vs-target sleeve budgets, structured rationale, and rebalance recommendations without hidden execution side effects. Atlas Treasury recommendations can now be approved and executed through the existing runtime worker flow, with explicit simulated/live boundaries, backend risk checks, durable execution history, action/execution drill-through, and venue readiness visibility. Treasury rebalance participation can now also persist explicit proposal-linked treasury action/execution records for budget-state-only changes, so rebalance drill-through can link into treasury detail without pretending every treasury outcome is venue-native. Carry now also has first-class controlled execution semantics: approved strategy opportunities and rebalance-linked carry changes produce explicit carry actions, backend-enforced operational blocked reasons, simulated-vs-live venue state, durable command/execution history, dedicated execution-step drill-through, and dashboard/API visibility without pretending unsupported live deployment exists. Sentinel now also exposes an operator-approved rebalance workflow: allocator runs can emit durable rebalance proposals, operators can approve or reject them, the worker executes explicit rebalance commands, runtime exposes a backend-native proposal execution graph across proposal, command, and downstream sleeve work, rebalance bundles summarize whether the coordinated multi-sleeve workflow is complete, partially applied, blocked, failed, or awaiting intervention, operators can request explicit bundle recovery actions for safely retryable proposal-linked carry and treasury children, operators can explicitly accept partial application or mark a bundle manually resolved, escalated bundles carry explicit ownership, acknowledgement, review, and close workflow, and operators can now triage those escalations from a dedicated cross-bundle queue without hidden automation.
+
+## Connector Promotion And Live Readiness
+
+Phases 5.9 and 6.0 still do not broadly enable live execution. They add the durable workflow and one narrow devnet execution path required before any broader connector could honestly be treated as live-ready.
+
+Current model:
+
+- capability class
+  - `simulated_only`
+  - `real_readonly`
+  - `execution_capable`
+- promotion status
+  - `not_requested`
+  - `pending_review`
+  - `approved`
+  - `rejected`
+  - `suspended`
+- effective posture
+  - `simulated_only`
+  - `real_readonly`
+  - `execution_capable_unapproved`
+  - `promotion_pending`
+  - `approved_for_live`
+  - `rejected`
+  - `suspended`
+
+Important boundary:
+
+- read-only truth is not live approval
+- execution capability is not live approval
+- approval is durable and auditable
+- approved connectors are still blocked from sensitive execution when current evidence is stale, degraded, incomplete, or otherwise ineligible
+- for `drift-solana-devnet-carry`, approval remains scoped to the connector's declared devnet-only contract
+
+Operator-facing promotion surfaces now include:
+
+- `/api/v1/venues/promotion-summary`
+- `/api/v1/venues/:venueId/promotion`
+- `/api/v1/venues/:venueId/promotion/history`
+- `/api/v1/venues/:venueId/promotion/eligibility`
+- `/api/v1/venues/:venueId/promotion/request`
+- `/api/v1/venues/:venueId/promotion/approve`
+- `/api/v1/venues/:venueId/promotion/reject`
+- `/api/v1/venues/:venueId/promotion/suspend`
+
+The ops dashboard exposes the same workflow from the generic venue inventory and per-venue detail pages.
 
 Stop or reset local Postgres:
 
@@ -194,7 +295,7 @@ Known limitations:
 - Some package tests are intentionally slow because they boot real runtime/API harnesses.
 - Sandbox restrictions can still prevent long-running service startup flows that bind sockets; validation should prefer direct test/build/typecheck/lint entrypoints over ad hoc manual server startup.
 - Live connector validation remains out of scope; dry-run and simulated execution are the supported default validation posture.
-- Phases 5.5 and 5.6 deepen read-only real connector truth ingestion into Drift-native account, position, health, and open-order semantics, then add an internal derivative state and comparison layer on top. This still does not change the live-execution posture.
+- Phases 5.5 through 5.9 deepen read-only real connector truth ingestion into Drift-native account, position, health, and open-order semantics, add an internal derivative state and comparison layer, preserve richer market metadata earlier, and add a durable connector promotion workflow. This still does not approve a new live connector by itself.
 
 ## Current Scope
 

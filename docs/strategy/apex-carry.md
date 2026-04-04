@@ -4,6 +4,21 @@
 **Status:** Active
 **Last Updated:** 2026-04-01
 
+## Phase 6.0 Addendum: First Real Devnet Execution Boundary
+
+Phase 6.0 does not broaden the carry thesis. It adds the first honest real execution connector under the existing carry control plane.
+
+Current execution truth:
+
+- the first real connector is `drift-solana-devnet-carry`
+- it is devnet only
+- it supports only BTC-PERP reduce-only market orders
+- it reuses the existing carry action approval and runtime command rail
+- it persists real Solana transaction signatures as execution references
+- it does not add generic order entry, increase-exposure execution, or broad live carry trading
+
+Operationally, this means the carry sleeve can now prove one real gated reduction path end to end, but it still does not claim broad autonomous or multi-market deployment.
+
 ## Phase 5.6 Addendum: Internal Derivative State Boundary
 
 Phase 5.6 does not change the carry thesis. It changes how Sentinel Apex represents the carry sleeve's internal derivative posture for comparison against external Drift-native truth.
@@ -16,6 +31,39 @@ Current internal derivative state truth:
 - internal health and margin-like state remain unsupported
 
 Operationally, this means carry execution now feeds a durable internal derivative comparison layer, but the runtime still does not pretend allocator budgets, generic risk snapshots, or external venue truth are themselves the canonical internal derivative state.
+
+## Phase 5.7 Addendum: Derived Internal Health And Richer Market Identity
+
+Phase 5.7 does not widen carry execution scope. It improves how the existing carry sleeve is compared against Drift-native truth.
+
+Current derivative comparison truth:
+
+- internal health posture is now derived from persisted portfolio and risk projections
+- this health posture is explicitly marked as derived and only supports band-level comparison against external Drift health
+- exact venue-native collateral, free-collateral, margin-ratio, and requirement fields remain external-only
+- internal market identity now preserves venue-native keys when runtime metadata truly has them
+- when exact keys are absent, the runtime falls back honestly to derived market symbol or asset-plus-market-type identity
+- reconciliation can now distinguish:
+  - exact market-identity mismatch
+  - position identity gap
+  - partial market-identity comparison
+  - partial health comparison
+
+Operationally, this means carry operators can inspect whether a reported issue is a true inventory mismatch, an exact identity mismatch, a partial health comparison, or an identity-gap problem. It does not mean the carry sleeve now owns a venue-native internal margin engine.
+
+## Phase 5.8 Addendum: Earlier Market Metadata Propagation
+
+Phase 5.8 does not widen carry execution scope. It preserves richer market identity earlier in the existing carry workflow.
+
+Current propagation truth:
+
+- carry opportunity legs can now carry canonical market identity from upstream market data when the venue adapter truly provides it
+- strategy intents persist that identity instead of collapsing immediately to `asset + instrumentType`
+- carry planned orders and carry execution steps keep the same identity plus explicit provenance and capture-stage metadata
+- runtime orders and fills preserve the best available identity for later internal snapshot and reconciliation use
+- when the carry pipeline only knows derived symbol or asset-plus-type identity, it stays explicitly derived and only partially comparable
+
+Operationally, this means a carry mismatch can now be exact because the internal side captured venue-native identity early, not because reconciliation guessed more later.
 
 ## Phase 4.3 Addendum: Execution Transparency
 

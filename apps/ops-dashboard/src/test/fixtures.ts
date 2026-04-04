@@ -9,6 +9,10 @@ import type {
   CarryExecutionStepView,
   CarryExecutionView,
   CarryVenueView,
+  ConnectorPromotionDetailView,
+  ConnectorPromotionEventView,
+  ConnectorPromotionSummaryView,
+  ConnectorReadinessEvidenceView,
   RebalanceBundleDetailView,
   RebalanceBundleEscalationEventView,
   RebalanceBundleEscalationTransitionView,
@@ -1042,6 +1046,11 @@ export function createReconciliationSummary(): RuntimeReconciliationSummaryView 
       drift_position_mismatch: 0,
       drift_order_inventory_mismatch: 0,
       drift_subaccount_identity_mismatch: 0,
+      drift_health_state_mismatch: 0,
+      drift_market_identity_mismatch: 0,
+      drift_position_identity_gap: 0,
+      drift_partial_health_comparison: 0,
+      drift_partial_market_identity_comparison: 0,
       drift_truth_comparison_gap: 0,
       stale_internal_derivative_state: 0,
     },
@@ -1072,10 +1081,11 @@ export function createInternalDerivativeSnapshot(
         limitations: [],
       },
       healthState: {
-        status: 'unsupported',
-        reason: 'Internal health and margin state is not modeled canonically yet.',
+        status: 'available',
+        reason: null,
         limitations: [
-          'Sentinel Apex does not currently compute internal Drift-native health or margin state.',
+          'Internal health posture is derived from internal portfolio and risk projections, not from venue-native Drift margin math.',
+          'Only band-level health comparison is currently truthful; exact margin fields remain external-only.',
         ],
       },
       orderState: {
@@ -1106,7 +1116,7 @@ export function createInternalDerivativeSnapshot(
     positionState: {
       positions: [
         {
-          positionKey: 'perp:BTC',
+          positionKey: 'perp:0',
           asset: 'BTC',
           marketType: 'perp',
           side: 'long',
@@ -1118,8 +1128,27 @@ export function createInternalDerivativeSnapshot(
           sourceOrderCount: 2,
           firstFilledAt: '2026-03-20T11:40:00.000Z',
           lastFilledAt: '2026-03-20T11:58:30.000Z',
+          marketIdentity: {
+            asset: 'BTC',
+            marketType: 'perp',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            normalizedKey: 'perp:0',
+            normalizedKeyType: 'market_index',
+            confidence: 'exact',
+            notes: ['Internal position identity inherited exact market metadata from a source order.'],
+            provenance: {
+              classification: 'canonical',
+              source: 'runtime_fill_ledger',
+              notes: ['Internal market identity was sourced from exact order metadata.'],
+            },
+          },
           metadata: {
             instrumentType: 'perpetual',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
           },
           provenance: {
             classification: 'derived',
@@ -1138,13 +1167,31 @@ export function createInternalDerivativeSnapshot(
       },
     },
     healthState: {
-      healthStatus: 'unknown',
-      methodology: 'unsupported_internal_health_model',
-      notes: ['No canonical internal health state is persisted for Drift-native comparison.'],
+      healthStatus: 'healthy',
+      modelType: 'internal_risk_posture',
+      comparisonMode: 'status_band_only',
+      riskPosture: 'normal',
+      collateralLikeUsd: '109150.25',
+      liquidityReserveUsd: '109150.25',
+      grossExposureUsd: '51000',
+      netExposureUsd: '51000',
+      venueExposureUsd: '51000',
+      exposureToNavRatio: '0.204',
+      liquidityReservePct: 43.66,
+      leverage: '2.11',
+      openPositionCount: 1,
+      openOrderCount: 2,
+      openCircuitBreakers: [],
+      unsupportedReasons: ['Exact Drift collateral, free collateral, margin ratio, and requirement fields remain external-only.'],
+      methodology: 'portfolio_current_plus_risk_current',
+      notes: [
+        'Internal health posture is derived from persisted portfolio and risk read models.',
+        'Collateral-like posture maps to internal liquidity reserve rather than exact Drift collateral accounting.',
+      ],
       provenance: {
-        classification: 'estimated',
-        source: 'unavailable',
-        notes: ['Health comparison remains external-only until an internal model is added.'],
+        classification: 'derived',
+        source: 'portfolio_current_plus_risk_current',
+        notes: ['Internal health posture is derived from internal runtime projections rather than external venue truth.'],
       },
     },
     orderState: {
@@ -1170,8 +1217,27 @@ export function createInternalDerivativeSnapshot(
           submittedAt: '2026-03-20T12:00:40.000Z',
           completedAt: null,
           updatedAt: '2026-03-20T12:01:03.000Z',
+          marketIdentity: {
+            asset: 'BTC',
+            marketType: 'perp',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            normalizedKey: 'perp:0',
+            normalizedKeyType: 'market_index',
+            confidence: 'exact',
+            notes: ['Internal order market identity is sourced from persisted order metadata.'],
+            provenance: {
+              classification: 'canonical',
+              source: 'runtime_orders_table',
+              notes: ['Internal market identity was sourced from exact order metadata.'],
+            },
+          },
           metadata: {
             instrumentType: 'perpetual',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
           },
           provenance: {
             classification: 'canonical',
@@ -1197,6 +1263,22 @@ export function createInternalDerivativeSnapshot(
           submittedAt: '2026-03-20T12:00:50.000Z',
           completedAt: null,
           updatedAt: '2026-03-20T12:01:03.000Z',
+          marketIdentity: {
+            asset: 'SOL',
+            marketType: 'spot',
+            marketIndex: null,
+            marketKey: null,
+            marketSymbol: 'SOL',
+            normalizedKey: 'spot:SOL',
+            normalizedKeyType: 'market_symbol',
+            confidence: 'derived',
+            notes: ['Internal order market identity is derived from order asset plus instrument type.'],
+            provenance: {
+              classification: 'derived',
+              source: 'runtime_orders_table',
+              notes: ['Internal market symbol is derived from asset plus market type, not from venue-native order metadata.'],
+            },
+          },
           metadata: {
             instrumentType: 'spot',
           },
@@ -1236,14 +1318,22 @@ export function createVenueComparisonSummary(
       status: 'available',
       reason: null,
     },
+    marketIdentity: {
+      status: 'available',
+      reason: null,
+    },
     healthState: {
-      status: 'unsupported',
-      reason: 'No canonical internal health model exists yet for direct comparison.',
+      status: 'partial',
+      reason: 'Only band-level internal-vs-external health comparison is currently supported.',
     },
     orderInventory: {
       status: 'partial',
       reason: 'One internal open order does not yet have a venue order id for direct comparison.',
     },
+    healthComparisonMode: 'status_band_only',
+    exactPositionIdentityCount: 1,
+    partialPositionIdentityCount: 0,
+    positionIdentityGapCount: 0,
     matchedPositionCount: 1,
     mismatchedPositionCount: 0,
     matchedOrderCount: 1,
@@ -1251,8 +1341,8 @@ export function createVenueComparisonSummary(
     activeFindingCount: 1,
     activeMismatchCount: 0,
     notes: [
-      'Position comparison is currently performed at asset plus market-type granularity.',
-      'Health comparison remains a comparison gap until an internal health model exists.',
+      'Position comparison now carries normalized market identity and exact-vs-derived comparison semantics.',
+      'Health comparison is now band-level only; exact Drift collateral and margin fields remain external-only.',
     ],
     ...overrides,
   };
@@ -1516,6 +1606,7 @@ function createVenueSnapshotFixture(): VenueSnapshotView {
       }],
       oldestReferenceAt: '2026-03-20T12:00:30.000Z',
     },
+    executionConfirmationState: createConnectorPostTradeConfirmationEvidence(),
     metadata: {},
   };
 }
@@ -1541,7 +1632,7 @@ export function createVenueComparisonDetail(
       orderInventory: 'available_or_external_unsupported',
     },
     actualState: {
-      healthState: 'unsupported',
+      healthState: 'partial',
       orderInventory: 'partial',
     },
     delta: {},
@@ -1562,7 +1653,7 @@ export function createVenueComparisonDetail(
     },
     positionComparisons: [
       {
-        comparisonKey: 'perp:BTC',
+        comparisonKey: 'perp:0',
         asset: 'BTC',
         marketType: 'perp',
         comparable: true,
@@ -1570,6 +1661,31 @@ export function createVenueComparisonDetail(
         quantityDelta: '0',
         internalPosition: internalState.positionState?.positions[0] ?? null,
         externalPosition: externalSnapshot.derivativePositionState?.positions[0] ?? null,
+        marketIdentityComparison: {
+          comparable: true,
+          status: 'matched',
+          comparisonMode: 'exact',
+          internalIdentity: internalState.positionState?.positions[0]?.marketIdentity ?? null,
+          externalIdentity: {
+            asset: 'BTC',
+            marketType: 'perp',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            normalizedKey: 'perp:0',
+            normalizedKeyType: 'market_index',
+            confidence: 'exact',
+            notes: [],
+            provenance: externalSnapshot.derivativePositionState?.positions[0]?.provenance ?? null,
+          },
+          normalizedIdentity: {
+            key: 'perp:0',
+            keyType: 'market_index',
+            comparisonMode: 'exact',
+            notes: [],
+          },
+          notes: [],
+        },
         notes: ['Comparison uses internal fill-derived positions against external Drift-native position inventory.'],
       },
     ],
@@ -1581,15 +1697,59 @@ export function createVenueComparisonDetail(
         remainingSizeDelta: '0',
         internalOrder: internalState.orderState?.openOrders[0] ?? null,
         externalOrder: externalSnapshot.orderState?.openOrders[0] ?? null,
+        marketIdentityComparison: {
+          comparable: true,
+          status: 'matched',
+          comparisonMode: 'exact',
+          internalIdentity: internalState.orderState?.openOrders[0]?.marketIdentity ?? null,
+          externalIdentity: {
+            asset: 'BTC',
+            marketType: 'perp',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            normalizedKey: 'perp:0',
+            normalizedKeyType: 'market_index',
+            confidence: 'exact',
+            notes: [],
+            provenance: externalSnapshot.orderState?.openOrders[0]?.provenance ?? null,
+          },
+          normalizedIdentity: {
+            key: 'perp:0',
+            keyType: 'market_index',
+            comparisonMode: 'exact',
+            notes: [],
+          },
+          notes: [],
+        },
         notes: ['Order comparison only includes open internal orders with a venue order id.'],
       },
     ],
     healthComparison: {
-      comparable: false,
-      status: 'not_comparable',
+      comparable: true,
+      status: 'matched',
+      comparisonMode: 'status_band_only',
       internalState: internalState.healthState,
       externalState: externalSnapshot.derivativeHealthState,
-      notes: ['External health is available, but no canonical internal health state exists yet.'],
+      fields: [
+        {
+          field: 'healthStatus',
+          comparable: true,
+          status: 'matched',
+          internalValue: 'healthy',
+          externalValue: 'healthy',
+          reason: null,
+        },
+        {
+          field: 'collateralLikeUsd',
+          comparable: false,
+          status: 'not_comparable',
+          internalValue: '109150.25',
+          externalValue: '153450.25',
+          reason: 'Internal collateral-like posture maps to liquidity reserve, not exact venue collateral.',
+        },
+      ],
+      notes: ['Only band-level health comparison is currently supported.'],
     },
     activeFindings: [activeFinding],
     ...overrides,
@@ -1791,7 +1951,25 @@ export function createCarryExecutionStep(
       attemptCount: 1,
       fillCount: 1,
     },
+    postTradeConfirmation: null,
     lastError: null,
+    marketIdentity: {
+      venueId: 'sim-venue-a',
+      asset: 'BTC',
+      marketType: 'spot',
+      marketIndex: null,
+      marketKey: null,
+      marketSymbol: 'BTC',
+      marketName: null,
+      aliases: ['BTC', 'spot:BTC'],
+      normalizedKey: 'spot:BTC',
+      normalizedKeyType: 'market_symbol',
+      provenance: 'derived',
+      confidence: 'partial',
+      capturedAtStage: 'execution_result',
+      source: 'simulated_market_fill',
+      notes: ['Simulated execution steps only expose derived spot identity.'],
+    },
     metadata: {},
     createdAt: '2026-03-20T12:03:00.000Z',
     updatedAt: '2026-03-20T12:03:02.000Z',
@@ -1818,6 +1996,23 @@ export function createCarryActionDetail(
         requestedSize: '0.10',
         requestedPrice: null,
         reduceOnly: false,
+        marketIdentity: {
+          venueId: 'sim-venue-a',
+          asset: 'BTC',
+          marketType: 'spot',
+          marketIndex: null,
+          marketKey: null,
+          marketSymbol: 'BTC',
+          marketName: null,
+          aliases: ['BTC', 'spot:BTC'],
+          normalizedKey: 'spot:BTC',
+          normalizedKeyType: 'market_symbol',
+          provenance: 'derived',
+          confidence: 'partial',
+          capturedAtStage: 'strategy_intent',
+          source: 'strategy_intent_builder',
+          notes: ['Carry planned orders inherit derived spot identity from strategy intents.'],
+        },
         metadata: {},
         createdAt: '2026-03-20T12:02:30.000Z',
       },
@@ -2210,11 +2405,13 @@ export function createVenueInventoryItem(
         'Derivative health and valuation metrics are Drift SDK calculations over decoded user, market, and oracle state.',
       ],
     },
+    executionConfirmationState: createConnectorPostTradeConfirmationEvidence(),
     metadata: {
       endpointConfigured: true,
       accountAddressConfigured: true,
       executionPosture: 'read_only',
     },
+    promotion: createConnectorPromotionSummary(),
     ...overrides,
   };
 }
@@ -2309,6 +2506,156 @@ export function createVenueTruthSummary(
   };
 }
 
+export function createConnectorPromotionSummary(
+  overrides: Partial<ConnectorPromotionSummaryView> = {},
+): ConnectorPromotionSummaryView {
+  return {
+    promotionId: 'promotion-1',
+    requestedTargetPosture: 'approved_for_live',
+    capabilityClass: 'real_readonly',
+    promotionStatus: 'rejected',
+    effectivePosture: 'rejected',
+    approvedForLiveUse: false,
+    sensitiveExecutionEligible: false,
+    requestedBy: 'ops-user',
+    requestedAt: '2026-03-20T11:50:00.000Z',
+    reviewedBy: 'admin-user',
+    reviewedAt: '2026-03-20T12:10:00.000Z',
+    approvedBy: null,
+    approvedAt: null,
+    rejectedBy: 'admin-user',
+    rejectedAt: '2026-03-20T12:10:00.000Z',
+    suspendedBy: null,
+    suspendedAt: null,
+    latestNote: 'Execution connector support is not available yet.',
+    blockers: [
+      'Connector remains read-only and does not provide execution capability.',
+      'Read-only validation is complete.',
+    ],
+    ...overrides,
+  };
+}
+
+export function createConnectorReadinessEvidence(
+  overrides: Partial<ConnectorReadinessEvidenceView> = {},
+): ConnectorReadinessEvidenceView {
+  return {
+    venueId: 'drift-solana-readonly',
+    venueName: 'Drift Solana Read-Only',
+    connectorType: 'drift_native_readonly',
+    sleeveApplicability: ['carry'],
+    truthMode: 'real',
+    capabilityClass: 'real_readonly',
+    executionSupport: false,
+    readOnlySupport: true,
+    snapshotFreshness: 'fresh',
+    snapshotCompleteness: 'complete',
+    healthy: true,
+    healthState: 'healthy',
+    degradedReason: null,
+    lastSnapshotAt: '2026-03-20T12:01:00.000Z',
+    lastSuccessfulSnapshotAt: '2026-03-20T12:01:00.000Z',
+    truthCoverageAvailableCount: 5,
+    truthCoveragePartialCount: 0,
+    truthCoverageUnsupportedCount: 4,
+    readOnlyValidationState: 'complete',
+    configReadiness: [
+      {
+        key: 'endpointConfigured',
+        ready: true,
+        summary: 'endpoint configured marker',
+      },
+      {
+        key: 'accountAddressConfigured',
+        ready: true,
+        summary: 'account address configured marker',
+      },
+    ],
+    missingPrerequisites: [],
+    blockingReasons: [
+      'Connector remains read-only and does not provide execution capability.',
+    ],
+    eligibleForPromotion: false,
+    postTradeConfirmation: createConnectorPostTradeConfirmationEvidence(),
+    ...overrides,
+  };
+}
+
+export function createConnectorPostTradeConfirmationEvidence(
+  overrides: Partial<ConnectorReadinessEvidenceView['postTradeConfirmation']> = {},
+): ConnectorReadinessEvidenceView['postTradeConfirmation'] {
+  return {
+    status: 'not_required',
+    summary: 'No recent real execution references currently require post-trade confirmation.',
+    evaluatedAt: '2026-03-20T12:01:00.000Z',
+    recentExecutionCount: 0,
+    confirmedFullCount: 0,
+    confirmedPartialCount: 0,
+    confirmedPartialEventOnlyCount: 0,
+    confirmedPartialPositionOnlyCount: 0,
+    pendingCount: 0,
+    pendingEventCount: 0,
+    pendingPositionDeltaCount: 0,
+    conflictingEventCount: 0,
+    conflictingEventVsPositionCount: 0,
+    missingReferenceCount: 0,
+    invalidCount: 0,
+    insufficientContextCount: 0,
+    latestConfirmedAt: null,
+    blockingReasons: [],
+    entries: [],
+    ...overrides,
+  };
+}
+
+export function createConnectorPromotionEvent(
+  overrides: Partial<ConnectorPromotionEventView> = {},
+): ConnectorPromotionEventView {
+  return {
+    id: 'promotion-event-1',
+    promotionId: 'promotion-1',
+    venueId: 'drift-solana-readonly',
+    eventType: 'rejected',
+    fromStatus: 'pending_review',
+    toStatus: 'rejected',
+    effectivePosture: 'rejected',
+    requestedTargetPosture: 'approved_for_live',
+    actorId: 'admin-user',
+    note: 'Execution connector support is not available yet.',
+    evidence: createConnectorReadinessEvidence(),
+    occurredAt: '2026-03-20T12:10:00.000Z',
+    metadata: {},
+    ...overrides,
+  };
+}
+
+export function createConnectorPromotionDetail(
+  overrides: Partial<ConnectorPromotionDetailView> = {},
+): ConnectorPromotionDetailView {
+  return {
+    venueId: 'drift-solana-readonly',
+    venueName: 'Drift Solana Read-Only',
+    connectorType: 'drift_native_readonly',
+    sleeveApplicability: ['carry'],
+    current: createConnectorPromotionSummary(),
+    evidence: createConnectorReadinessEvidence(),
+    history: [
+      createConnectorPromotionEvent({
+        id: 'promotion-event-0',
+        eventType: 'requested',
+        fromStatus: null,
+        toStatus: 'pending_review',
+        effectivePosture: 'promotion_pending',
+        actorId: 'ops-user',
+        note: 'Requesting live-readiness review.',
+        occurredAt: '2026-03-20T11:50:00.000Z',
+      }),
+      createConnectorPromotionEvent(),
+    ],
+    ...overrides,
+  };
+}
+
 export function createVenueDetail(
   overrides: Partial<VenueDetailView> = {},
 ): VenueDetailView {
@@ -2322,6 +2669,7 @@ export function createVenueDetail(
     comparisonDetail: createVenueComparisonDetail({
       externalSnapshot: snapshot,
     }),
+    promotion: createConnectorPromotionDetail(),
     ...overrides,
   };
 }

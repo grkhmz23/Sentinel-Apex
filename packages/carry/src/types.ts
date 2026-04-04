@@ -24,6 +24,7 @@ export type CarryOperationalBlockedReasonCode =
   | 'carry_budget_exceeded'
   | 'venue_execution_unsupported'
   | 'venue_live_unapproved'
+  | 'venue_live_ineligible'
   | 'live_execution_disabled'
   | 'simulated_execution_only'
   | 'opportunity_confidence_below_threshold'
@@ -123,6 +124,14 @@ export interface CarryControlledExecutionPlanningInput {
     supportsReduceExposure: boolean;
     readOnly: boolean;
     approvedForLiveUse: boolean;
+    sensitiveExecutionEligible: boolean;
+    promotionStatus:
+      | 'not_requested'
+      | 'pending_review'
+      | 'approved'
+      | 'rejected'
+      | 'suspended';
+    promotionBlockedReasons: string[];
     healthy: boolean;
     onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
     missingPrerequisites: string[];

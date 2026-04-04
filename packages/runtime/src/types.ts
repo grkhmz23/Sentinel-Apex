@@ -30,6 +30,7 @@ import type {
   TreasuryPolicy,
 } from '@sentinel-apex/treasury';
 import type {
+  CanonicalMarketIdentity,
   VenueAccountStateSnapshot,
   VenueBalanceStateSnapshot,
   VenueCapacityStateSnapshot,
@@ -37,6 +38,7 @@ import type {
   VenueDerivativeHealthStateSnapshot,
   VenueDerivativePositionEntrySnapshot,
   VenueDerivativePositionStateSnapshot,
+  VenueExecutionEventEvidence,
   VenueExecutionReferenceStateSnapshot,
   VenueExposureStateSnapshot,
   VenueOrderEntrySnapshot,
@@ -93,6 +95,11 @@ export type RuntimeReconciliationFindingType =
   | 'drift_position_mismatch'
   | 'drift_order_inventory_mismatch'
   | 'drift_subaccount_identity_mismatch'
+  | 'drift_health_state_mismatch'
+  | 'drift_market_identity_mismatch'
+  | 'drift_position_identity_gap'
+  | 'drift_partial_health_comparison'
+  | 'drift_partial_market_identity_comparison'
   | 'drift_truth_comparison_gap'
   | 'stale_internal_derivative_state';
 
@@ -991,6 +998,198 @@ export interface RebalanceBundleDetailView {
   escalationTransitions: RebalanceBundleEscalationTransitionView[];
 }
 
+export type ConnectorCapabilityClass =
+  | 'simulated_only'
+  | 'real_readonly'
+  | 'execution_capable';
+
+export type ConnectorPromotionStatus =
+  | 'not_requested'
+  | 'pending_review'
+  | 'approved'
+  | 'rejected'
+  | 'suspended';
+
+export type ConnectorEffectivePosture =
+  | 'simulated_only'
+  | 'real_readonly'
+  | 'execution_capable_unapproved'
+  | 'promotion_pending'
+  | 'approved_for_live'
+  | 'rejected'
+  | 'suspended';
+
+export type ConnectorPromotionTargetPosture = 'approved_for_live';
+export type ConnectorReadOnlyValidationState = 'not_applicable' | 'complete' | 'partial' | 'insufficient';
+export type ConnectorPromotionEventType = 'requested' | 'approved' | 'rejected' | 'suspended';
+export type ConnectorPostTradeConfirmationStatus = 'not_required' | 'confirmed' | 'blocked';
+
+export interface ConnectorConfigReadinessMarkerView {
+  key: string;
+  ready: boolean;
+  summary: string;
+}
+
+export type CarryExecutionPostTradeConfirmationStatus =
+  | 'confirmed_full'
+  | 'confirmed_partial'
+  | 'confirmed_partial_event_only'
+  | 'confirmed_partial_position_only'
+  | 'pending_event'
+  | 'pending_position_delta'
+  | 'conflicting_event'
+  | 'conflicting_event_vs_position'
+  | 'missing_reference'
+  | 'invalid_position_delta'
+  | 'insufficient_context';
+
+export type CarryExecutionPostTradeConfirmationBasis =
+  | 'event_and_position'
+  | 'event_only'
+  | 'position_only'
+  | 'signature_only'
+  | 'conflicting'
+  | 'insufficient';
+
+export interface CarryExecutionPostTradeConfirmationView {
+  status: CarryExecutionPostTradeConfirmationStatus;
+  evidenceBasis: CarryExecutionPostTradeConfirmationBasis;
+  summary: string;
+  evaluatedAt: string;
+  referenceObserved: boolean;
+  referenceObservedAt: string | null;
+  marketKey: string | null;
+  marketSymbol: string | null;
+  requestedSize: string;
+  confirmedSize: string | null;
+  remainingSize: string | null;
+  preTradePositionSide: 'long' | 'short' | 'flat' | null;
+  preTradePositionSize: string | null;
+  observedPositionSide: 'long' | 'short' | 'flat' | null;
+  observedPositionSize: string | null;
+  eventEvidence: VenueExecutionEventEvidence | null;
+  blockedReason: string | null;
+}
+
+export interface ConnectorPostTradeConfirmationEntryView
+  extends CarryExecutionPostTradeConfirmationView {
+  stepId: string;
+  carryExecutionId: string;
+  carryActionId: string;
+  intentId: string;
+  clientOrderId: string | null;
+  executionReference: string;
+  venueId: string;
+}
+
+export interface ConnectorPostTradeConfirmationEvidenceView {
+  status: ConnectorPostTradeConfirmationStatus;
+  summary: string;
+  evaluatedAt: string;
+  recentExecutionCount: number;
+  confirmedFullCount: number;
+  confirmedPartialCount: number;
+  confirmedPartialEventOnlyCount: number;
+  confirmedPartialPositionOnlyCount: number;
+  pendingCount: number;
+  pendingEventCount: number;
+  pendingPositionDeltaCount: number;
+  conflictingEventCount: number;
+  conflictingEventVsPositionCount: number;
+  missingReferenceCount: number;
+  invalidCount: number;
+  insufficientContextCount: number;
+  latestConfirmedAt: string | null;
+  blockingReasons: string[];
+  entries: ConnectorPostTradeConfirmationEntryView[];
+}
+
+export interface ConnectorReadinessEvidenceView {
+  venueId: string;
+  venueName: string;
+  connectorType: string;
+  sleeveApplicability: VenueTruthSleeve[];
+  truthMode: VenueTruthMode;
+  capabilityClass: ConnectorCapabilityClass;
+  executionSupport: boolean;
+  readOnlySupport: boolean;
+  snapshotFreshness: VenueSnapshotFreshness;
+  snapshotCompleteness: VenueTruthSnapshotCompleteness;
+  healthy: boolean;
+  healthState: VenueHealthState;
+  degradedReason: string | null;
+  lastSnapshotAt: string;
+  lastSuccessfulSnapshotAt: string | null;
+  truthCoverageAvailableCount: number;
+  truthCoveragePartialCount: number;
+  truthCoverageUnsupportedCount: number;
+  readOnlyValidationState: ConnectorReadOnlyValidationState;
+  configReadiness: ConnectorConfigReadinessMarkerView[];
+  missingPrerequisites: string[];
+  blockingReasons: string[];
+  eligibleForPromotion: boolean;
+  postTradeConfirmation: ConnectorPostTradeConfirmationEvidenceView;
+}
+
+export interface ConnectorPromotionSummaryView {
+  promotionId: string | null;
+  requestedTargetPosture: ConnectorPromotionTargetPosture | null;
+  capabilityClass: ConnectorCapabilityClass;
+  promotionStatus: ConnectorPromotionStatus;
+  effectivePosture: ConnectorEffectivePosture;
+  approvedForLiveUse: boolean;
+  sensitiveExecutionEligible: boolean;
+  requestedBy: string | null;
+  requestedAt: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  suspendedBy: string | null;
+  suspendedAt: string | null;
+  latestNote: string | null;
+  blockers: string[];
+}
+
+export interface ConnectorPromotionEventView {
+  id: string;
+  promotionId: string;
+  venueId: string;
+  eventType: ConnectorPromotionEventType;
+  fromStatus: ConnectorPromotionStatus | null;
+  toStatus: ConnectorPromotionStatus;
+  effectivePosture: ConnectorEffectivePosture;
+  requestedTargetPosture: ConnectorPromotionTargetPosture;
+  actorId: string;
+  note: string | null;
+  evidence: ConnectorReadinessEvidenceView;
+  occurredAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface ConnectorPromotionDetailView {
+  venueId: string;
+  venueName: string;
+  connectorType: string;
+  sleeveApplicability: VenueTruthSleeve[];
+  current: ConnectorPromotionSummaryView;
+  evidence: ConnectorReadinessEvidenceView;
+  history: ConnectorPromotionEventView[];
+}
+
+export interface ConnectorPromotionOverviewView {
+  totalVenues: number;
+  candidates: number;
+  pendingReview: number;
+  approved: number;
+  approvedAndEligible: number;
+  rejected: number;
+  suspended: number;
+  blockedByEvidence: number;
+}
+
 export interface CarryVenueView {
   strategyRunId: string | null;
   venueId: string;
@@ -1003,6 +1202,7 @@ export interface CarryVenueView {
   healthy: boolean;
   onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
   missingPrerequisites: string[];
+  promotion?: ConnectorPromotionSummaryView;
   metadata: Record<string, unknown>;
   updatedAt: string;
   createdAt: string;
@@ -1019,6 +1219,7 @@ export interface CarryActionPlannedOrderView {
   requestedSize: string;
   requestedPrice: string | null;
   reduceOnly: boolean;
+  marketIdentity: CanonicalMarketIdentity | null;
   metadata: Record<string, unknown>;
   createdAt: string;
 }
@@ -1109,7 +1310,9 @@ export interface CarryExecutionStepView {
   averageFillPrice: string | null;
   outcomeSummary: string | null;
   outcome: Record<string, unknown>;
+  postTradeConfirmation: CarryExecutionPostTradeConfirmationView | null;
   lastError: string | null;
+  marketIdentity: CanonicalMarketIdentity | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -1314,6 +1517,7 @@ export interface TreasuryVenueView {
   readinessLabel: string;
   simulationState: 'simulated' | 'real';
   lastSnapshotAt: string;
+  promotion?: ConnectorPromotionSummaryView;
   metadata: Record<string, unknown>;
 }
 
@@ -1369,7 +1573,11 @@ export interface VenueTruthComparisonCoverageView {
   notes: string[];
 }
 
-export type InternalDerivativeDataClassification = 'canonical' | 'derived' | 'estimated';
+export type InternalDerivativeDataClassification =
+  | 'canonical'
+  | 'derived'
+  | 'estimated'
+  | 'unsupported';
 export type InternalDerivativeMarketType = 'perp' | 'spot' | 'unknown';
 export type InternalDerivativePositionSide = 'long' | 'short' | 'flat';
 export type InternalDerivativeComparisonStatus =
@@ -1378,6 +1586,24 @@ export type InternalDerivativeComparisonStatus =
   | 'internal_only'
   | 'external_only'
   | 'not_comparable';
+export type InternalDerivativeMarketIdentityConfidence =
+  | 'exact'
+  | 'derived'
+  | 'partial'
+  | 'unsupported';
+export type InternalDerivativeMarketIdentityKeyType =
+  | 'market_index'
+  | 'market_key'
+  | 'market_symbol'
+  | 'asset_market_type'
+  | 'unsupported';
+export type InternalDerivativeMarketIdentityComparisonMode =
+  | 'exact'
+  | 'partial'
+  | 'unsupported';
+export type InternalDerivativeHealthComparisonMode =
+  | 'status_band_only'
+  | 'unsupported';
 export type InternalDerivativeAccountLocatorMode =
   | 'user_account_address'
   | 'authority_subaccount'
@@ -1416,6 +1642,19 @@ export interface InternalDerivativeAccountStateView {
   provenance: InternalDerivativeDataProvenanceView;
 }
 
+export interface InternalDerivativeMarketIdentityView {
+  asset: string | null;
+  marketType: InternalDerivativeMarketType;
+  marketIndex: number | null;
+  marketKey: string | null;
+  marketSymbol: string | null;
+  normalizedKey: string | null;
+  normalizedKeyType: InternalDerivativeMarketIdentityKeyType;
+  confidence: InternalDerivativeMarketIdentityConfidence;
+  notes: string[];
+  provenance: InternalDerivativeDataProvenanceView;
+}
+
 export interface InternalDerivativePositionEntryView {
   positionKey: string;
   asset: string;
@@ -1429,6 +1668,7 @@ export interface InternalDerivativePositionEntryView {
   sourceOrderCount: number;
   firstFilledAt: string | null;
   lastFilledAt: string | null;
+  marketIdentity: InternalDerivativeMarketIdentityView | null;
   metadata: Record<string, unknown>;
   provenance: InternalDerivativeDataProvenanceView;
 }
@@ -1459,6 +1699,7 @@ export interface InternalDerivativeOrderEntryView {
   submittedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
+  marketIdentity: InternalDerivativeMarketIdentityView | null;
   metadata: Record<string, unknown>;
   provenance: InternalDerivativeDataProvenanceView;
 }
@@ -1474,7 +1715,22 @@ export interface InternalDerivativeOrderStateView {
 }
 
 export interface InternalDerivativeHealthStateView {
-  healthStatus: 'unknown';
+  healthStatus: 'healthy' | 'degraded' | 'liquidation_risk' | 'unknown';
+  modelType: 'internal_risk_posture' | 'unsupported';
+  comparisonMode: InternalDerivativeHealthComparisonMode;
+  riskPosture: RiskSummary['riskLevel'] | null;
+  collateralLikeUsd: string | null;
+  liquidityReserveUsd: string | null;
+  grossExposureUsd: string | null;
+  netExposureUsd: string | null;
+  venueExposureUsd: string | null;
+  exposureToNavRatio: string | null;
+  liquidityReservePct: number | null;
+  leverage: string | null;
+  openPositionCount: number | null;
+  openOrderCount: number | null;
+  openCircuitBreakers: string[];
+  unsupportedReasons: string[];
   methodology: string;
   notes: string[];
   provenance: InternalDerivativeDataProvenanceView;
@@ -1505,6 +1761,36 @@ export interface VenueDerivativeAccountComparisonView {
   notes: string[];
 }
 
+export interface ExternalDerivativeMarketIdentityView {
+  asset: string | null;
+  marketType: InternalDerivativeMarketType;
+  marketIndex: number | null;
+  marketKey: string | null;
+  marketSymbol: string | null;
+  normalizedKey: string | null;
+  normalizedKeyType: InternalDerivativeMarketIdentityKeyType;
+  confidence: InternalDerivativeMarketIdentityConfidence;
+  notes: string[];
+  provenance: VenueTruthDataProvenance | null;
+}
+
+export interface DerivativeNormalizedMarketIdentityView {
+  key: string | null;
+  keyType: InternalDerivativeMarketIdentityKeyType;
+  comparisonMode: InternalDerivativeMarketIdentityComparisonMode;
+  notes: string[];
+}
+
+export interface VenueDerivativeMarketIdentityComparisonView {
+  comparable: boolean;
+  status: InternalDerivativeComparisonStatus;
+  comparisonMode: InternalDerivativeMarketIdentityComparisonMode;
+  internalIdentity: InternalDerivativeMarketIdentityView | null;
+  externalIdentity: ExternalDerivativeMarketIdentityView | null;
+  normalizedIdentity: DerivativeNormalizedMarketIdentityView | null;
+  notes: string[];
+}
+
 export interface VenueDerivativePositionComparisonView {
   comparisonKey: string;
   asset: string;
@@ -1514,6 +1800,7 @@ export interface VenueDerivativePositionComparisonView {
   quantityDelta: string | null;
   internalPosition: InternalDerivativePositionEntryView | null;
   externalPosition: VenueDerivativePositionEntrySnapshot | null;
+  marketIdentityComparison: VenueDerivativeMarketIdentityComparisonView;
   notes: string[];
 }
 
@@ -1524,14 +1811,33 @@ export interface VenueDerivativeOrderComparisonView {
   remainingSizeDelta: string | null;
   internalOrder: InternalDerivativeOrderEntryView | null;
   externalOrder: VenueOrderEntrySnapshot | null;
+  marketIdentityComparison: VenueDerivativeMarketIdentityComparisonView;
   notes: string[];
+}
+
+export interface VenueDerivativeHealthFieldComparisonView {
+  field:
+    | 'healthStatus'
+    | 'collateralLikeUsd'
+    | 'freeCollateralUsd'
+    | 'initialMarginRequirementUsd'
+    | 'maintenanceMarginRequirementUsd'
+    | 'marginRatio'
+    | 'leverage';
+  comparable: boolean;
+  status: InternalDerivativeComparisonStatus;
+  internalValue: string | number | null;
+  externalValue: string | number | null;
+  reason: string | null;
 }
 
 export interface VenueDerivativeHealthComparisonView {
   comparable: boolean;
   status: InternalDerivativeComparisonStatus;
+  comparisonMode: InternalDerivativeHealthComparisonMode;
   internalState: InternalDerivativeHealthStateView | null;
   externalState: VenueDerivativeHealthStateSnapshot | null;
+  fields: VenueDerivativeHealthFieldComparisonView[];
   notes: string[];
 }
 
@@ -1540,8 +1846,13 @@ export interface VenueDerivativeComparisonSummaryView {
   externalSnapshotAt: string | null;
   subaccountIdentity: VenueTruthComparisonCoverageItemView;
   positionInventory: VenueTruthComparisonCoverageItemView;
+  marketIdentity: VenueTruthComparisonCoverageItemView;
   healthState: VenueTruthComparisonCoverageItemView;
   orderInventory: VenueTruthComparisonCoverageItemView;
+  healthComparisonMode: InternalDerivativeHealthComparisonMode;
+  exactPositionIdentityCount: number;
+  partialPositionIdentityCount: number;
+  positionIdentityGapCount: number;
   matchedPositionCount: number;
   mismatchedPositionCount: number;
   matchedOrderCount: number;
@@ -1621,6 +1932,8 @@ export interface VenueInventoryItemView {
   truthCoverage: VenueTruthCoverage;
   comparisonCoverage: VenueTruthComparisonCoverageView;
   sourceMetadata: VenueTruthSourceMetadata;
+  executionConfirmationState: ConnectorPostTradeConfirmationEvidenceView | null;
+  promotion?: ConnectorPromotionSummaryView;
   metadata: Record<string, unknown>;
 }
 
@@ -1660,6 +1973,8 @@ export interface VenueSnapshotView {
   derivativeHealthState: VenueDerivativeHealthStateSnapshot | null;
   orderState: VenueOrderStateSnapshot | null;
   executionReferenceState: VenueExecutionReferenceStateSnapshot | null;
+  executionConfirmationState: ConnectorPostTradeConfirmationEvidenceView | null;
+  promotion?: ConnectorPromotionSummaryView;
   metadata: Record<string, unknown>;
 }
 
@@ -1669,6 +1984,7 @@ export interface VenueDetailView {
   internalState: InternalDerivativeSnapshotView | null;
   comparisonSummary: VenueDerivativeComparisonSummaryView;
   comparisonDetail: VenueDerivativeComparisonDetailView;
+  promotion: ConnectorPromotionDetailView;
 }
 
 export interface VenueInventorySummaryView {
@@ -1766,6 +2082,7 @@ export interface OrderView {
   attemptCount: number;
   lastError: string | null;
   reduceOnly: boolean;
+  marketIdentity: CanonicalMarketIdentity | null;
   metadata: Record<string, unknown>;
   submittedAt: string | null;
   completedAt: string | null;
@@ -1862,6 +2179,10 @@ export interface RuntimeReadApi {
   getVenueSummary(): Promise<VenueInventorySummaryView>;
   getVenueTruthSummary(): Promise<VenueTruthSummaryView>;
   listVenueReadiness(limit?: number): Promise<VenueInventoryItemView[]>;
+  getConnectorPromotionOverview(): Promise<ConnectorPromotionOverviewView>;
+  getConnectorPromotion(venueId: string): Promise<ConnectorPromotionDetailView | null>;
+  listConnectorPromotionHistory(venueId: string): Promise<ConnectorPromotionEventView[]>;
+  getConnectorPromotionEligibility(venueId: string): Promise<ConnectorReadinessEvidenceView | null>;
   getAllocatorSummary(): Promise<AllocatorSummaryView | null>;
   listAllocatorTargets(limit?: number): Promise<AllocatorSleeveTargetView[]>;
   listAllocatorRuns(limit?: number): Promise<AllocatorRunView[]>;

@@ -28,6 +28,10 @@ import type {
   CarryExecutionDetailView,
   CarryExecutionView,
   CarryVenueView,
+  ConnectorPromotionDetailView,
+  ConnectorPromotionEventView,
+  ConnectorPromotionOverviewView,
+  ConnectorReadinessEvidenceView,
   OpportunityView,
   OrderView,
   PnlSummaryView,
@@ -239,6 +243,213 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async listVenueReadiness(limit = 100): Promise<VenueInventoryItemView[]> {
     return this.store.listVenueReadiness(limit);
+  }
+
+  async getConnectorPromotionOverview(): Promise<ConnectorPromotionOverviewView> {
+    return this.store.getConnectorPromotionOverview();
+  }
+
+  async getConnectorPromotion(venueId: string): Promise<ConnectorPromotionDetailView | null> {
+    return this.store.getConnectorPromotion(venueId);
+  }
+
+  async listConnectorPromotionHistory(venueId: string): Promise<ConnectorPromotionEventView[]> {
+    return this.store.listConnectorPromotionHistory(venueId);
+  }
+
+  async getConnectorPromotionEligibility(
+    venueId: string,
+  ): Promise<ConnectorReadinessEvidenceView | null> {
+    return this.store.getConnectorPromotionEligibility(venueId);
+  }
+
+  async requestConnectorPromotion(
+    venueId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+    note?: string | null,
+  ): Promise<ConnectorPromotionDetailView | null> {
+    if (!canSatisfyApprovalRequirement(actorRole, 'operator')) {
+      throw new Error('Connector promotion requests require operator access.');
+    }
+
+    const detail = await this.store.getConnectorPromotion(venueId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (detail.evidence.capabilityClass !== 'execution_capable') {
+      throw new Error('Only execution-capable connectors can enter promotion review.');
+    }
+
+    if (detail.current.promotionStatus === 'pending_review') {
+      throw new Error('Connector already has a pending promotion review.');
+    }
+
+    if (detail.current.promotionStatus === 'approved') {
+      throw new Error('Connector is already approved for live use.');
+    }
+
+    const updated = await this.store.requestConnectorPromotion({
+      venueId,
+      actorId,
+      note: note ?? null,
+    });
+    if (updated !== null) {
+      await this.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'connector.promotion_requested',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId,
+        sleeveId: 'runtime',
+        data: {
+          venueId,
+          capabilityClass: detail.evidence.capabilityClass,
+          blockers: detail.evidence.blockingReasons,
+          note: note ?? null,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async approveConnectorPromotion(
+    venueId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+    note?: string | null,
+  ): Promise<ConnectorPromotionDetailView | null> {
+    if (!canSatisfyApprovalRequirement(actorRole, 'admin')) {
+      throw new Error('Connector promotion approval requires admin access.');
+    }
+
+    const detail = await this.store.getConnectorPromotion(venueId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (detail.current.promotionStatus !== 'pending_review') {
+      throw new Error(
+        `Connector promotion cannot be approved from status "${detail.current.promotionStatus}".`,
+      );
+    }
+
+    if (!detail.evidence.eligibleForPromotion) {
+      throw new Error(detail.evidence.blockingReasons.join('; '));
+    }
+
+    const updated = await this.store.approveConnectorPromotion({
+      venueId,
+      actorId,
+      note: note ?? null,
+    });
+    if (updated !== null) {
+      await this.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'connector.promotion_approved',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId,
+        sleeveId: 'runtime',
+        data: {
+          venueId,
+          blockers: detail.evidence.blockingReasons,
+          note: note ?? null,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async rejectConnectorPromotion(
+    venueId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+    note: string,
+  ): Promise<ConnectorPromotionDetailView | null> {
+    if (!canSatisfyApprovalRequirement(actorRole, 'admin')) {
+      throw new Error('Connector promotion rejection requires admin access.');
+    }
+
+    const detail = await this.store.getConnectorPromotion(venueId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (detail.current.promotionStatus !== 'pending_review') {
+      throw new Error(
+        `Connector promotion cannot be rejected from status "${detail.current.promotionStatus}".`,
+      );
+    }
+
+    const updated = await this.store.rejectConnectorPromotion({
+      venueId,
+      actorId,
+      note,
+    });
+    if (updated !== null) {
+      await this.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'connector.promotion_rejected',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId,
+        sleeveId: 'runtime',
+        data: {
+          venueId,
+          note,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async suspendConnectorPromotion(
+    venueId: string,
+    actorId: string,
+    actorRole: 'viewer' | 'operator' | 'admin',
+    note: string,
+  ): Promise<ConnectorPromotionDetailView | null> {
+    if (!canSatisfyApprovalRequirement(actorRole, 'admin')) {
+      throw new Error('Connector promotion suspension requires admin access.');
+    }
+
+    const detail = await this.store.getConnectorPromotion(venueId);
+    if (detail === null) {
+      return null;
+    }
+
+    if (detail.current.promotionStatus !== 'approved') {
+      throw new Error(
+        `Connector promotion cannot be suspended from status "${detail.current.promotionStatus}".`,
+      );
+    }
+
+    const updated = await this.store.suspendConnectorPromotion({
+      venueId,
+      actorId,
+      note,
+    });
+    if (updated !== null) {
+      await this.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'connector.promotion_suspended',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId,
+        sleeveId: 'runtime',
+        data: {
+          venueId,
+          note,
+        },
+      });
+    }
+
+    return updated;
   }
 
   async getWorkerStatus(): Promise<WorkerStatusView> {

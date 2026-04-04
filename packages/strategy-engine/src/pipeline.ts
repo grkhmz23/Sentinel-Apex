@@ -302,6 +302,7 @@ export class StrategyPipeline {
           markPrice: md.markPrice,
           nextFundingTime: md.nextFundingTime,
           timestamp: md.updatedAt,
+          perpMarketIdentity: md.marketIdentity ?? null,
         });
       }
     }

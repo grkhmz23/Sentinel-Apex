@@ -70,6 +70,9 @@ function createInput(
         supportsReduceExposure: true,
         readOnly: false,
         approvedForLiveUse: false,
+        sensitiveExecutionEligible: false,
+        promotionStatus: 'not_requested',
+        promotionBlockedReasons: [],
         healthy: true,
         onboardingState: 'simulated',
         missingPrerequisites: [],
@@ -112,6 +115,33 @@ describe('CarryControlledExecutionPlanner', () => {
 
     expect(intent?.executable).toBe(false);
     expect(intent?.blockedReasons.some((reason) => reason.code === 'simulated_execution_only')).toBe(true);
+  });
+
+  it('blocks approved live venues when connector readiness evidence currently disqualifies execution', () => {
+    const planner = new CarryControlledExecutionPlanner();
+    const [intent] = planner.createExecutionIntents(createInput({
+      executionMode: 'live',
+      liveExecutionEnabled: true,
+      venueCapabilities: [{
+        venueId: 'sim-venue-a',
+        venueMode: 'live',
+        executionSupported: true,
+        supportsIncreaseExposure: true,
+        supportsReduceExposure: true,
+        readOnly: false,
+        approvedForLiveUse: true,
+        sensitiveExecutionEligible: false,
+        promotionStatus: 'approved',
+        promotionBlockedReasons: ['Latest venue-truth snapshot is stale.'],
+        healthy: true,
+        onboardingState: 'approved_for_live',
+        missingPrerequisites: [],
+        metadata: {},
+      }],
+    }));
+
+    expect(intent?.executable).toBe(false);
+    expect(intent?.blockedReasons.some((reason) => reason.code === 'venue_live_ineligible')).toBe(true);
   });
 });
 

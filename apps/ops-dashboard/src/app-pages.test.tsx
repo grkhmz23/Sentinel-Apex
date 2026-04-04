@@ -86,6 +86,10 @@ vi.mock('./components/carry-actions', () => ({
   CarryActions: () => <div>Carry actions</div>,
 }));
 
+vi.mock('./components/connector-promotion-actions', () => ({
+  ConnectorPromotionActions: () => <div>Connector promotion actions</div>,
+}));
+
 vi.mock('./components/rebalance-proposal-actions', () => ({
   RebalanceProposalActions: () => <div>Rebalance proposal actions</div>,
 }));
@@ -338,6 +342,8 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Blocked Reasons')).toBeInTheDocument();
     expect(screen.getByText('Planned Orders')).toBeInTheDocument();
     expect(screen.getByText('Executions')).toBeInTheDocument();
+    expect(screen.getByText('Identity')).toBeInTheDocument();
+    expect(screen.getByText(/derived \/ partial via strategy_intent/i)).toBeInTheDocument();
 
     render(await CarryExecutionsPage());
 
@@ -349,6 +355,7 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Carry Execution Detail')).toBeInTheDocument();
     expect(screen.getByText('Execution Steps')).toBeInTheDocument();
     expect(screen.getByText('Timeline')).toBeInTheDocument();
+    expect(screen.getByText(/derived \/ partial via execution_result/i)).toBeInTheDocument();
   });
 
   it('renders reconciliation runs and findings from server data', async () => {
@@ -405,6 +412,15 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Internal Derivative State')).toBeInTheDocument();
     expect(screen.getByText('Internal Inventory')).toBeInTheDocument();
     expect(screen.getByText('Comparison Detail')).toBeInTheDocument();
+    expect(screen.getByText('Promotion Workflow')).toBeInTheDocument();
+    expect(screen.getByText('Promotion Evidence')).toBeInTheDocument();
+    expect(screen.getByText('Promotion History')).toBeInTheDocument();
+    expect(screen.getByText('Connector promotion actions')).toBeInTheDocument();
+    expect(screen.getByText('Internal health status')).toBeInTheDocument();
+    expect(screen.getByText('Risk posture')).toBeInTheDocument();
+    expect(screen.getByText('Market identity comparison')).toBeInTheDocument();
+    expect(screen.getAllByText('Identity basis').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Health comparison mode').length).toBeGreaterThan(0);
     expect(screen.getByText('Derivative Account State')).toBeInTheDocument();
     expect(screen.getByText('Position Inventory')).toBeInTheDocument();
     expect(screen.getByText('Health And Margin')).toBeInTheDocument();

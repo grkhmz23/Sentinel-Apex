@@ -1018,6 +1018,11 @@ export class RuntimeReconciliationEngine {
           externallyAvailable: venue.truthCoverage.derivativePositionState.status === 'available',
         },
         {
+          section: 'marketIdentity',
+          coverage: comparisonDetail.summary.marketIdentity,
+          externallyAvailable: venue.truthCoverage.derivativePositionState.status === 'available',
+        },
+        {
           section: 'healthState',
           coverage: comparisonDetail.summary.healthState,
           externallyAvailable: venue.truthCoverage.derivativeHealthState.status === 'available',
@@ -1050,6 +1055,7 @@ export class RuntimeReconciliationEngine {
         expectedState: {
           subaccountIdentity: 'available_or_external_unsupported',
           positionInventory: 'available_or_external_unsupported',
+          marketIdentity: 'available_or_external_unsupported',
           healthState: 'available_or_external_unsupported',
           orderInventory: 'available_or_external_unsupported',
         },
@@ -1104,7 +1110,165 @@ export class RuntimeReconciliationEngine {
         results.push(subaccountMismatch);
       }
 
+      const partialHealthComparison = await this.toCandidateFinding({
+        dedupeKey: `drift_partial_health_comparison:${venue.venueId}`,
+        findingType: 'drift_partial_health_comparison',
+        active: comparisonDetail.summary.healthState.status === 'partial',
+        severity: 'low',
+        sourceComponent,
+        subsystem: 'derivative_truth_comparison',
+        venueId: venue.venueId,
+        entityType: 'derivative_health',
+        entityId: venue.venueId,
+        summaryActive: `Internal-vs-external health comparison for ${venue.venueId} remains partial.`,
+        summaryResolved: `Internal-vs-external health comparison for ${venue.venueId} is no longer partial.`,
+        expectedState: {
+          healthComparison: 'available_or_external_unsupported',
+        },
+        actualState: {
+          comparisonMode: comparisonDetail.healthComparison.comparisonMode,
+          fields: comparisonDetail.healthComparison.fields,
+        },
+        delta: {
+          comparableFields: comparisonDetail.healthComparison.fields
+            .filter((field) => field.comparable)
+            .map((field) => field.field),
+        },
+        details: {
+          notes: comparisonDetail.healthComparison.notes,
+        },
+        detectedAt,
+      });
+      if (partialHealthComparison !== null) {
+        results.push(partialHealthComparison);
+      }
+
+      const partialMarketIdentityComparison = await this.toCandidateFinding({
+        dedupeKey: `drift_partial_market_identity_comparison:${venue.venueId}`,
+        findingType: 'drift_partial_market_identity_comparison',
+        active: comparisonDetail.summary.marketIdentity.status === 'partial',
+        severity: 'low',
+        sourceComponent,
+        subsystem: 'derivative_truth_comparison',
+        venueId: venue.venueId,
+        entityType: 'derivative_market_identity',
+        entityId: venue.venueId,
+        summaryActive: `Market identity comparison for ${venue.venueId} still depends on derived or partial internal keys.`,
+        summaryResolved: `Market identity comparison for ${venue.venueId} no longer depends on derived or partial internal keys.`,
+        expectedState: {
+          marketIdentityComparison: 'available_or_external_unsupported',
+        },
+        actualState: {
+          summary: comparisonDetail.summary,
+        },
+        delta: {
+          exactPositionIdentityCount: comparisonDetail.summary.exactPositionIdentityCount,
+          partialPositionIdentityCount: comparisonDetail.summary.partialPositionIdentityCount,
+          positionIdentityGapCount: comparisonDetail.summary.positionIdentityGapCount,
+        },
+        details: {
+          venueName: venue.venueName,
+        },
+        detectedAt,
+      });
+      if (partialMarketIdentityComparison !== null) {
+        results.push(partialMarketIdentityComparison);
+      }
+
+      const healthMismatch = await this.toCandidateFinding({
+        dedupeKey: `drift_health_state_mismatch:${venue.venueId}`,
+        findingType: 'drift_health_state_mismatch',
+        active: comparisonDetail.summary.healthState.status === 'available'
+          && comparisonDetail.healthComparison.status === 'mismatched',
+        severity: 'medium',
+        sourceComponent,
+        subsystem: 'derivative_truth_comparison',
+        venueId: venue.venueId,
+        entityType: 'derivative_health',
+        entityId: venue.venueId,
+        summaryActive: `Internal health state for ${venue.venueId} does not match external Drift-native truth.`,
+        summaryResolved: `Internal health state for ${venue.venueId} matches external Drift-native truth.`,
+        expectedState: comparisonDetail.healthComparison.internalState === null
+          ? {}
+          : { ...comparisonDetail.healthComparison.internalState },
+        actualState: comparisonDetail.healthComparison.externalState === null
+          ? {}
+          : { ...comparisonDetail.healthComparison.externalState },
+        delta: {
+          fields: comparisonDetail.healthComparison.fields,
+        },
+        details: {
+          notes: comparisonDetail.healthComparison.notes,
+        },
+        detectedAt,
+      });
+      if (healthMismatch !== null) {
+        results.push(healthMismatch);
+      }
+
       for (const comparison of comparisonDetail.positionComparisons) {
+        const positionIdentityGap = await this.toCandidateFinding({
+          dedupeKey: `drift_position_identity_gap:${venue.venueId}:${comparison.comparisonKey}`,
+          findingType: 'drift_position_identity_gap',
+          active: comparison.status === 'not_comparable',
+          severity: 'low',
+          sourceComponent,
+          subsystem: 'derivative_truth_comparison',
+          venueId: venue.venueId,
+          entityType: 'derivative_position',
+          entityId: comparison.comparisonKey,
+          summaryActive: `Derivative position ${comparison.comparisonKey} on ${venue.venueId} could not be truthfully aligned by market identity.`,
+          summaryResolved: `Derivative position ${comparison.comparisonKey} on ${venue.venueId} can now be truthfully aligned by market identity.`,
+          expectedState: {
+            marketIdentity: 'truthfully_comparable',
+          },
+          actualState: {
+            internalIdentity: comparison.marketIdentityComparison.internalIdentity,
+            externalIdentity: comparison.marketIdentityComparison.externalIdentity,
+          },
+          delta: {
+            notes: comparison.marketIdentityComparison.notes,
+          },
+          details: {
+            comparisonStatus: comparison.status,
+          },
+          detectedAt,
+        });
+        if (positionIdentityGap !== null) {
+          results.push(positionIdentityGap);
+        }
+
+        const positionMarketIdentityMismatch = await this.toCandidateFinding({
+          dedupeKey: `drift_market_identity_mismatch:${venue.venueId}:position:${comparison.comparisonKey}`,
+          findingType: 'drift_market_identity_mismatch',
+          active: comparison.marketIdentityComparison.status === 'mismatched'
+            && comparison.marketIdentityComparison.comparisonMode === 'exact',
+          severity: 'high',
+          sourceComponent,
+          subsystem: 'derivative_truth_comparison',
+          venueId: venue.venueId,
+          entityType: 'derivative_market_identity',
+          entityId: comparison.comparisonKey,
+          summaryActive: `Exact market identity for derivative position ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift truth.`,
+          summaryResolved: `Exact market identity for derivative position ${comparison.comparisonKey} on ${venue.venueId} matches external Drift truth.`,
+          expectedState: comparison.marketIdentityComparison.internalIdentity === null
+            ? {}
+            : { ...comparison.marketIdentityComparison.internalIdentity },
+          actualState: comparison.marketIdentityComparison.externalIdentity === null
+            ? {}
+            : { ...comparison.marketIdentityComparison.externalIdentity },
+          delta: {
+            normalizedIdentity: comparison.marketIdentityComparison.normalizedIdentity,
+          },
+          details: {
+            notes: comparison.marketIdentityComparison.notes,
+          },
+          detectedAt,
+        });
+        if (positionMarketIdentityMismatch !== null) {
+          results.push(positionMarketIdentityMismatch);
+        }
+
         const positionMismatch = await this.toCandidateFinding({
           dedupeKey: `drift_position_mismatch:${venue.venueId}:${comparison.comparisonKey}`,
           findingType: 'drift_position_mismatch',
@@ -1140,6 +1304,37 @@ export class RuntimeReconciliationEngine {
       }
 
       for (const comparison of comparisonDetail.orderComparisons) {
+        const orderMarketIdentityMismatch = await this.toCandidateFinding({
+          dedupeKey: `drift_market_identity_mismatch:${venue.venueId}:order:${comparison.comparisonKey}`,
+          findingType: 'drift_market_identity_mismatch',
+          active: comparison.marketIdentityComparison.status === 'mismatched'
+            && comparison.marketIdentityComparison.comparisonMode === 'exact',
+          severity: 'high',
+          sourceComponent,
+          subsystem: 'derivative_truth_comparison',
+          venueId: venue.venueId,
+          entityType: 'derivative_market_identity',
+          entityId: comparison.comparisonKey,
+          summaryActive: `Exact market identity for open order ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift truth.`,
+          summaryResolved: `Exact market identity for open order ${comparison.comparisonKey} on ${venue.venueId} matches external Drift truth.`,
+          expectedState: comparison.marketIdentityComparison.internalIdentity === null
+            ? {}
+            : { ...comparison.marketIdentityComparison.internalIdentity },
+          actualState: comparison.marketIdentityComparison.externalIdentity === null
+            ? {}
+            : { ...comparison.marketIdentityComparison.externalIdentity },
+          delta: {
+            normalizedIdentity: comparison.marketIdentityComparison.normalizedIdentity,
+          },
+          details: {
+            notes: comparison.marketIdentityComparison.notes,
+          },
+          detectedAt,
+        });
+        if (orderMarketIdentityMismatch !== null) {
+          results.push(orderMarketIdentityMismatch);
+        }
+
         const orderMismatch = await this.toCandidateFinding({
           dedupeKey: `drift_order_inventory_mismatch:${venue.venueId}:${comparison.comparisonKey}`,
           findingType: 'drift_order_inventory_mismatch',

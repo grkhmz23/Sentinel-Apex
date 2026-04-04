@@ -18,7 +18,7 @@ import type {
 } from '@sentinel-apex/venue-adapters';
 
 import { RuntimeControlPlane } from '../control-plane.js';
-import { DatabaseAuditWriter, RuntimeStore } from '../store.js';
+import { DatabaseAuditWriter, RuntimeOrderStore, RuntimeStore } from '../store.js';
 import { RuntimeWorker } from '../worker.js';
 
 async function createConnectionString(): Promise<string> {
@@ -2303,6 +2303,307 @@ describe('RuntimeWorker', () => {
     expect(summary?.latestTypeCounts['stale_venue_truth_snapshot']).toBeGreaterThan(0);
     expect(summary?.latestTypeCounts['venue_truth_unavailable']).toBeGreaterThan(0);
     expect(summary?.latestTypeCounts['venue_truth_partial_coverage']).toBeGreaterThan(0);
+  });
+
+  it('emits partial health and market-identity gap findings without inventing exact mismatches', async () => {
+    const connectionString = await createConnectionString();
+    const venueId = 'phase-5-7-readonly';
+    const venueName = 'Phase 5.7 Read-Only';
+    const adapter = new StubReadonlyVenueTruthAdapter(
+      venueId,
+      venueName,
+      {
+        derivativePositionState: {
+          positions: [
+            {
+              marketIndex: 0,
+              marketKey: 'perp:0',
+              marketSymbol: 'BTC-PERP',
+              positionType: 'perp',
+              side: 'long',
+              baseAssetAmount: '0.75',
+              quoteAssetAmount: '-51000',
+              entryPrice: '68000',
+              breakEvenPrice: '68010',
+              unrealizedPnlUsd: '50',
+              liquidationPrice: '52000',
+              positionValueUsd: '51000',
+              openOrders: 1,
+              openBids: '0.1',
+              openAsks: '0',
+              metadata: {},
+              provenance: {
+                classification: 'mixed',
+                source: 'drift_user_account_with_market_context',
+                notes: [],
+              },
+            },
+            {
+              marketIndex: 99,
+              marketKey: 'perp:99',
+              marketSymbol: 'BTC-PERP',
+              positionType: 'perp',
+              side: 'long',
+              baseAssetAmount: '0.75',
+              quoteAssetAmount: '-51000',
+              entryPrice: '68000',
+              breakEvenPrice: '68010',
+              unrealizedPnlUsd: '50',
+              liquidationPrice: '52000',
+              positionValueUsd: '51000',
+              openOrders: 0,
+              openBids: '0',
+              openAsks: '0',
+              metadata: {},
+              provenance: {
+                classification: 'mixed',
+                source: 'drift_user_account_with_market_context',
+                notes: [],
+              },
+            },
+          ],
+          openPositionCount: 2,
+          methodology: 'drift_user_account_with_market_context',
+          notes: [],
+          provenance: {
+            classification: 'mixed',
+            source: 'drift_user_account_with_market_context',
+            notes: [],
+          },
+        },
+        orderState: {
+          openOrderCount: 1,
+          openOrders: [
+            {
+              marketIndex: 0,
+              venueOrderId: '901',
+              reference: '41',
+              marketKey: 'perp:0',
+              marketSymbol: 'BTC-PERP',
+              marketType: 'perp',
+              userOrderId: 41,
+              side: 'buy',
+              status: 'open',
+              orderType: 'limit',
+              price: '68000.000000',
+              quantity: '0.250000000',
+              reduceOnly: false,
+              accountAddress: `${venueId}-account`,
+              slot: '123',
+              placedAt: null,
+              metadata: {},
+              provenance: {
+                classification: 'exact',
+                source: 'drift_user_account_decode',
+                notes: [],
+              },
+            },
+          ],
+          referenceMode: 'venue_open_orders',
+          methodology: 'drift_user_account_open_orders',
+          notes: [],
+          provenance: {
+            classification: 'exact',
+            source: 'drift_user_account_decode',
+            notes: [],
+          },
+        },
+        payload: {
+          accountAddress: `${venueId}-account`,
+          authorityAddress: `${venueId}-authority`,
+          subaccountId: 0,
+          openOrderCount: 1,
+          openPositionCount: 2,
+          healthScore: 84,
+        },
+      },
+    );
+
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {
+      truthAdapters: [adapter],
+      internalDerivativeTargets: [
+        {
+          venueId,
+          venueName,
+          authorityAddress: `${venueId}-authority`,
+          subaccountId: 0,
+          accountLabel: 'Phase 5.7 Internal Account',
+        },
+      ],
+    }, {
+      cycleIntervalMs: 60_000,
+      pollIntervalMs: 25,
+    });
+
+    cleanups.push(async () => {
+      await worker.stop();
+    });
+
+    await worker.start();
+
+    const connection = await createDatabaseConnection(connectionString);
+    const store = new RuntimeStore(connection.db, new DatabaseAuditWriter(connection.db));
+    const orderStore = new RuntimeOrderStore(connection.db);
+    const seededRunId = 'phase-5-7-seed';
+
+    await store.createStrategyRun({
+      runId: seededRunId,
+      sleeveId: 'carry',
+      executionMode: 'dry-run',
+      triggerSource: 'phase-5-7-seeded-comparison-test',
+    });
+
+    await orderStore.save({
+      intent: {
+        intentId: 'phase-5-7-order-1',
+        venueId: venueId as never,
+        asset: 'BTC' as never,
+        side: 'buy',
+        type: 'limit',
+        size: '1',
+        limitPrice: '68000',
+        opportunityId: 'opp-phase-5-7' as never,
+        reduceOnly: false,
+        createdAt: new Date('2026-03-31T11:58:00.000Z'),
+        metadata: {
+          sleeveId: 'carry',
+          instrumentType: 'perpetual',
+        },
+      },
+      status: 'partially_filled',
+      venueOrderId: '901',
+      filledSize: '0.75',
+      averageFillPrice: '68000',
+      feesPaid: '1.5',
+      fills: [],
+      submittedAt: new Date('2026-03-31T11:58:10.000Z'),
+      completedAt: null,
+      lastError: null,
+      attemptCount: 1,
+    });
+
+    await store.persistFill('phase-5-7-order-1', {
+      fillId: 'phase-5-7-fill-1',
+      orderId: 'phase-5-7-order-1' as never,
+      filledSize: '0.75',
+      fillPrice: '68000',
+      fee: '1.5',
+      feeAsset: 'USDC' as never,
+      filledAt: new Date('2026-03-31T11:58:15.000Z'),
+    });
+
+    const riskSummary = {
+      grossExposurePct: 20.4,
+      netExposurePct: 20.4,
+      leverage: 2.11,
+      liquidityReservePct: 43.66,
+      dailyDrawdownPct: 0.8,
+      weeklyDrawdownPct: 1.2,
+      portfolioDrawdownPct: 2.4,
+      openCircuitBreakers: [],
+      riskLevel: 'normal' as const,
+    };
+
+    await store.persistPortfolioSnapshot({
+      sourceRunId: seededRunId,
+      snapshotAt: new Date('2026-03-31T12:00:00.000Z'),
+      portfolioState: {
+        totalNav: '250000',
+        grossExposure: '51000',
+        netExposure: '51000',
+        liquidityReserve: '109150.25',
+        currentDailyDrawdownPct: 0.8,
+        currentWeeklyDrawdownPct: 1.2,
+        currentPortfolioDrawdownPct: 2.4,
+        venueExposures: new Map([[venueId, '51000']]),
+        assetExposures: new Map([['BTC', '51000']]),
+        sleeveNav: new Map([['carry', '250000']]),
+        openPositionCount: 1,
+      },
+      riskSummary,
+      dailyPnl: '1250',
+      cumulativePnl: '8900',
+    });
+
+    await store.persistRiskSnapshot({
+      runId: seededRunId,
+      sleeveId: 'carry',
+      summary: riskSummary,
+      approvedIntentCount: 1,
+      rejectedIntentCount: 0,
+      capturedAt: new Date('2026-03-31T12:00:00.000Z'),
+    });
+
+    const rebuildCommand = await controlPlane.enqueueCommand('rebuild_projections', 'vitest', {
+      triggerSource: 'phase-5-7-seed-rebuild',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(rebuildCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+      20_000,
+    );
+
+    const reconciliationCommand = await controlPlane.enqueueReconciliationRun('vitest', {
+      trigger: 'phase-5-7-health-market-identity',
+      triggeredBy: 'vitest',
+    });
+    await waitFor(
+      async () => controlPlane.getCommand(reconciliationCommand.commandId),
+      (command): command is Exclude<typeof command, null> => command !== null && command.status === 'completed',
+      20_000,
+    );
+
+    const comparisonSummary = await waitFor(
+      async () => controlPlane.getVenueComparisonSummary(venueId),
+      (summary): summary is Exclude<typeof summary, null> => summary !== null && summary.positionIdentityGapCount > 0,
+      20_000,
+    );
+    if (comparisonSummary === null) {
+      throw new Error('Expected venue comparison summary to be available');
+    }
+    expect(comparisonSummary.healthState.status).toBe('partial');
+    expect(comparisonSummary.marketIdentity.status).toBe('partial');
+    expect(comparisonSummary.healthComparisonMode).toBe('status_band_only');
+    expect(comparisonSummary.positionIdentityGapCount).toBe(1);
+
+    const comparisonDetail = await controlPlane.getVenueComparisonDetail(venueId);
+    const identityGapComparison = comparisonDetail?.positionComparisons.find(
+      (comparison) => comparison.status === 'not_comparable' && comparison.internalPosition !== null,
+    );
+    expect(identityGapComparison?.marketIdentityComparison.comparisonMode).toBe('unsupported');
+
+    const partialHealthFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'drift_partial_health_comparison',
+      limit: 20,
+    });
+    expect(
+      partialHealthFindings.some((finding) => finding.venueId === venueId && finding.status === 'active'),
+    ).toBe(true);
+
+    const identityGapFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'drift_position_identity_gap',
+      limit: 20,
+    });
+    expect(
+      identityGapFindings.some((finding) => finding.venueId === venueId && finding.status === 'active'),
+    ).toBe(true);
+
+    const exactMarketIdentityFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'drift_market_identity_mismatch',
+      limit: 20,
+    });
+    expect(
+      exactMarketIdentityFindings.some((finding) => finding.venueId === venueId && finding.status === 'active'),
+    ).toBe(false);
+
+    const exactHealthMismatchFindings = await controlPlane.listReconciliationFindings({
+      findingType: 'drift_health_state_mismatch',
+      limit: 20,
+    });
+    expect(
+      exactHealthMismatchFindings.some((finding) => finding.venueId === venueId && finding.status === 'active'),
+    ).toBe(false);
   });
 
   it('compares internal execution references against recent real venue references when available', async () => {

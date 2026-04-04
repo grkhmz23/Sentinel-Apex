@@ -7,13 +7,50 @@ export type {
   CarryVenueMode,
 } from './interfaces/carry-venue-adapter.js';
 export type {
+  CanonicalMarketIdentity,
+  CanonicalMarketIdentityCaptureStage,
+  CanonicalMarketIdentityConfidence,
+  CanonicalMarketIdentityInput,
+  CanonicalMarketIdentityKeyType,
+  CanonicalMarketIdentityMetadataDefaults,
+  CanonicalMarketIdentityProvenance,
+  CanonicalMarketType,
+} from './interfaces/market-identity.js';
+export {
+  MARKET_IDENTITY_METADATA_KEY,
+  attachCanonicalMarketIdentityToMetadata,
+  canonicalAssetTypeKey,
+  canonicalMarketIndexKey,
+  canonicalMarketSymbolKey,
+  captureCanonicalMarketIdentity,
+  createCanonicalMarketIdentity,
+  deriveMarketSymbol,
+  normalizeCanonicalMarketType,
+  parseMarketIndexFromKey,
+  preferCanonicalMarketIdentity,
+  readCanonicalMarketIdentityFromMetadata,
+} from './interfaces/market-identity.js';
+export type {
   MarketData,
   AccountBalance,
   VenuePosition,
   PlaceOrderParams,
   PlaceOrderResult,
   CancelOrderResult,
+  VenueExecutionEventCorrelationConfidence,
+  VenueExecutionEventCorrelationStatus,
+  VenueExecutionEventDeduplicationStatus,
+  VenueExecutionEventEvidence,
+  VenueExecutionEventEvidenceOrigin,
+  VenueExecutionEventEvidenceRequest,
+  VenueExecutionEventFillRole,
+  VenueExecutionRawEvent,
+  VenueOrderExecutionMode,
   VenueAdapter,
+} from './interfaces/venue-adapter.js';
+export {
+  VENUE_EXECUTION_MODE_METADATA_KEY,
+  VENUE_EXECUTION_REFERENCE_METADATA_KEY,
 } from './interfaces/venue-adapter.js';
 export type {
   TreasuryLiquidityTier,
@@ -68,6 +105,8 @@ export type { SimulatedTreasuryVenueConfig } from './simulation/simulated-treasu
 export { SimulatedTreasuryVenueAdapter } from './simulation/simulated-treasury-venue-adapter.js';
 export type { DriftReadonlyTruthAdapterConfig } from './real/drift-readonly-truth-adapter.js';
 export { DriftReadonlyTruthAdapter } from './real/drift-readonly-truth-adapter.js';
+export type { DriftDevnetCarryAdapterConfig } from './real/drift-devnet-carry-adapter.js';
+export { DriftDevnetCarryAdapter } from './real/drift-devnet-carry-adapter.js';
 export type { SolanaRpcReadonlyTruthAdapterConfig } from './real/solana-rpc-readonly-truth-adapter.js';
 export { SolanaRpcReadonlyTruthAdapter } from './real/solana-rpc-readonly-truth-adapter.js';
 

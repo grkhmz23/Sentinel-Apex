@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { AppShell } from '../../../src/components/app-shell';
+import { ConnectorPromotionActions } from '../../../src/components/connector-promotion-actions';
 import { DefinitionList } from '../../../src/components/definition-list';
 import { EmptyState } from '../../../src/components/empty-state';
 import { ErrorState } from '../../../src/components/error-state';
@@ -41,6 +42,78 @@ function toneForTruthProfile(
   return 'bad';
 }
 
+function toneForCapabilityClass(
+  capabilityClass: string,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (capabilityClass === 'execution_capable') {
+    return 'good';
+  }
+  if (capabilityClass === 'real_readonly') {
+    return 'warn';
+  }
+  return 'neutral';
+}
+
+function toneForPromotionPosture(
+  posture: string,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (posture === 'approved_for_live') {
+    return 'good';
+  }
+  if (posture === 'promotion_pending' || posture === 'execution_capable_unapproved') {
+    return 'warn';
+  }
+  if (posture === 'rejected' || posture === 'suspended') {
+    return 'bad';
+  }
+  return 'neutral';
+}
+
+function toneForPostTradeConfirmation(
+  status: string,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (status === 'confirmed' || status === 'confirmed_full') {
+    return 'good';
+  }
+  if (
+    status === 'confirmed_partial'
+    || status === 'confirmed_partial_event_only'
+    || status === 'confirmed_partial_position_only'
+    || status === 'pending_event'
+    || status === 'pending_position_delta'
+  ) {
+    return 'warn';
+  }
+  if (status === 'blocked') {
+    return 'bad';
+  }
+  if (
+    status === 'missing_reference'
+    || status === 'invalid_position_delta'
+    || status === 'insufficient_context'
+    || status === 'conflicting_event'
+    || status === 'conflicting_event_vs_position'
+  ) {
+    return 'bad';
+  }
+  return 'neutral';
+}
+
+function toneForEventCorrelation(
+  status: string | null | undefined,
+): 'neutral' | 'good' | 'warn' | 'bad' {
+  if (status === 'event_matched_strong') {
+    return 'good';
+  }
+  if (status === 'event_matched_probable') {
+    return 'warn';
+  }
+  if (status === 'conflicting_event') {
+    return 'bad';
+  }
+  return 'neutral';
+}
+
 function toneForCoverageStatus(
   status: string,
 ): 'neutral' | 'good' | 'warn' | 'bad' {
@@ -66,6 +139,22 @@ function formatJoined(values: string[] | null | undefined, fallback = 'None reco
     : values.join('; ');
 }
 
+function formatConfigReadiness(
+  markers: Array<{ key: string; ready: boolean; summary: string }> | null | undefined,
+): string {
+  if (markers === undefined || markers === null || markers.length === 0) {
+    return 'No config markers detected';
+  }
+
+  return markers.map((marker) => `${marker.summary}: ${marker.ready ? 'ready' : 'missing'}`).join('; ');
+}
+
+function formatMetadataStringArray(value: unknown, fallback = 'Not recorded'): string {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value.join('; ')
+    : fallback;
+}
+
 function formatProvenance(
   provenance:
     | {
@@ -87,6 +176,40 @@ function formatComparisonCoverage(
   item: { status: string; reason: string | null },
 ): string {
   return item.reason === null ? item.status : `${item.status} - ${item.reason}`;
+}
+
+function formatCanonicalMarketIdentityLabel(
+  identity: {
+    marketSymbol: string | null;
+    marketKey: string | null;
+    normalizedKey: string | null;
+  } | null,
+): string {
+  if (identity === null) {
+    return 'Unsupported';
+  }
+
+  return identity.marketSymbol ?? identity.marketKey ?? identity.normalizedKey ?? 'Unsupported';
+}
+
+function formatCanonicalMarketIdentityDetail(
+  identity: {
+    normalizedKeyType: string;
+    confidence: string;
+    provenance?: {
+      classification: string;
+      source: string;
+    } | null;
+  } | null,
+): string {
+  if (identity === null) {
+    return 'No normalized identity.';
+  }
+
+  const provenanceSummary = identity.provenance === undefined || identity.provenance === null
+    ? 'no provenance'
+    : `${identity.provenance.classification} via ${identity.provenance.source}`;
+  return `${identity.normalizedKeyType} / ${identity.confidence} / ${provenanceSummary}`;
 }
 
 function toneForComparisonStatus(
@@ -122,7 +245,9 @@ export default async function VenueDetailPage(
   const internalState = state.data.detail.internalState;
   const comparisonSummary = state.data.detail.comparisonSummary;
   const comparisonDetail = state.data.detail.comparisonDetail;
+  const promotion = state.data.detail.promotion;
   const latestSnapshot = snapshots[0] ?? null;
+  const internalHealthState = internalState?.healthState ?? null;
   const sourceMetadata = latestSnapshot?.sourceMetadata ?? venue.sourceMetadata;
   const accountState = latestSnapshot?.accountState ?? null;
   const balanceState = latestSnapshot?.balanceState ?? null;
@@ -132,6 +257,9 @@ export default async function VenueDetailPage(
   const derivativeHealthState = latestSnapshot?.derivativeHealthState ?? null;
   const orderState = latestSnapshot?.orderState ?? null;
   const executionReferenceState = latestSnapshot?.executionReferenceState ?? null;
+  const executionConfirmationState = latestSnapshot?.executionConfirmationState
+    ?? venue.executionConfirmationState
+    ?? promotion.evidence.postTradeConfirmation;
 
   return (
     <AppShell session={session}>
@@ -146,6 +274,7 @@ export default async function VenueDetailPage(
             <StatusBadge label={venue.truthMode} tone={toneForTruthMode(venue.truthMode)} />
             <StatusBadge label={venue.truthProfile} tone={toneForTruthProfile(venue.truthProfile)} />
             <StatusBadge label={venue.healthState} tone={toneForHealthState(venue.healthState)} />
+            <StatusBadge label={promotion.current.effectivePosture} tone={toneForPromotionPosture(promotion.current.effectivePosture)} />
           </div>
         </header>
 
@@ -166,8 +295,83 @@ export default async function VenueDetailPage(
                 { label: 'Execution support', value: venue.executionSupport ? 'Yes' : 'No' },
                 { label: 'Approved for live', value: venue.approvedForLiveUse ? 'Yes' : 'No' },
                 { label: 'Onboarding state', value: venue.onboardingState },
+                { label: 'Execution posture', value: typeof venue.metadata['executionPosture'] === 'string' ? String(venue.metadata['executionPosture']) : 'Not recorded' },
+                { label: 'Connector mode', value: typeof venue.metadata['connectorMode'] === 'string' ? String(venue.metadata['connectorMode']) : 'Not recorded' },
+                { label: 'Supported execution scope', value: formatMetadataStringArray(venue.metadata['supportedExecutionScope']) },
+                { label: 'Unsupported scope', value: formatMetadataStringArray(venue.metadata['unsupportedExecutionScope']) },
                 { label: 'Missing prerequisites', value: venue.missingPrerequisites.join(', ') || 'None documented' },
                 { label: 'Auth/config requirements', value: venue.authRequirementsSummary.join(', ') || 'None documented' },
+              ]}
+            />
+          </Panel>
+
+          <Panel subtitle="Durable operator review state, current posture, and sensitive execution gate" title="Promotion Workflow">
+            <>
+              <DefinitionList
+                items={[
+                  { label: 'Capability class', value: <StatusBadge label={promotion.current.capabilityClass} tone={toneForCapabilityClass(promotion.current.capabilityClass)} /> },
+                  { label: 'Promotion status', value: <StatusBadge label={promotion.current.promotionStatus} tone={toneForPromotionPosture(promotion.current.promotionStatus)} /> },
+                  { label: 'Effective posture', value: <StatusBadge label={promotion.current.effectivePosture} tone={toneForPromotionPosture(promotion.current.effectivePosture)} /> },
+                  { label: 'Approved for live', value: promotion.current.approvedForLiveUse ? 'Yes' : 'No' },
+                  { label: 'Sensitive execution eligible', value: promotion.current.sensitiveExecutionEligible ? 'Yes' : 'No' },
+                  { label: 'Requested by', value: promotion.current.requestedBy ?? 'Not requested' },
+                  { label: 'Requested at', value: formatDateTime(promotion.current.requestedAt) },
+                  { label: 'Approved by', value: promotion.current.approvedBy ?? 'Not approved' },
+                  { label: 'Approved at', value: formatDateTime(promotion.current.approvedAt) },
+                  { label: 'Rejected by', value: promotion.current.rejectedBy ?? 'Not rejected' },
+                  { label: 'Rejected at', value: formatDateTime(promotion.current.rejectedAt) },
+                  { label: 'Suspended by', value: promotion.current.suspendedBy ?? 'Not suspended' },
+                  { label: 'Suspended at', value: formatDateTime(promotion.current.suspendedAt) },
+                  { label: 'Latest note', value: promotion.current.latestNote ?? 'None recorded' },
+                ]}
+              />
+              <ConnectorPromotionActions
+                capabilityClass={promotion.current.capabilityClass}
+                promotionStatus={promotion.current.promotionStatus}
+                venueId={venue.venueId}
+                venueName={venue.venueName}
+              />
+            </>
+          </Panel>
+
+          <Panel subtitle="Deterministic evidence and prerequisite checks that control promotion eligibility" title="Promotion Evidence">
+            <DefinitionList
+              items={[
+                { label: 'Eligibility', value: promotion.evidence.eligibleForPromotion ? 'Eligible' : 'Blocked' },
+                { label: 'Read-only validation', value: promotion.evidence.readOnlyValidationState },
+                { label: 'Snapshot freshness', value: promotion.evidence.snapshotFreshness },
+                { label: 'Snapshot completeness', value: promotion.evidence.snapshotCompleteness },
+                { label: 'Health state', value: <StatusBadge label={promotion.evidence.healthState} tone={toneForHealthState(promotion.evidence.healthState)} /> },
+                {
+                  label: 'Post-trade confirmation',
+                  value: (
+                    <StatusBadge
+                      label={promotion.evidence.postTradeConfirmation.status}
+                      tone={toneForPostTradeConfirmation(promotion.evidence.postTradeConfirmation.status)}
+                    />
+                  ),
+                },
+                { label: 'Post-trade summary', value: promotion.evidence.postTradeConfirmation.summary },
+                { label: 'Recent real executions', value: String(promotion.evidence.postTradeConfirmation.recentExecutionCount) },
+                { label: 'Confirmed full', value: String(promotion.evidence.postTradeConfirmation.confirmedFullCount) },
+                { label: 'Confirmed partial', value: String(promotion.evidence.postTradeConfirmation.confirmedPartialCount) },
+                { label: 'Partial event only', value: String(promotion.evidence.postTradeConfirmation.confirmedPartialEventOnlyCount) },
+                { label: 'Partial position only', value: String(promotion.evidence.postTradeConfirmation.confirmedPartialPositionOnlyCount) },
+                { label: 'Pending', value: String(promotion.evidence.postTradeConfirmation.pendingCount) },
+                { label: 'Pending event', value: String(promotion.evidence.postTradeConfirmation.pendingEventCount) },
+                { label: 'Pending position delta', value: String(promotion.evidence.postTradeConfirmation.pendingPositionDeltaCount) },
+                { label: 'Conflicting event', value: String(promotion.evidence.postTradeConfirmation.conflictingEventCount) },
+                { label: 'Event vs position conflict', value: String(promotion.evidence.postTradeConfirmation.conflictingEventVsPositionCount) },
+                { label: 'Missing references', value: String(promotion.evidence.postTradeConfirmation.missingReferenceCount) },
+                { label: 'Latest confirmed reference', value: formatDateTime(promotion.evidence.postTradeConfirmation.latestConfirmedAt) },
+                { label: 'Last truth snapshot', value: formatDateTime(promotion.evidence.lastSnapshotAt) },
+                { label: 'Last successful truth snapshot', value: formatDateTime(promotion.evidence.lastSuccessfulSnapshotAt) },
+                { label: 'Coverage available', value: String(promotion.evidence.truthCoverageAvailableCount) },
+                { label: 'Coverage partial', value: String(promotion.evidence.truthCoveragePartialCount) },
+                { label: 'Coverage unsupported', value: String(promotion.evidence.truthCoverageUnsupportedCount) },
+                { label: 'Config readiness', value: formatConfigReadiness(promotion.evidence.configReadiness) },
+                { label: 'Missing prerequisites', value: formatJoined(promotion.evidence.missingPrerequisites, 'None recorded') },
+                { label: 'Blocking reasons', value: formatJoined(promotion.evidence.blockingReasons, 'None recorded') },
               ]}
             />
           </Panel>
@@ -188,6 +392,21 @@ export default async function VenueDetailPage(
                 { label: 'Observed slot', value: sourceMetadata.observedSlot ?? 'Not recorded' },
                 { label: 'Observed scope', value: sourceMetadata.observedScope.join(', ') || 'None recorded' },
                 { label: 'Source notes', value: formatJoined(sourceMetadata.provenanceNotes) },
+                {
+                  label: 'Execution confirmation state',
+                  value: executionConfirmationState === null
+                    ? 'Not recorded'
+                    : (
+                      <StatusBadge
+                        label={executionConfirmationState.status}
+                        tone={toneForPostTradeConfirmation(executionConfirmationState.status)}
+                      />
+                    ),
+                },
+                {
+                  label: 'Execution confirmation summary',
+                  value: executionConfirmationState?.summary ?? 'Not recorded',
+                },
                 { label: 'Degraded reason', value: venue.degradedReason ?? 'None recorded' },
               ]}
             />
@@ -229,6 +448,46 @@ export default async function VenueDetailPage(
           </Panel>
         </div>
 
+        <div className="grid">
+          <Panel subtitle="Per-execution confirmation evidence, event confidence, and blocked reasons" title="Recent Execution Evidence">
+            {executionConfirmationState === null || executionConfirmationState.entries.length === 0 ? (
+              <EmptyState message="No recent execution confirmation entries were persisted for this venue." title="No recent execution evidence" />
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Reference</th>
+                    <th>Status</th>
+                    <th>Basis</th>
+                    <th>Event correlation</th>
+                    <th>Event summary</th>
+                    <th>Blocked reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {executionConfirmationState.entries.map((entry) => (
+                    <tr key={entry.stepId}>
+                      <td>{entry.executionReference}</td>
+                      <td><StatusBadge label={entry.status} tone={toneForPostTradeConfirmation(entry.status)} /></td>
+                      <td>{entry.evidenceBasis}</td>
+                      <td>
+                        {entry.eventEvidence === null ? 'No venue event' : (
+                          <StatusBadge
+                            label={`${entry.eventEvidence.correlationStatus} / ${entry.eventEvidence.correlationConfidence}`}
+                            tone={toneForEventCorrelation(entry.eventEvidence.correlationStatus)}
+                          />
+                        )}
+                      </td>
+                      <td>{entry.eventEvidence?.summary ?? 'No venue-native event evidence recorded.'}</td>
+                      <td>{entry.blockedReason ?? 'None'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        </div>
+
         <div className="grid grid--two-column">
           <Panel subtitle="Canonical internal derivative account target and persisted state coverage for this venue" title="Internal Derivative State">
             <DefinitionList
@@ -247,6 +506,15 @@ export default async function VenueDetailPage(
                 { label: 'Subaccount id', value: internalState?.accountState?.subaccountId === null || internalState?.accountState?.subaccountId === undefined ? 'Not configured' : String(internalState.accountState.subaccountId) },
                 { label: 'Internal methodology', value: internalState?.accountState?.methodology ?? 'Not recorded' },
                 { label: 'Internal notes', value: formatJoined(internalState?.accountState?.notes) },
+                { label: 'Internal health status', value: internalHealthState?.healthStatus ?? 'Unsupported' },
+                { label: 'Health model', value: internalHealthState?.modelType ?? 'Unsupported' },
+                { label: 'Health comparison mode', value: internalHealthState?.comparisonMode ?? 'Unsupported' },
+                { label: 'Risk posture', value: internalHealthState?.riskPosture ?? 'Not recorded' },
+                { label: 'Collateral-like USD', value: internalHealthState?.collateralLikeUsd ?? 'Not recorded' },
+                { label: 'Venue exposure USD', value: internalHealthState?.venueExposureUsd ?? 'Not recorded' },
+                { label: 'Exposure/NAV ratio', value: internalHealthState?.exposureToNavRatio ?? 'Not recorded' },
+                { label: 'Internal leverage', value: internalHealthState?.leverage ?? 'Not recorded' },
+                { label: 'Health notes', value: formatJoined(internalHealthState?.notes) },
               ]}
             />
           </Panel>
@@ -314,6 +582,8 @@ export default async function VenueDetailPage(
                     <thead>
                       <tr>
                         <th>Key</th>
+                        <th>Market identity</th>
+                        <th>Identity confidence</th>
                         <th>Side</th>
                         <th>Net qty</th>
                         <th>Avg entry</th>
@@ -324,6 +594,8 @@ export default async function VenueDetailPage(
                       {internalState.positionState.positions.map((position) => (
                         <tr key={position.positionKey}>
                           <td>{position.positionKey}</td>
+                          <td>{formatCanonicalMarketIdentityLabel(position.marketIdentity)}</td>
+                          <td>{formatCanonicalMarketIdentityDetail(position.marketIdentity)}</td>
                           <td>{position.side}</td>
                           <td>{position.netQuantity}</td>
                           <td>{position.averageEntryPrice ?? 'Not recorded'}</td>
@@ -340,6 +612,7 @@ export default async function VenueDetailPage(
                     <thead>
                       <tr>
                         <th>Order</th>
+                        <th>Market identity</th>
                         <th>Status</th>
                         <th>Side</th>
                         <th>Remaining</th>
@@ -350,6 +623,7 @@ export default async function VenueDetailPage(
                       {internalState.orderState.openOrders.map((order) => (
                         <tr key={order.orderKey}>
                           <td>{order.venueOrderId ?? order.clientOrderId}</td>
+                          <td>{formatCanonicalMarketIdentityLabel(order.marketIdentity)}</td>
                           <td>{order.status}</td>
                           <td>{order.side}</td>
                           <td>{order.remainingSize}</td>
@@ -372,7 +646,12 @@ export default async function VenueDetailPage(
                   { label: 'Internal snapshot', value: formatDateTime(comparisonSummary.internalSnapshotAt) },
                   { label: 'External snapshot', value: formatDateTime(comparisonSummary.externalSnapshotAt) },
                   { label: 'Account comparison', value: formatComparisonCoverage(comparisonSummary.subaccountIdentity) },
+                  { label: 'Market identity comparison', value: formatComparisonCoverage(comparisonSummary.marketIdentity) },
                   { label: 'Health comparison', value: formatComparisonCoverage(comparisonSummary.healthState) },
+                  { label: 'Health comparison mode', value: comparisonSummary.healthComparisonMode },
+                  { label: 'Exact position identities', value: String(comparisonSummary.exactPositionIdentityCount) },
+                  { label: 'Partial position identities', value: String(comparisonSummary.partialPositionIdentityCount) },
+                  { label: 'Position identity gaps', value: String(comparisonSummary.positionIdentityGapCount) },
                   { label: 'Account result', value: <StatusBadge label={comparisonDetail.accountComparison.status} tone={toneForComparisonStatus(comparisonDetail.accountComparison.status)} /> },
                   { label: 'Account notes', value: formatJoined(comparisonDetail.accountComparison.notes) },
                   { label: 'Health result', value: <StatusBadge label={comparisonDetail.healthComparison.status} tone={toneForComparisonStatus(comparisonDetail.healthComparison.status)} /> },
@@ -384,6 +663,8 @@ export default async function VenueDetailPage(
                   <thead>
                     <tr>
                       <th>Position key</th>
+                      <th>Market identity</th>
+                      <th>Identity basis</th>
                       <th>Internal qty</th>
                       <th>External qty</th>
                       <th>Delta</th>
@@ -394,6 +675,8 @@ export default async function VenueDetailPage(
                     {comparisonDetail.positionComparisons.map((comparison) => (
                       <tr key={comparison.comparisonKey}>
                         <td>{comparison.comparisonKey}</td>
+                        <td>{comparison.marketIdentityComparison.normalizedIdentity?.key ?? comparison.marketIdentityComparison.internalIdentity?.normalizedKey ?? comparison.marketIdentityComparison.externalIdentity?.normalizedKey ?? 'None'}</td>
+                        <td>{comparison.marketIdentityComparison.comparisonMode} / {formatCanonicalMarketIdentityDetail(comparison.marketIdentityComparison.internalIdentity)}</td>
                         <td>{comparison.internalPosition?.netQuantity ?? 'None'}</td>
                         <td>{comparison.externalPosition?.baseAssetAmount ?? 'None'}</td>
                         <td>{comparison.quantityDelta ?? 'None'}</td>
@@ -412,6 +695,8 @@ export default async function VenueDetailPage(
                   <thead>
                     <tr>
                       <th>Order key</th>
+                      <th>Market identity</th>
+                      <th>Identity basis</th>
                       <th>Internal remaining</th>
                       <th>External qty</th>
                       <th>Delta</th>
@@ -422,6 +707,8 @@ export default async function VenueDetailPage(
                     {comparisonDetail.orderComparisons.map((comparison) => (
                       <tr key={comparison.comparisonKey}>
                         <td>{comparison.comparisonKey}</td>
+                        <td>{comparison.marketIdentityComparison.normalizedIdentity?.key ?? comparison.marketIdentityComparison.internalIdentity?.normalizedKey ?? comparison.marketIdentityComparison.externalIdentity?.normalizedKey ?? 'None'}</td>
+                        <td>{comparison.marketIdentityComparison.comparisonMode} / {formatCanonicalMarketIdentityDetail(comparison.marketIdentityComparison.internalIdentity)}</td>
                         <td>{comparison.internalOrder?.remainingSize ?? 'None'}</td>
                         <td>{comparison.externalOrder?.quantity ?? 'None'}</td>
                         <td>{comparison.remainingSizeDelta ?? 'None'}</td>
@@ -435,6 +722,32 @@ export default async function VenueDetailPage(
               ) : (
                 <EmptyState message="No comparable open-order rows are currently available." title="No order comparisons" />
               )}
+              {comparisonDetail.healthComparison.fields.length > 0 ? (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Health field</th>
+                      <th>Internal</th>
+                      <th>External</th>
+                      <th>Status</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonDetail.healthComparison.fields.map((field) => (
+                      <tr key={field.field}>
+                        <td>{field.field}</td>
+                        <td>{field.internalValue === null ? 'None' : String(field.internalValue)}</td>
+                        <td>{field.externalValue === null ? 'None' : String(field.externalValue)}</td>
+                        <td>
+                          <StatusBadge label={field.status} tone={toneForComparisonStatus(field.status)} />
+                        </td>
+                        <td>{field.reason ?? 'Directly comparable'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : null}
             </>
           </Panel>
         </div>
@@ -657,6 +970,41 @@ export default async function VenueDetailPage(
             )}
           </Panel>
         </div>
+
+        <Panel subtitle="Durable request, approval, rejection, and suspension history for this connector" title="Promotion History">
+          {promotion.history.length === 0 ? (
+            <EmptyState message="No connector promotion history has been recorded for this venue yet." title="No promotion history" />
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Occurred</th>
+                  <th>Event</th>
+                  <th>Status</th>
+                  <th>Actor</th>
+                  <th>Posture</th>
+                  <th>Eligible</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {promotion.history.map((entry) => (
+                  <tr key={entry.id}>
+                    <td>{formatDateTime(entry.occurredAt)}</td>
+                    <td>{entry.eventType}</td>
+                    <td>{entry.toStatus}</td>
+                    <td>{entry.actorId}</td>
+                    <td>
+                      <StatusBadge label={entry.effectivePosture} tone={toneForPromotionPosture(entry.effectivePosture)} />
+                    </td>
+                    <td>{entry.evidence.eligibleForPromotion ? 'Yes' : 'No'}</td>
+                    <td>{entry.note ?? 'None recorded'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Panel>
 
         <Panel subtitle="Persisted snapshot history for this connector" title="Snapshot History">
           {snapshots.length === 0 ? (

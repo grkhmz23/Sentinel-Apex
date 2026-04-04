@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import type {
   AllocatorDecision,
@@ -45,6 +45,8 @@ import {
   runtimeReconciliationFindings,
   runtimeReconciliationRuns,
   runtimeRecoveryEvents,
+  venueConnectorPromotionEvents,
+  venueConnectorPromotions,
   runtimeState,
   runtimeWorkerState,
   strategyIntents,
@@ -68,6 +70,12 @@ import type {
   TreasuryExecutionIntent,
   TreasuryPolicy,
 } from '@sentinel-apex/treasury';
+import {
+  attachCanonicalMarketIdentityToMetadata,
+  createCanonicalMarketIdentity,
+  readCanonicalMarketIdentityFromMetadata,
+  type CanonicalMarketIdentity,
+} from '@sentinel-apex/venue-adapters';
 
 import { buildVenueDerivativeComparisonDetail } from './internal-derivative-state.js';
 
@@ -83,11 +91,25 @@ import type {
   CarryActionDetailView,
   CarryActionPlannedOrderView,
   CarryActionView,
+  CarryExecutionPostTradeConfirmationView,
   CarryExecutionDetailView,
   CarryExecutionStepView,
   CarryExecutionTimelineEntry,
   CarryExecutionView,
   CarryVenueView,
+  ConnectorCapabilityClass,
+  ConnectorConfigReadinessMarkerView,
+  ConnectorEffectivePosture,
+  ConnectorPostTradeConfirmationEvidenceView,
+  ConnectorPromotionDetailView,
+  ConnectorPromotionEventType,
+  ConnectorPromotionEventView,
+  ConnectorPromotionOverviewView,
+  ConnectorPromotionStatus,
+  ConnectorPromotionSummaryView,
+  ConnectorPromotionTargetPosture,
+  ConnectorReadOnlyValidationState,
+  ConnectorReadinessEvidenceView,
   OpportunityView,
   OrderView,
   PnlSummaryView,
@@ -218,6 +240,485 @@ function toIsoString(value: Date | string | null | undefined): string | null {
 }
 
 const VENUE_SNAPSHOT_STALE_AFTER_MS = 15 * 60 * 1000;
+const CONNECTOR_PROMOTION_TARGET_POSTURE: ConnectorPromotionTargetPosture = 'approved_for_live';
+
+type VenueInventoryCoreView = Omit<VenueInventoryItemView, 'promotion'>;
+type VenueSnapshotCoreView = Omit<VenueSnapshotView, 'promotion'>;
+type CarryVenueCoreView = Omit<CarryVenueView, 'promotion'>;
+type TreasuryVenueCoreView = Omit<TreasuryVenueView, 'promotion'>;
+
+interface CarryExecutionConfirmationCandidateRecord {
+  stepId: string;
+  carryExecutionId: string;
+  carryActionId: string;
+  strategyRunId: string | null;
+  intentId: string;
+  venueId: string;
+  asset: string;
+  side: CarryExecutionStepView['side'];
+  requestedSize: string;
+  reduceOnly: boolean;
+  clientOrderId: string | null;
+  executionReference: string;
+  status: string;
+  simulated: boolean;
+  metadata: Record<string, unknown>;
+  outcome: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+function toSentenceCase(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase();
+}
+
+function summariseBooleanKey(key: string): string {
+  return `${toSentenceCase(key)} marker`;
+}
+
+function countCoverageStatuses(
+  coverage: VenueTruthCoverage,
+): {
+  available: number;
+  partial: number;
+  unsupported: number;
+} {
+  const summary = {
+    available: 0,
+    partial: 0,
+    unsupported: 0,
+  };
+
+  for (const item of Object.values(coverage) as Array<VenueTruthCoverage[keyof VenueTruthCoverage]>) {
+    if (item.status === 'available' || item.status === 'partial' || item.status === 'unsupported') {
+      summary[item.status] += 1;
+    }
+  }
+
+  return summary;
+}
+
+function inferConnectorCapabilityClass(input: {
+  truthMode: VenueTruthMode;
+  executionSupport: boolean;
+}): ConnectorCapabilityClass {
+  if (input.truthMode === 'simulated') {
+    return 'simulated_only';
+  }
+
+  if (!input.executionSupport) {
+    return 'real_readonly';
+  }
+
+  return 'execution_capable';
+}
+
+function inferReadOnlyValidationState(input: {
+  truthMode: VenueTruthMode;
+  snapshotFreshness: VenueSnapshotFreshness;
+  snapshotCompleteness: VenueTruthSnapshotCompleteness;
+  healthState: VenueHealthState;
+}): ConnectorReadOnlyValidationState {
+  if (input.truthMode === 'simulated') {
+    return 'not_applicable';
+  }
+
+  if (
+    input.snapshotFreshness === 'fresh'
+    && input.healthState === 'healthy'
+    && input.snapshotCompleteness === 'complete'
+  ) {
+    return 'complete';
+  }
+
+  if (
+    input.snapshotFreshness === 'fresh'
+    && input.healthState !== 'unavailable'
+    && input.snapshotCompleteness !== 'minimal'
+  ) {
+    return 'partial';
+  }
+
+  return 'insufficient';
+}
+
+function collectConnectorConfigReadinessMarkers(
+  metadata: Record<string, unknown>,
+): ConnectorConfigReadinessMarkerView[] {
+  return Object.entries(metadata)
+    .filter(([key, value]) => (
+      typeof value === 'boolean'
+      && (
+        key.endsWith('Configured')
+        || key.endsWith('Enabled')
+      )
+    ))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => ({
+      key,
+      ready: value === true,
+      summary: summariseBooleanKey(key),
+    }));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
+}
+
+function buildDefaultPostTradeConfirmationEvidence(
+  evaluatedAt: string | null,
+): ConnectorPostTradeConfirmationEvidenceView {
+  return {
+    status: 'not_required',
+    summary: 'No recent real execution references currently require post-trade confirmation.',
+    evaluatedAt: evaluatedAt ?? new Date(0).toISOString(),
+    recentExecutionCount: 0,
+    confirmedFullCount: 0,
+    confirmedPartialCount: 0,
+    confirmedPartialEventOnlyCount: 0,
+    confirmedPartialPositionOnlyCount: 0,
+    pendingCount: 0,
+    pendingEventCount: 0,
+    pendingPositionDeltaCount: 0,
+    conflictingEventCount: 0,
+    conflictingEventVsPositionCount: 0,
+    missingReferenceCount: 0,
+    invalidCount: 0,
+    insufficientContextCount: 0,
+    latestConfirmedAt: null,
+    blockingReasons: [],
+    entries: [],
+  };
+}
+
+function asCarryExecutionPostTradeConfirmation(
+  value: unknown,
+): CarryExecutionPostTradeConfirmationView | null {
+  const candidate = asJsonObject(value);
+  return typeof candidate['status'] === 'string'
+    && typeof candidate['summary'] === 'string'
+    ? candidate as unknown as CarryExecutionPostTradeConfirmationView
+    : null;
+}
+
+function asConnectorPostTradeConfirmationEvidence(
+  value: unknown,
+  evaluatedAt: string | null,
+): ConnectorPostTradeConfirmationEvidenceView {
+  const candidate = asJsonObject(value);
+  return typeof candidate['status'] === 'string'
+    && Array.isArray(candidate['entries'])
+    ? candidate as unknown as ConnectorPostTradeConfirmationEvidenceView
+    : buildDefaultPostTradeConfirmationEvidence(evaluatedAt);
+}
+
+function buildConnectorEligibilityBlockers(input: {
+  capabilityClass: ConnectorCapabilityClass;
+  truthMode: VenueTruthMode;
+  snapshotFreshness: VenueSnapshotFreshness;
+  snapshotCompleteness: VenueTruthSnapshotCompleteness;
+  healthState: VenueHealthState;
+  healthy: boolean;
+  lastSuccessfulSnapshotAt: string | null;
+  missingPrerequisites: string[];
+  readOnlyValidationState: ConnectorReadOnlyValidationState;
+  configReadiness: ConnectorConfigReadinessMarkerView[];
+  postTradeConfirmation: ConnectorPostTradeConfirmationEvidenceView;
+}): string[] {
+  const blockers = [...input.missingPrerequisites];
+
+  if (input.capabilityClass === 'simulated_only') {
+    blockers.push('Connector is simulated only and cannot be promoted for live use.');
+  } else if (input.capabilityClass === 'real_readonly') {
+    blockers.push('Connector remains read-only and does not provide execution capability.');
+  }
+
+  if (input.truthMode !== 'real') {
+    blockers.push('Connector does not currently expose real venue truth.');
+  }
+
+  if (input.lastSuccessfulSnapshotAt === null) {
+    blockers.push('No successful venue-truth snapshot has been recorded.');
+  }
+
+  if (input.snapshotFreshness !== 'fresh') {
+    blockers.push('Latest venue-truth snapshot is stale.');
+  }
+
+  if (!input.healthy || input.healthState !== 'healthy') {
+    blockers.push(`Connector health is ${input.healthState}.`);
+  }
+
+  if (input.snapshotCompleteness !== 'complete') {
+    blockers.push(`Latest venue-truth snapshot completeness is ${input.snapshotCompleteness}.`);
+  }
+
+  if (input.readOnlyValidationState !== 'complete') {
+    blockers.push(`Read-only validation is ${input.readOnlyValidationState}.`);
+  }
+
+  for (const marker of input.configReadiness) {
+    if (!marker.ready) {
+      blockers.push(`${marker.summary} is not ready.`);
+    }
+  }
+
+  if (input.capabilityClass === 'execution_capable' && input.postTradeConfirmation.status === 'blocked') {
+    blockers.push(...input.postTradeConfirmation.blockingReasons);
+  }
+
+  return uniqueStrings(blockers);
+}
+
+function buildConnectorReadinessEvidence(
+  venue: VenueInventoryCoreView,
+): ConnectorReadinessEvidenceView {
+  const capabilityClass = inferConnectorCapabilityClass({
+    truthMode: venue.truthMode,
+    executionSupport: venue.executionSupport,
+  });
+  const coverageCounts = countCoverageStatuses(venue.truthCoverage);
+  const configReadiness = collectConnectorConfigReadinessMarkers(venue.metadata);
+  const postTradeConfirmation = venue.executionConfirmationState
+    ?? buildDefaultPostTradeConfirmationEvidence(venue.lastSnapshotAt);
+  const readOnlyValidationState = inferReadOnlyValidationState({
+    truthMode: venue.truthMode,
+    snapshotFreshness: venue.snapshotFreshness,
+    snapshotCompleteness: venue.snapshotCompleteness,
+    healthState: venue.healthState,
+  });
+  const blockingReasons = buildConnectorEligibilityBlockers({
+    capabilityClass,
+    truthMode: venue.truthMode,
+    snapshotFreshness: venue.snapshotFreshness,
+    snapshotCompleteness: venue.snapshotCompleteness,
+    healthState: venue.healthState,
+    healthy: venue.healthy,
+    lastSuccessfulSnapshotAt: venue.lastSuccessfulSnapshotAt,
+    missingPrerequisites: venue.missingPrerequisites,
+    readOnlyValidationState,
+    configReadiness,
+    postTradeConfirmation,
+  });
+
+  return {
+    venueId: venue.venueId,
+    venueName: venue.venueName,
+    connectorType: venue.connectorType,
+    sleeveApplicability: venue.sleeveApplicability,
+    truthMode: venue.truthMode,
+    capabilityClass,
+    executionSupport: venue.executionSupport,
+    readOnlySupport: venue.readOnlySupport,
+    snapshotFreshness: venue.snapshotFreshness,
+    snapshotCompleteness: venue.snapshotCompleteness,
+    healthy: venue.healthy,
+    healthState: venue.healthState,
+    degradedReason: venue.degradedReason,
+    lastSnapshotAt: venue.lastSnapshotAt,
+    lastSuccessfulSnapshotAt: venue.lastSuccessfulSnapshotAt,
+    truthCoverageAvailableCount: coverageCounts.available,
+    truthCoveragePartialCount: coverageCounts.partial,
+    truthCoverageUnsupportedCount: coverageCounts.unsupported,
+    readOnlyValidationState,
+    configReadiness,
+    missingPrerequisites: venue.missingPrerequisites,
+    blockingReasons,
+    eligibleForPromotion: capabilityClass === 'execution_capable' && blockingReasons.length === 0,
+    postTradeConfirmation,
+  };
+}
+
+function buildFallbackConnectorReadinessEvidence(input: {
+  venueId: string;
+  venueName: string;
+  connectorType: string;
+  sleeveApplicability: VenueTruthSleeve[];
+  truthMode: VenueTruthMode;
+  executionSupport: boolean;
+  readOnlySupport: boolean;
+  healthy: boolean;
+  healthState: VenueHealthState;
+  degradedReason: string | null;
+  lastSnapshotAt: string;
+  missingPrerequisites: string[];
+}): ConnectorReadinessEvidenceView {
+  const capabilityClass = inferConnectorCapabilityClass({
+    truthMode: input.truthMode,
+    executionSupport: input.executionSupport,
+  });
+  const readOnlyValidationState = inferReadOnlyValidationState({
+    truthMode: input.truthMode,
+    snapshotFreshness: 'missing',
+    snapshotCompleteness: 'minimal',
+    healthState: input.healthState,
+  });
+  const postTradeConfirmation = buildDefaultPostTradeConfirmationEvidence(input.lastSnapshotAt);
+  const blockingReasons = buildConnectorEligibilityBlockers({
+    capabilityClass,
+    truthMode: input.truthMode,
+    snapshotFreshness: 'missing',
+    snapshotCompleteness: 'minimal',
+    healthState: input.healthState,
+    healthy: input.healthy,
+    lastSuccessfulSnapshotAt: null,
+    missingPrerequisites: [
+      ...input.missingPrerequisites,
+      'No generic venue-truth inventory snapshot is available for this connector.',
+    ],
+    readOnlyValidationState,
+    configReadiness: [],
+    postTradeConfirmation,
+  });
+
+  return {
+    venueId: input.venueId,
+    venueName: input.venueName,
+    connectorType: input.connectorType,
+    sleeveApplicability: input.sleeveApplicability,
+    truthMode: input.truthMode,
+    capabilityClass,
+    executionSupport: input.executionSupport,
+    readOnlySupport: input.readOnlySupport,
+    snapshotFreshness: 'missing',
+    snapshotCompleteness: 'minimal',
+    healthy: input.healthy,
+    healthState: input.healthState,
+    degradedReason: input.degradedReason,
+    lastSnapshotAt: input.lastSnapshotAt,
+    lastSuccessfulSnapshotAt: null,
+    truthCoverageAvailableCount: 0,
+    truthCoveragePartialCount: 0,
+    truthCoverageUnsupportedCount: 0,
+    readOnlyValidationState,
+    configReadiness: [],
+    missingPrerequisites: input.missingPrerequisites,
+    blockingReasons,
+    eligibleForPromotion: false,
+    postTradeConfirmation,
+  };
+}
+
+function deriveEffectivePosture(
+  capabilityClass: ConnectorCapabilityClass,
+  promotionStatus: ConnectorPromotionStatus,
+): ConnectorEffectivePosture {
+  if (promotionStatus === 'suspended') {
+    return 'suspended';
+  }
+
+  if (capabilityClass === 'simulated_only') {
+    return 'simulated_only';
+  }
+
+  if (capabilityClass === 'real_readonly') {
+    return 'real_readonly';
+  }
+
+  if (promotionStatus === 'approved') {
+    return 'approved_for_live';
+  }
+
+  if (promotionStatus === 'pending_review') {
+    return 'promotion_pending';
+  }
+
+  if (promotionStatus === 'rejected') {
+    return 'rejected';
+  }
+
+  return 'execution_capable_unapproved';
+}
+
+function buildDefaultPromotionSummary(
+  evidence: ConnectorReadinessEvidenceView,
+): ConnectorPromotionSummaryView {
+  return {
+    promotionId: null,
+    requestedTargetPosture: null,
+    capabilityClass: evidence.capabilityClass,
+    promotionStatus: 'not_requested',
+    effectivePosture: deriveEffectivePosture(evidence.capabilityClass, 'not_requested'),
+    approvedForLiveUse: false,
+    sensitiveExecutionEligible: false,
+    requestedBy: null,
+    requestedAt: null,
+    reviewedBy: null,
+    reviewedAt: null,
+    approvedBy: null,
+    approvedAt: null,
+    rejectedBy: null,
+    rejectedAt: null,
+    suspendedBy: null,
+    suspendedAt: null,
+    latestNote: null,
+    blockers: evidence.blockingReasons,
+  };
+}
+
+function buildPromotionSummaryFromRow(
+  row: typeof venueConnectorPromotions.$inferSelect,
+  evidence: ConnectorReadinessEvidenceView,
+): ConnectorPromotionSummaryView {
+  const promotionStatus = row.promotionStatus as ConnectorPromotionStatus;
+  const effectivePosture = deriveEffectivePosture(evidence.capabilityClass, promotionStatus);
+  const approvedForLiveUse = promotionStatus === 'approved';
+  const sensitiveExecutionEligible = approvedForLiveUse
+    && effectivePosture === 'approved_for_live'
+    && evidence.eligibleForPromotion;
+
+  return {
+    promotionId: row.id,
+    requestedTargetPosture: row.requestedTargetPosture as ConnectorPromotionTargetPosture,
+    capabilityClass: evidence.capabilityClass,
+    promotionStatus,
+    effectivePosture,
+    approvedForLiveUse,
+    sensitiveExecutionEligible,
+    requestedBy: row.requestedBy,
+    requestedAt: row.requestedAt.toISOString(),
+    reviewedBy: row.reviewedBy ?? null,
+    reviewedAt: toIsoString(row.reviewedAt),
+    approvedBy: row.approvedBy ?? null,
+    approvedAt: toIsoString(row.approvedAt),
+    rejectedBy: row.rejectedBy ?? null,
+    rejectedAt: toIsoString(row.rejectedAt),
+    suspendedBy: row.suspendedBy ?? null,
+    suspendedAt: toIsoString(row.suspendedAt),
+    latestNote: row.decisionNote ?? null,
+    blockers: evidence.blockingReasons,
+  };
+}
+
+function asConnectorReadinessEvidence(
+  value: unknown,
+): ConnectorReadinessEvidenceView {
+  return asRecord(value) as unknown as ConnectorReadinessEvidenceView;
+}
+
+function mapPromotionEventRow(
+  row: typeof venueConnectorPromotionEvents.$inferSelect,
+): ConnectorPromotionEventView {
+  return {
+    id: row.id,
+    promotionId: row.promotionId,
+    venueId: row.venueId,
+    eventType: row.eventType as ConnectorPromotionEventType,
+    fromStatus: row.fromStatus === null ? null : row.fromStatus as ConnectorPromotionStatus,
+    toStatus: row.toStatus as ConnectorPromotionStatus,
+    effectivePosture: row.effectivePosture as ConnectorEffectivePosture,
+    requestedTargetPosture: row.requestedTargetPosture as ConnectorPromotionTargetPosture,
+    actorId: row.actorId,
+    note: row.note ?? null,
+    evidence: asConnectorReadinessEvidence(row.readinessEvidence),
+    occurredAt: row.occurredAt.toISOString(),
+    metadata: asJsonObject(row.metadata),
+  };
+}
 
 interface PersistedVenueSnapshotPayload {
   rawPayload: Record<string, unknown>;
@@ -233,6 +734,7 @@ interface PersistedVenueSnapshotPayload {
   derivativeHealthState: VenueDerivativeHealthStateSnapshot | null;
   orderState: VenueOrderStateSnapshot | null;
   executionReferenceState: VenueExecutionReferenceStateSnapshot | null;
+  executionConfirmationState: ConnectorPostTradeConfirmationEvidenceView | null;
 }
 
 function classifyVenueSnapshotFreshness(capturedAt: Date): VenueSnapshotFreshness {
@@ -355,6 +857,9 @@ function deserialiseVenueSnapshotPayload(
     executionReferenceState: Array.isArray(asJsonObject(payload['executionReferenceState'])['references'])
       ? payload['executionReferenceState'] as VenueExecutionReferenceStateSnapshot
       : null,
+    executionConfirmationState: asJsonObject(payload['executionConfirmationState'])['status'] !== undefined
+      ? asConnectorPostTradeConfirmationEvidence(payload['executionConfirmationState'], null)
+      : null,
   };
 }
 
@@ -373,6 +878,7 @@ function serialiseVenueSnapshotPayload(snapshot: VenueSnapshotView): Record<stri
     derivativeHealthState: snapshot.derivativeHealthState,
     orderState: snapshot.orderState,
     executionReferenceState: snapshot.executionReferenceState,
+    executionConfirmationState: snapshot.executionConfirmationState,
   };
 }
 
@@ -924,6 +1430,11 @@ function createFindingTypeCounts(): Record<RuntimeReconciliationFindingType, num
     drift_position_mismatch: 0,
     drift_order_inventory_mismatch: 0,
     drift_subaccount_identity_mismatch: 0,
+    drift_health_state_mismatch: 0,
+    drift_market_identity_mismatch: 0,
+    drift_position_identity_gap: 0,
+    drift_partial_health_comparison: 0,
+    drift_partial_market_identity_comparison: 0,
     drift_truth_comparison_gap: 0,
     stale_internal_derivative_state: 0,
   };
@@ -1125,7 +1636,7 @@ function mapTreasuryAllocationRow(
 
 function mapTreasuryVenueRow(
   row: typeof treasuryVenueSnapshots.$inferSelect,
-): TreasuryVenueView {
+): TreasuryVenueCoreView {
   const metadata = asJsonObject(row.metadata);
   const executionSupported = metadata['executionSupported'] === true;
   const supportsAllocation = metadata['supportsAllocation'] === true;
@@ -1256,7 +1767,7 @@ function mapAllocatorSummaryRow(row: typeof allocatorRuns.$inferSelect): Allocat
 
 function mapCarryVenueRow(
   row: typeof carryVenueSnapshots.$inferSelect,
-): CarryVenueView {
+): CarryVenueCoreView {
   return {
     strategyRunId: row.strategyRunId,
     venueId: row.venueId,
@@ -1277,7 +1788,7 @@ function mapCarryVenueRow(
 
 function mapVenueSnapshotRow(
   row: typeof venueConnectorSnapshots.$inferSelect,
-): VenueSnapshotView {
+): VenueSnapshotCoreView {
   const snapshotData = deserialiseVenueSnapshotPayload(
     row.snapshotPayload,
     row.connectorType,
@@ -1325,6 +1836,7 @@ function mapVenueSnapshotRow(
     derivativeHealthState: snapshotData.derivativeHealthState,
     orderState: snapshotData.orderState,
     executionReferenceState: snapshotData.executionReferenceState,
+    executionConfirmationState: snapshotData.executionConfirmationState,
     metadata: asJsonObject(row.metadata),
   };
 }
@@ -1332,7 +1844,7 @@ function mapVenueSnapshotRow(
 function mapVenueInventoryItem(
   latest: typeof venueConnectorSnapshots.$inferSelect,
   lastSuccessfulSnapshotAt: Date | null,
-): VenueInventoryItemView {
+): VenueInventoryCoreView {
   const snapshotData = deserialiseVenueSnapshotPayload(
     latest.snapshotPayload,
     latest.connectorType,
@@ -1370,6 +1882,7 @@ function mapVenueInventoryItem(
       snapshotData,
     }),
     sourceMetadata: snapshotData.sourceMetadata,
+    executionConfirmationState: snapshotData.executionConfirmationState,
     metadata: asJsonObject(latest.metadata),
   };
 }
@@ -1418,6 +1931,7 @@ function mapCarryActionRow(
 function mapCarryPlannedOrderRow(
   row: typeof carryActionOrderIntents.$inferSelect,
 ): CarryActionPlannedOrderView {
+  const metadata = asJsonObject(row.metadata);
   return {
     id: row.id,
     carryActionId: row.carryActionId,
@@ -1429,7 +1943,16 @@ function mapCarryPlannedOrderRow(
     requestedSize: row.requestedSize,
     requestedPrice: row.requestedPrice ?? null,
     reduceOnly: row.reduceOnly,
-    metadata: asJsonObject(row.metadata),
+    marketIdentity: readCanonicalMarketIdentityFromMetadata(metadata, {
+      venueId: row.venueId,
+      asset: row.asset,
+      marketType: metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'carry_planned_order',
+      source: 'carry_action_order_intents',
+      notes: ['Carry planned-order market identity falls back to persisted order metadata when venue-native metadata is unavailable.'],
+    }),
+    metadata,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -1462,6 +1985,8 @@ function mapCarryExecutionRow(
 function mapCarryExecutionStepRow(
   row: typeof carryExecutionSteps.$inferSelect,
 ): CarryExecutionStepView {
+  const metadata = asJsonObject(row.metadata);
+  const outcome = asJsonObject(row.outcome);
   return {
     id: row.id,
     carryExecutionId: row.carryExecutionId,
@@ -1489,12 +2014,67 @@ function mapCarryExecutionStepRow(
     filledSize: row.filledSize ?? null,
     averageFillPrice: row.averageFillPrice ?? null,
     outcomeSummary: row.outcomeSummary ?? null,
-    outcome: asJsonObject(row.outcome),
+    outcome,
+    postTradeConfirmation: asCarryExecutionPostTradeConfirmation(outcome['postTradeConfirmation']),
     lastError: row.lastError ?? null,
-    metadata: asJsonObject(row.metadata),
+    marketIdentity: readCanonicalMarketIdentityFromMetadata(metadata, {
+      venueId: row.venueId,
+      asset: row.asset,
+      marketType: metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'carry_execution_step',
+      source: 'carry_execution_steps',
+      notes: ['Carry execution-step market identity falls back to persisted step metadata when venue-native metadata is unavailable.'],
+    }),
+    metadata,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     completedAt: toIsoString(row.completedAt),
+  };
+}
+
+function deriveOrderMarketIdentity(
+  row: typeof orders.$inferSelect,
+  metadata: Record<string, unknown>,
+): CanonicalMarketIdentity | null {
+  return readCanonicalMarketIdentityFromMetadata(metadata, {
+    venueId: row.venueId,
+    asset: row.asset,
+    marketType: metadata['instrumentType'],
+    provenance: 'derived',
+    capturedAtStage: 'runtime_order',
+    source: 'runtime_orders_table',
+    notes: ['Runtime order market identity falls back to persisted order metadata when no venue-native market metadata was captured earlier.'],
+  });
+}
+
+function mapOrderRow(row: typeof orders.$inferSelect): OrderView {
+  const metadata = asRecord(row.metadata);
+  return {
+    clientOrderId: row.clientOrderId,
+    runId: row.strategyRunId ?? null,
+    sleeveId: row.sleeveId,
+    opportunityId: row.opportunityId ?? null,
+    venueId: row.venueId,
+    venueOrderId: row.venueOrderId ?? null,
+    asset: row.asset,
+    side: row.side,
+    orderType: row.orderType,
+    executionMode: row.executionMode,
+    requestedSize: row.requestedSize,
+    requestedPrice: row.requestedPrice ?? null,
+    filledSize: row.filledSize,
+    averageFillPrice: row.averageFillPrice ?? null,
+    status: row.status,
+    attemptCount: row.attemptCount,
+    lastError: row.lastError ?? null,
+    reduceOnly: row.reduceOnly,
+    marketIdentity: deriveOrderMarketIdentity(row, metadata),
+    metadata,
+    submittedAt: toIsoString(row.submittedAt),
+    completedAt: toIsoString(row.completedAt),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -2856,12 +3436,34 @@ export class RuntimeOrderStore implements OrderStore {
   constructor(private readonly db: Database) {}
 
   async save(record: OrderRecord): Promise<void> {
+    const persistedMarketIdentity = readCanonicalMarketIdentityFromMetadata(record.intent.metadata, {
+      venueId: record.intent.venueId,
+      asset: record.intent.asset,
+      marketType: record.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'runtime_order',
+      source: 'runtime_order_store_save',
+      notes: ['Runtime orders persist the best available market identity from intent creation or execution-time promotion.'],
+    }) ?? createCanonicalMarketIdentity({
+      venueId: record.intent.venueId,
+      asset: record.intent.asset,
+      marketType: record.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'runtime_order',
+      source: 'runtime_order_store_save',
+      notes: ['Runtime orders derived market identity from asset and instrument type because no richer metadata was present.'],
+    });
+    const persistedMetadata = attachCanonicalMarketIdentityToMetadata(
+      record.intent.metadata,
+      persistedMarketIdentity,
+    );
+
     await this.db
       .insert(orders)
       .values({
         clientOrderId: record.intent.intentId,
-        strategyRunId: typeof record.intent.metadata['runId'] === 'string'
-          ? record.intent.metadata['runId']
+        strategyRunId: typeof persistedMetadata['runId'] === 'string'
+          ? persistedMetadata['runId']
           : null,
         sleeveId: extractSleeveId(record.intent),
         opportunityId: record.intent.opportunityId,
@@ -2870,8 +3472,8 @@ export class RuntimeOrderStore implements OrderStore {
         asset: record.intent.asset,
         side: record.intent.side,
         orderType: record.intent.type,
-        executionMode: typeof record.intent.metadata['executionMode'] === 'string'
-          ? String(record.intent.metadata['executionMode'])
+        executionMode: typeof persistedMetadata['executionMode'] === 'string'
+          ? String(persistedMetadata['executionMode'])
           : 'dry-run',
         reduceOnly: record.intent.reduceOnly,
         requestedSize: record.intent.size,
@@ -2881,7 +3483,7 @@ export class RuntimeOrderStore implements OrderStore {
         status: record.status,
         attemptCount: record.attemptCount,
         lastError: record.lastError,
-        metadata: asRecord(record.intent.metadata),
+        metadata: asRecord(persistedMetadata),
         submittedAt: record.submittedAt,
         completedAt: record.completedAt,
         updatedAt: new Date(),
@@ -2889,8 +3491,8 @@ export class RuntimeOrderStore implements OrderStore {
       .onConflictDoUpdate({
         target: orders.clientOrderId,
         set: {
-          strategyRunId: typeof record.intent.metadata['runId'] === 'string'
-            ? String(record.intent.metadata['runId'])
+          strategyRunId: typeof persistedMetadata['runId'] === 'string'
+            ? String(persistedMetadata['runId'])
             : null,
           sleeveId: extractSleeveId(record.intent),
           opportunityId: record.intent.opportunityId,
@@ -2899,8 +3501,8 @@ export class RuntimeOrderStore implements OrderStore {
           asset: record.intent.asset,
           side: record.intent.side,
           orderType: record.intent.type,
-          executionMode: typeof record.intent.metadata['executionMode'] === 'string'
-            ? String(record.intent.metadata['executionMode'])
+          executionMode: typeof persistedMetadata['executionMode'] === 'string'
+            ? String(persistedMetadata['executionMode'])
             : 'dry-run',
           reduceOnly: record.intent.reduceOnly,
           requestedSize: record.intent.size,
@@ -2910,7 +3512,7 @@ export class RuntimeOrderStore implements OrderStore {
           status: record.status,
           attemptCount: record.attemptCount,
           lastError: record.lastError,
-          metadata: asRecord(record.intent.metadata),
+          metadata: asRecord(persistedMetadata),
           submittedAt: record.submittedAt,
           completedAt: record.completedAt,
           updatedAt: new Date(),
@@ -3219,7 +3821,7 @@ export class RuntimeStore {
       venueIds.add(plannedOrder.venueId);
     }
 
-    const venueSnapshots = action === null || action.strategyRunId === null || venueIds.size === 0
+    const venueSnapshotsCore = action === null || action.strategyRunId === null || venueIds.size === 0
       ? []
       : (await this.db
         .select()
@@ -3227,6 +3829,36 @@ export class RuntimeStore {
         .where(eq(carryVenueSnapshots.strategyRunId, action.strategyRunId)))
         .filter((row) => venueIds.has(row['venueId']))
         .map(mapCarryVenueRow);
+    const inventory = await this.listVenueInventoryCore(500);
+    const inventoryByVenueId = new Map(inventory.map((venue) => [venue.venueId, venue] as const));
+    const promotionSummaryMap = await this.buildPromotionSummaryMap(inventory);
+    const venueSnapshots = venueSnapshotsCore.map((venue) => {
+      const inventoryView = inventoryByVenueId.get(venue.venueId);
+      const promotion = inventoryView === undefined
+        ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
+          venueId: venue.venueId,
+          venueName: venue.venueId,
+          connectorType: 'carry_adapter',
+          sleeveApplicability: ['carry'],
+          truthMode: venue.venueMode === 'simulated' ? 'simulated' : 'real',
+          executionSupport: venue.executionSupported,
+          readOnlySupport: venue.readOnly,
+          healthy: venue.healthy,
+          healthState: venue.healthy ? 'healthy' : 'degraded',
+          degradedReason: venue.healthy ? null : 'carry_venue_snapshot_reported_unhealthy',
+          lastSnapshotAt: venue.updatedAt,
+          missingPrerequisites: venue.missingPrerequisites,
+        }))
+        : promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
+          buildConnectorReadinessEvidence(inventoryView),
+        );
+
+      return {
+        ...venue,
+        approvedForLiveUse: promotion.approvedForLiveUse,
+        promotion,
+      };
+    });
     const steps = stepRows.map(mapCarryExecutionStepRow).sort(
       (left, right) => left.createdAt.localeCompare(right.createdAt),
     );
@@ -3242,17 +3874,7 @@ export class RuntimeStore {
     };
   }
 
-  async listCarryVenues(limit = 50): Promise<CarryVenueView[]> {
-    const rows = await this.db
-      .select()
-      .from(carryVenueSnapshots)
-      .orderBy(desc(carryVenueSnapshots.updatedAt))
-      .limit(limit);
-
-    return rows.map(mapCarryVenueRow);
-  }
-
-  async listVenues(limit = 100): Promise<VenueInventoryItemView[]> {
+  private async listVenueInventoryCore(limit = 100): Promise<VenueInventoryCoreView[]> {
     const rows = await this.db
       .select()
       .from(venueConnectorSnapshots)
@@ -3262,17 +3884,153 @@ export class RuntimeStore {
     const lastSuccessfulByVenue = new Map<string, Date>();
 
     for (const row of rows) {
-      if (!latestByVenue.has(row['venueId'])) {
-        latestByVenue.set(row['venueId'], row);
+      if (!latestByVenue.has(row.venueId)) {
+        latestByVenue.set(row.venueId, row);
       }
-      if (row['snapshotSuccessful'] && !lastSuccessfulByVenue.has(row['venueId'])) {
-        lastSuccessfulByVenue.set(row['venueId'], row['capturedAt']);
+      if (row.snapshotSuccessful && !lastSuccessfulByVenue.has(row.venueId)) {
+        lastSuccessfulByVenue.set(row.venueId, row.capturedAt);
       }
     }
 
     return Array.from(latestByVenue.values())
       .slice(0, limit)
       .map((row) => mapVenueInventoryItem(row, lastSuccessfulByVenue.get(row.venueId) ?? null));
+  }
+
+  private async listVenueSnapshotsCore(venueId: string, limit = 20): Promise<VenueSnapshotCoreView[]> {
+    const rows = await this.db
+      .select()
+      .from(venueConnectorSnapshots)
+      .where(eq(venueConnectorSnapshots.venueId, venueId))
+      .orderBy(desc(venueConnectorSnapshots.capturedAt))
+      .limit(limit);
+
+    return rows.map(mapVenueSnapshotRow);
+  }
+
+  private async getLatestVenuePromotionRows(
+    venueIds?: string[],
+  ): Promise<Map<string, typeof venueConnectorPromotions.$inferSelect>> {
+    const rows = venueIds === undefined || venueIds.length === 0
+      ? await this.db
+        .select()
+        .from(venueConnectorPromotions)
+        .orderBy(desc(venueConnectorPromotions.updatedAt), desc(venueConnectorPromotions.requestedAt))
+      : await this.db
+        .select()
+        .from(venueConnectorPromotions)
+        .where(inArray(venueConnectorPromotions.venueId, venueIds))
+        .orderBy(desc(venueConnectorPromotions.updatedAt), desc(venueConnectorPromotions.requestedAt));
+
+    const latestByVenue = new Map<string, typeof venueConnectorPromotions.$inferSelect>();
+    for (const row of rows) {
+      if (!latestByVenue.has(row['venueId'])) {
+        latestByVenue.set(row['venueId'], row);
+      }
+    }
+
+    return latestByVenue;
+  }
+
+  private async buildPromotionSummaryMap(
+    venues: VenueInventoryCoreView[],
+  ): Promise<Map<string, ConnectorPromotionSummaryView>> {
+    const latestPromotions = await this.getLatestVenuePromotionRows(venues.map((venue) => venue.venueId));
+    const summaries = new Map<string, ConnectorPromotionSummaryView>();
+
+    for (const venue of venues) {
+      const evidence = buildConnectorReadinessEvidence(venue);
+      const latestPromotion = latestPromotions.get(venue.venueId);
+      summaries.set(
+        venue.venueId,
+        latestPromotion === undefined
+          ? buildDefaultPromotionSummary(evidence)
+          : buildPromotionSummaryFromRow(latestPromotion, evidence),
+      );
+    }
+
+    return summaries;
+  }
+
+  private async buildConnectorPromotionDetailForVenue(
+    venue: VenueInventoryCoreView,
+  ): Promise<ConnectorPromotionDetailView> {
+    const evidence = buildConnectorReadinessEvidence(venue);
+    const [latestPromotionRows, historyRows] = await Promise.all([
+      this.getLatestVenuePromotionRows([venue.venueId]),
+      this.db
+        .select()
+        .from(venueConnectorPromotionEvents)
+        .where(eq(venueConnectorPromotionEvents.venueId, venue.venueId))
+        .orderBy(desc(venueConnectorPromotionEvents.occurredAt)),
+    ]);
+    const latestPromotion = latestPromotionRows.get(venue.venueId);
+
+    return {
+      venueId: venue.venueId,
+      venueName: venue.venueName,
+      connectorType: venue.connectorType,
+      sleeveApplicability: venue.sleeveApplicability,
+      current: latestPromotion === undefined
+        ? buildDefaultPromotionSummary(evidence)
+        : buildPromotionSummaryFromRow(latestPromotion, evidence),
+      evidence,
+      history: historyRows.map(mapPromotionEventRow),
+    };
+  }
+
+  async listCarryVenues(limit = 50): Promise<CarryVenueView[]> {
+    const rows = await this.db
+      .select()
+      .from(carryVenueSnapshots)
+      .orderBy(desc(carryVenueSnapshots.updatedAt))
+      .limit(limit);
+
+    const venues = rows.map(mapCarryVenueRow);
+    const inventory = await this.listVenueInventoryCore(500);
+    const inventoryByVenueId = new Map(inventory.map((venue) => [venue.venueId, venue] as const));
+    const promotionSummaryMap = await this.buildPromotionSummaryMap(inventory);
+
+    return venues.map((venue) => {
+      const inventoryView = inventoryByVenueId.get(venue.venueId);
+      const promotion = inventoryView === undefined
+        ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
+          venueId: venue.venueId,
+          venueName: venue.venueId,
+          connectorType: 'carry_adapter',
+          sleeveApplicability: ['carry'],
+          truthMode: venue.venueMode === 'simulated' ? 'simulated' : 'real',
+          executionSupport: venue.executionSupported,
+          readOnlySupport: venue.readOnly,
+          healthy: venue.healthy,
+          healthState: venue.healthy ? 'healthy' : 'degraded',
+          degradedReason: venue.healthy ? null : 'carry_venue_snapshot_reported_unhealthy',
+          lastSnapshotAt: venue.updatedAt,
+          missingPrerequisites: venue.missingPrerequisites,
+        }))
+        : promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
+          buildConnectorReadinessEvidence(inventoryView),
+        );
+
+      return {
+        ...venue,
+        approvedForLiveUse: promotion.approvedForLiveUse,
+        promotion,
+      };
+    });
+  }
+
+  async listVenues(limit = 100): Promise<VenueInventoryItemView[]> {
+    const venues = await this.listVenueInventoryCore(limit);
+    const promotionSummaryMap = await this.buildPromotionSummaryMap(venues);
+
+    return venues.map((venue) => ({
+      ...venue,
+      approvedForLiveUse: promotionSummaryMap.get(venue.venueId)?.approvedForLiveUse ?? false,
+      promotion: promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
+        buildConnectorReadinessEvidence(venue),
+      ),
+    }));
   }
 
   async getVenueSummary(): Promise<VenueInventorySummaryView> {
@@ -3375,21 +4133,387 @@ export class RuntimeStore {
     return this.listVenues(limit);
   }
 
-  async listVenueSnapshots(venueId: string, limit = 20): Promise<VenueSnapshotView[]> {
+  async getConnectorPromotionOverview(): Promise<ConnectorPromotionOverviewView> {
+    const venues = await this.listVenues(500);
+    const promotionRows = venues.map((venue) => ({
+      venue,
+      promotion: venue.promotion ?? buildDefaultPromotionSummary(buildConnectorReadinessEvidence(venue)),
+    }));
+
+    return {
+      totalVenues: promotionRows.length,
+      candidates: promotionRows.filter(({ promotion }) => promotion.capabilityClass === 'execution_capable').length,
+      pendingReview: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'pending_review').length,
+      approved: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'approved').length,
+      approvedAndEligible: promotionRows.filter(({ promotion }) => promotion.sensitiveExecutionEligible).length,
+      rejected: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'rejected').length,
+      suspended: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'suspended').length,
+      blockedByEvidence: promotionRows.filter(({ promotion }) => (
+        promotion.capabilityClass === 'execution_capable'
+        && !promotion.sensitiveExecutionEligible
+        && promotion.blockers.length > 0
+      )).length,
+    };
+  }
+
+  async getConnectorPromotion(venueId: string): Promise<ConnectorPromotionDetailView | null> {
+    const inventory = await this.listVenueInventoryCore(500);
+    const venue = inventory.find((item) => item.venueId === venueId) ?? null;
+    if (venue === null) {
+      return null;
+    }
+
+    return this.buildConnectorPromotionDetailForVenue(venue);
+  }
+
+  async listConnectorPromotionHistory(venueId: string): Promise<ConnectorPromotionEventView[]> {
     const rows = await this.db
       .select()
-      .from(venueConnectorSnapshots)
-      .where(eq(venueConnectorSnapshots.venueId, venueId))
-      .orderBy(desc(venueConnectorSnapshots.capturedAt))
-      .limit(limit);
+      .from(venueConnectorPromotionEvents)
+      .where(eq(venueConnectorPromotionEvents.venueId, venueId))
+      .orderBy(desc(venueConnectorPromotionEvents.occurredAt));
 
-    return rows.map(mapVenueSnapshotRow);
+    return rows.map(mapPromotionEventRow);
+  }
+
+  async getConnectorPromotionEligibility(
+    venueId: string,
+  ): Promise<ConnectorReadinessEvidenceView | null> {
+    const inventory = await this.listVenueInventoryCore(500);
+    const venue = inventory.find((item) => item.venueId === venueId) ?? null;
+    return venue === null ? null : buildConnectorReadinessEvidence(venue);
+  }
+
+  private async getLatestVenuePromotionRow(
+    venueId: string,
+  ): Promise<typeof venueConnectorPromotions.$inferSelect | null> {
+    const promotions = await this.getLatestVenuePromotionRows([venueId]);
+    return promotions.get(venueId) ?? null;
+  }
+
+  private async insertConnectorPromotionEvent(input: {
+    promotionId: string;
+    venueId: string;
+    eventType: ConnectorPromotionEventType;
+    fromStatus: ConnectorPromotionStatus | null;
+    toStatus: ConnectorPromotionStatus;
+    effectivePosture: ConnectorEffectivePosture;
+    actorId: string;
+    note: string | null;
+    evidence: ConnectorReadinessEvidenceView;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.db
+      .insert(venueConnectorPromotionEvents)
+      .values({
+        promotionId: input.promotionId,
+        venueId: input.venueId,
+        eventType: input.eventType,
+        fromStatus: input.fromStatus,
+        toStatus: input.toStatus,
+        effectivePosture: input.effectivePosture,
+        requestedTargetPosture: CONNECTOR_PROMOTION_TARGET_POSTURE,
+        actorId: input.actorId,
+        note: input.note,
+        readinessEvidence: input.evidence,
+        missingPrerequisitesSnapshot: input.evidence.missingPrerequisites,
+        blockersSnapshot: input.evidence.blockingReasons,
+        metadata: input.metadata ?? {},
+        occurredAt: new Date(),
+      });
+  }
+
+  async requestConnectorPromotion(input: {
+    venueId: string;
+    actorId: string;
+    note?: string | null;
+  }): Promise<ConnectorPromotionDetailView | null> {
+    const inventory = await this.listVenueInventoryCore(500);
+    const venue = inventory.find((item) => item.venueId === input.venueId) ?? null;
+    if (venue === null) {
+      return null;
+    }
+
+    const evidence = buildConnectorReadinessEvidence(venue);
+    const now = new Date();
+    const effectivePosture = deriveEffectivePosture(evidence.capabilityClass, 'pending_review');
+    const [row] = await this.db
+      .insert(venueConnectorPromotions)
+      .values({
+        venueId: venue.venueId,
+        venueName: venue.venueName,
+        connectorType: venue.connectorType,
+        requestedTargetPosture: CONNECTOR_PROMOTION_TARGET_POSTURE,
+        capabilityClass: evidence.capabilityClass,
+        promotionStatus: 'pending_review',
+        effectivePosture,
+        approvedForLiveUse: false,
+        sensitiveExecutionEligible: false,
+        readinessEvidence: evidence,
+        missingPrerequisitesSnapshot: evidence.missingPrerequisites,
+        blockersSnapshot: evidence.blockingReasons,
+        lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
+        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
+          ? null
+          : new Date(venue.lastSuccessfulSnapshotAt),
+        snapshotFreshness: venue.snapshotFreshness,
+        snapshotCompleteness: venue.snapshotCompleteness,
+        healthState: venue.healthState,
+        degradedReason: venue.degradedReason,
+        requestedBy: input.actorId,
+        requestedAt: now,
+        decisionNote: input.note ?? null,
+        metadata: {},
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    if (row === undefined) {
+      return null;
+    }
+
+    await this.insertConnectorPromotionEvent({
+      promotionId: row.id,
+      venueId: row.venueId,
+      eventType: 'requested',
+      fromStatus: null,
+      toStatus: 'pending_review',
+      effectivePosture,
+      actorId: input.actorId,
+      note: input.note ?? null,
+      evidence,
+    });
+
+    return this.getConnectorPromotion(input.venueId);
+  }
+
+  async approveConnectorPromotion(input: {
+    venueId: string;
+    actorId: string;
+    note?: string | null;
+  }): Promise<ConnectorPromotionDetailView | null> {
+    const inventory = await this.listVenueInventoryCore(500);
+    const venue = inventory.find((item) => item.venueId === input.venueId) ?? null;
+    if (venue === null) {
+      return null;
+    }
+
+    const current = await this.getLatestVenuePromotionRow(input.venueId);
+    if (current === null) {
+      return null;
+    }
+
+    const evidence = buildConnectorReadinessEvidence(venue);
+    const now = new Date();
+    const effectivePosture = deriveEffectivePosture(evidence.capabilityClass, 'approved');
+    await this.db
+      .update(venueConnectorPromotions)
+      .set({
+        venueName: venue.venueName,
+        connectorType: venue.connectorType,
+        capabilityClass: evidence.capabilityClass,
+        promotionStatus: 'approved',
+        effectivePosture,
+        approvedForLiveUse: true,
+        sensitiveExecutionEligible: evidence.eligibleForPromotion,
+        readinessEvidence: evidence,
+        missingPrerequisitesSnapshot: evidence.missingPrerequisites,
+        blockersSnapshot: evidence.blockingReasons,
+        lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
+        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
+          ? null
+          : new Date(venue.lastSuccessfulSnapshotAt),
+        snapshotFreshness: venue.snapshotFreshness,
+        snapshotCompleteness: venue.snapshotCompleteness,
+        healthState: venue.healthState,
+        degradedReason: venue.degradedReason,
+        reviewedBy: input.actorId,
+        reviewedAt: now,
+        approvedBy: input.actorId,
+        approvedAt: now,
+        decisionNote: input.note ?? null,
+        updatedAt: now,
+      })
+      .where(eq(venueConnectorPromotions.id, current.id));
+
+    await this.insertConnectorPromotionEvent({
+      promotionId: current.id,
+      venueId: input.venueId,
+      eventType: 'approved',
+      fromStatus: current.promotionStatus as ConnectorPromotionStatus,
+      toStatus: 'approved',
+      effectivePosture,
+      actorId: input.actorId,
+      note: input.note ?? null,
+      evidence,
+    });
+
+    return this.getConnectorPromotion(input.venueId);
+  }
+
+  async rejectConnectorPromotion(input: {
+    venueId: string;
+    actorId: string;
+    note: string;
+  }): Promise<ConnectorPromotionDetailView | null> {
+    const inventory = await this.listVenueInventoryCore(500);
+    const venue = inventory.find((item) => item.venueId === input.venueId) ?? null;
+    if (venue === null) {
+      return null;
+    }
+
+    const current = await this.getLatestVenuePromotionRow(input.venueId);
+    if (current === null) {
+      return null;
+    }
+
+    const evidence = buildConnectorReadinessEvidence(venue);
+    const now = new Date();
+    const effectivePosture = deriveEffectivePosture(evidence.capabilityClass, 'rejected');
+    await this.db
+      .update(venueConnectorPromotions)
+      .set({
+        venueName: venue.venueName,
+        connectorType: venue.connectorType,
+        capabilityClass: evidence.capabilityClass,
+        promotionStatus: 'rejected',
+        effectivePosture,
+        approvedForLiveUse: false,
+        sensitiveExecutionEligible: false,
+        readinessEvidence: evidence,
+        missingPrerequisitesSnapshot: evidence.missingPrerequisites,
+        blockersSnapshot: evidence.blockingReasons,
+        lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
+        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
+          ? null
+          : new Date(venue.lastSuccessfulSnapshotAt),
+        snapshotFreshness: venue.snapshotFreshness,
+        snapshotCompleteness: venue.snapshotCompleteness,
+        healthState: venue.healthState,
+        degradedReason: venue.degradedReason,
+        reviewedBy: input.actorId,
+        reviewedAt: now,
+        rejectedBy: input.actorId,
+        rejectedAt: now,
+        decisionNote: input.note,
+        updatedAt: now,
+      })
+      .where(eq(venueConnectorPromotions.id, current.id));
+
+    await this.insertConnectorPromotionEvent({
+      promotionId: current.id,
+      venueId: input.venueId,
+      eventType: 'rejected',
+      fromStatus: current.promotionStatus as ConnectorPromotionStatus,
+      toStatus: 'rejected',
+      effectivePosture,
+      actorId: input.actorId,
+      note: input.note,
+      evidence,
+    });
+
+    return this.getConnectorPromotion(input.venueId);
+  }
+
+  async suspendConnectorPromotion(input: {
+    venueId: string;
+    actorId: string;
+    note: string;
+  }): Promise<ConnectorPromotionDetailView | null> {
+    const inventory = await this.listVenueInventoryCore(500);
+    const venue = inventory.find((item) => item.venueId === input.venueId) ?? null;
+    if (venue === null) {
+      return null;
+    }
+
+    const current = await this.getLatestVenuePromotionRow(input.venueId);
+    if (current === null) {
+      return null;
+    }
+
+    const evidence = buildConnectorReadinessEvidence(venue);
+    const now = new Date();
+    const effectivePosture = deriveEffectivePosture(evidence.capabilityClass, 'suspended');
+    await this.db
+      .update(venueConnectorPromotions)
+      .set({
+        venueName: venue.venueName,
+        connectorType: venue.connectorType,
+        capabilityClass: evidence.capabilityClass,
+        promotionStatus: 'suspended',
+        effectivePosture,
+        approvedForLiveUse: false,
+        sensitiveExecutionEligible: false,
+        readinessEvidence: evidence,
+        missingPrerequisitesSnapshot: evidence.missingPrerequisites,
+        blockersSnapshot: evidence.blockingReasons,
+        lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
+        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
+          ? null
+          : new Date(venue.lastSuccessfulSnapshotAt),
+        snapshotFreshness: venue.snapshotFreshness,
+        snapshotCompleteness: venue.snapshotCompleteness,
+        healthState: venue.healthState,
+        degradedReason: venue.degradedReason,
+        suspendedBy: input.actorId,
+        suspendedAt: now,
+        decisionNote: input.note,
+        updatedAt: now,
+      })
+      .where(eq(venueConnectorPromotions.id, current.id));
+
+    await this.insertConnectorPromotionEvent({
+      promotionId: current.id,
+      venueId: input.venueId,
+      eventType: 'suspended',
+      fromStatus: current.promotionStatus as ConnectorPromotionStatus,
+      toStatus: 'suspended',
+      effectivePosture,
+      actorId: input.actorId,
+      note: input.note,
+      evidence,
+    });
+
+    return this.getConnectorPromotion(input.venueId);
+  }
+
+  async listVenueSnapshots(venueId: string, limit = 20): Promise<VenueSnapshotView[]> {
+    const [snapshots, inventory] = await Promise.all([
+      this.listVenueSnapshotsCore(venueId, limit),
+      this.listVenueInventoryCore(500),
+    ]);
+    const venue = inventory.find((item) => item.venueId === venueId);
+    const promotion = venue === undefined
+      ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
+        venueId,
+        venueName: venueId,
+        connectorType: 'unknown_connector',
+        sleeveApplicability: [],
+        truthMode: 'simulated',
+        executionSupport: false,
+        readOnlySupport: true,
+        healthy: false,
+        healthState: 'unavailable',
+        degradedReason: 'venue_inventory_missing',
+        lastSnapshotAt: new Date(0).toISOString(),
+        missingPrerequisites: ['Venue inventory is missing for this connector.'],
+      }))
+      : (await this.buildPromotionSummaryMap([venue])).get(venueId) ?? buildDefaultPromotionSummary(
+        buildConnectorReadinessEvidence(venue),
+      );
+
+    return snapshots.map((snapshot) => ({
+      ...snapshot,
+      approvedForLiveUse: promotion.approvedForLiveUse,
+      promotion,
+    }));
   }
 
   async getVenue(venueId: string): Promise<VenueDetailView | null> {
     const [inventory, snapshots, internalState, comparisonDetail] = await Promise.all([
-      this.listVenues(500),
-      this.listVenueSnapshots(venueId, 20),
+      this.listVenueInventoryCore(500),
+      this.listVenueSnapshotsCore(venueId, 20),
       this.getVenueInternalState(venueId),
       this.getVenueComparisonDetail(venueId),
     ]);
@@ -3398,12 +4522,23 @@ export class RuntimeStore {
       return null;
     }
 
+    const promotion = await this.buildConnectorPromotionDetailForVenue(venue);
+
     return {
-      venue,
-      snapshots,
+      venue: {
+        ...venue,
+        approvedForLiveUse: promotion.current.approvedForLiveUse,
+        promotion: promotion.current,
+      },
+      snapshots: snapshots.map((snapshot) => ({
+        ...snapshot,
+        approvedForLiveUse: promotion.current.approvedForLiveUse,
+        promotion: promotion.current,
+      })),
       internalState,
       comparisonSummary: comparisonDetail.summary,
       comparisonDetail,
+      promotion,
     };
   }
 
@@ -3510,6 +4645,66 @@ export class RuntimeStore {
     }
 
     return Array.from(references);
+  }
+
+  async listRecentCarryExecutionConfirmationCandidates(
+    venueId: string,
+    limit = 10,
+  ): Promise<CarryExecutionConfirmationCandidateRecord[]> {
+    const rows = await this.db
+      .select({
+        stepId: carryExecutionSteps.id,
+        carryExecutionId: carryExecutionSteps.carryExecutionId,
+        carryActionId: carryExecutionSteps.carryActionId,
+        strategyRunId: carryExecutionSteps.strategyRunId,
+        intentId: carryExecutionSteps.intentId,
+        venueId: carryExecutionSteps.venueId,
+        asset: carryExecutionSteps.asset,
+        side: carryExecutionSteps.side,
+        requestedSize: carryExecutionSteps.requestedSize,
+        reduceOnly: carryExecutionSteps.reduceOnly,
+        clientOrderId: carryExecutionSteps.clientOrderId,
+        executionReference: carryExecutionSteps.executionReference,
+        status: carryExecutionSteps.status,
+        simulated: carryExecutionSteps.simulated,
+        metadata: carryExecutionSteps.metadata,
+        outcome: carryExecutionSteps.outcome,
+        createdAt: carryExecutionSteps.createdAt,
+        updatedAt: carryExecutionSteps.updatedAt,
+        completedAt: carryExecutionSteps.completedAt,
+      })
+      .from(carryExecutionSteps)
+      .where(and(
+        eq(carryExecutionSteps.venueId, venueId),
+        eq(carryExecutionSteps.simulated, false),
+        sql`${carryExecutionSteps.executionReference} is not null`,
+      ))
+      .orderBy(desc(carryExecutionSteps.updatedAt))
+      .limit(limit);
+
+    return rows.flatMap((row) => row.executionReference === null
+      ? []
+      : [{
+        stepId: row.stepId,
+        carryExecutionId: row.carryExecutionId,
+        carryActionId: row.carryActionId,
+        strategyRunId: row.strategyRunId ?? null,
+        intentId: row.intentId,
+        venueId: row.venueId,
+        asset: row.asset,
+        side: row.side as CarryExecutionStepView['side'],
+        requestedSize: row.requestedSize,
+        reduceOnly: row.reduceOnly,
+        clientOrderId: row.clientOrderId ?? null,
+        executionReference: row.executionReference,
+        status: row.status,
+        simulated: row.simulated,
+        metadata: asJsonObject(row.metadata),
+        outcome: asJsonObject(row.outcome),
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        completedAt: toIsoString(row.completedAt),
+      }]);
   }
 
   async updateRuntimeStatus(
@@ -4280,6 +5475,25 @@ export class RuntimeStore {
     riskAssessment: RiskAssessment;
     executionDisposition: string;
   }): Promise<void> {
+    const marketIdentity = readCanonicalMarketIdentityFromMetadata(input.intent.metadata, {
+      venueId: input.intent.venueId,
+      asset: input.intent.asset,
+      marketType: input.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'strategy_intent',
+      source: 'runtime_strategy_intent_persistence',
+      notes: ['Strategy intents persist the best market identity available from opportunity planning time.'],
+    }) ?? createCanonicalMarketIdentity({
+      venueId: input.intent.venueId,
+      asset: input.intent.asset,
+      marketType: input.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'strategy_intent',
+      source: 'runtime_strategy_intent_persistence',
+      notes: ['Strategy intents derived market identity because opportunity planning did not supply richer venue-native identifiers.'],
+    });
+    const metadata = attachCanonicalMarketIdentityToMetadata(input.intent.metadata, marketIdentity);
+
     await this.db
       .insert(strategyIntents)
       .values({
@@ -4306,7 +5520,7 @@ export class RuntimeStore {
           timestamp: input.riskAssessment.timestamp.toISOString(),
           results: input.riskAssessment.results,
         },
-        metadata: asRecord(input.intent.metadata),
+        metadata: asRecord(metadata),
         createdAt: input.intent.createdAt,
       })
       .onConflictDoNothing({
@@ -4513,6 +5727,9 @@ export class RuntimeStore {
         clientOrderId: orders.clientOrderId,
         venueOrderId: orders.venueOrderId,
         side: orders.side,
+        venueId: orders.venueId,
+        asset: orders.asset,
+        metadata: orders.metadata,
       })
       .from(orders)
       .where(eq(orders.clientOrderId, orderId))
@@ -4521,6 +5738,26 @@ export class RuntimeStore {
     if (orderRow === undefined || orderRow.venueOrderId === null) {
       return;
     }
+
+    const orderMetadata = asRecord(orderRow.metadata);
+    const marketIdentity = readCanonicalMarketIdentityFromMetadata(orderMetadata, {
+      venueId: orderRow.venueId,
+      asset: orderRow.asset,
+      marketType: orderMetadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'fill',
+      source: 'runtime_fill_persistence',
+      notes: ['Persisted fills inherit market identity from their source runtime orders.'],
+    });
+    const fillMetadata = attachCanonicalMarketIdentityToMetadata({
+      fillId: fill.fillId,
+      orderId: fill.orderId,
+      filledSize: fill.filledSize,
+      fillPrice: fill.fillPrice,
+      fee: fill.fee,
+      feeAsset: fill.feeAsset,
+      filledAt: fill.filledAt.toISOString(),
+    }, marketIdentity);
 
     await this.db
       .insert(fills)
@@ -4535,7 +5772,7 @@ export class RuntimeStore {
         side: orderRow.side,
         feeAsset: fill.feeAsset,
         filledAt: fill.filledAt,
-        metadata: asRecord(fill),
+        metadata: fillMetadata,
       })
       .onConflictDoNothing({
         target: fills.id,
@@ -4835,6 +6072,8 @@ export class RuntimeStore {
     feeAsset: string | null;
     reduceOnly: boolean;
     filledAt: Date;
+    marketIdentity: CanonicalMarketIdentity | null;
+    metadata: Record<string, unknown>;
   }>> {
     const rows = await this.db
       .select({
@@ -4849,6 +6088,8 @@ export class RuntimeStore {
         feeAsset: fills.feeAsset,
         reduceOnly: orders.reduceOnly,
         filledAt: fills.filledAt,
+        fillMetadata: fills.metadata,
+        orderMetadata: orders.metadata,
       })
       .from(fills)
       .innerJoin(orders, eq(fills.clientOrderId, orders.clientOrderId))
@@ -4866,6 +6107,24 @@ export class RuntimeStore {
       feeAsset: row.feeAsset,
       reduceOnly: row.reduceOnly,
       filledAt: row.filledAt,
+      marketIdentity: readCanonicalMarketIdentityFromMetadata(asRecord(row.fillMetadata), {
+        venueId: row.venueId,
+        asset: row.asset,
+        marketType: asRecord(row.orderMetadata)['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'fill',
+        source: 'runtime_fill_history',
+        notes: ['Fill-history market identity falls back to persisted fill metadata and then source-order metadata.'],
+      }) ?? readCanonicalMarketIdentityFromMetadata(asRecord(row.orderMetadata), {
+        venueId: row.venueId,
+        asset: row.asset,
+        marketType: asRecord(row.orderMetadata)['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'fill',
+        source: 'runtime_fill_history',
+        notes: ['Fill-history market identity falls back to source-order metadata.'],
+      }),
+      metadata: asRecord(row.fillMetadata),
     }));
   }
 
@@ -4932,31 +6191,7 @@ export class RuntimeStore {
       .orderBy(desc(orders.createdAt))
       .limit(limit);
 
-    return rows.map((row) => ({
-      clientOrderId: row.clientOrderId,
-      runId: row.strategyRunId ?? null,
-      sleeveId: row.sleeveId,
-      opportunityId: row.opportunityId ?? null,
-      venueId: row.venueId,
-      venueOrderId: row.venueOrderId ?? null,
-      asset: row.asset,
-      side: row.side,
-      orderType: row.orderType,
-      executionMode: row.executionMode,
-      requestedSize: row.requestedSize,
-      requestedPrice: row.requestedPrice ?? null,
-      filledSize: row.filledSize,
-      averageFillPrice: row.averageFillPrice ?? null,
-      status: row.status,
-      attemptCount: row.attemptCount,
-      lastError: row.lastError ?? null,
-      reduceOnly: row.reduceOnly,
-      metadata: asRecord(row.metadata),
-      submittedAt: toIsoString(row.submittedAt),
-      completedAt: toIsoString(row.completedAt),
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }));
+    return rows.map(mapOrderRow);
   }
 
   async listOrdersByVenue(venueId: string): Promise<OrderView[]> {
@@ -4966,31 +6201,7 @@ export class RuntimeStore {
       .where(eq(orders.venueId, venueId))
       .orderBy(desc(orders.createdAt));
 
-    return rows.map((row) => ({
-      clientOrderId: row.clientOrderId,
-      runId: row.strategyRunId ?? null,
-      sleeveId: row.sleeveId,
-      opportunityId: row.opportunityId ?? null,
-      venueId: row.venueId,
-      venueOrderId: row.venueOrderId ?? null,
-      asset: row.asset,
-      side: row.side,
-      orderType: row.orderType,
-      executionMode: row.executionMode,
-      requestedSize: row.requestedSize,
-      requestedPrice: row.requestedPrice ?? null,
-      filledSize: row.filledSize,
-      averageFillPrice: row.averageFillPrice ?? null,
-      status: row.status,
-      attemptCount: row.attemptCount,
-      lastError: row.lastError ?? null,
-      reduceOnly: row.reduceOnly,
-      metadata: asRecord(row.metadata),
-      submittedAt: toIsoString(row.submittedAt),
-      completedAt: toIsoString(row.completedAt),
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }));
+    return rows.map(mapOrderRow);
   }
 
   async getOrder(clientOrderId: string): Promise<OrderView | null> {
@@ -5004,31 +6215,7 @@ export class RuntimeStore {
       return null;
     }
 
-    return {
-      clientOrderId: row.clientOrderId,
-      runId: row.strategyRunId ?? null,
-      sleeveId: row.sleeveId,
-      opportunityId: row.opportunityId ?? null,
-      venueId: row.venueId,
-      venueOrderId: row.venueOrderId ?? null,
-      asset: row.asset,
-      side: row.side,
-      orderType: row.orderType,
-      executionMode: row.executionMode,
-      requestedSize: row.requestedSize,
-      requestedPrice: row.requestedPrice ?? null,
-      filledSize: row.filledSize,
-      averageFillPrice: row.averageFillPrice ?? null,
-      status: row.status,
-      attemptCount: row.attemptCount,
-      lastError: row.lastError ?? null,
-      reduceOnly: row.reduceOnly,
-      metadata: asRecord(row.metadata),
-      submittedAt: toIsoString(row.submittedAt),
-      completedAt: toIsoString(row.completedAt),
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    };
+    return mapOrderRow(row);
   }
 
   async listPositions(limit: number): Promise<PositionView[]> {
@@ -8086,19 +9273,39 @@ export class RuntimeStore {
 
       if (intent.plannedOrders.length > 0) {
         await this.db.insert(carryActionOrderIntents).values(
-          intent.plannedOrders.map((order) => ({
-            carryActionId: row.id,
-            intentId: order.intentId,
-            venueId: order.venueId,
-            asset: order.asset,
-            side: order.side,
-            orderType: order.type,
-            requestedSize: order.size,
-            requestedPrice: order.limitPrice,
-            reduceOnly: order.reduceOnly,
-            metadata: order.metadata,
-            createdAt: order.createdAt,
-          })),
+          intent.plannedOrders.map((order) => {
+            const marketIdentity = readCanonicalMarketIdentityFromMetadata(order.metadata, {
+              venueId: order.venueId,
+              asset: order.asset,
+              marketType: order.metadata['instrumentType'],
+              provenance: 'derived',
+              capturedAtStage: 'carry_planned_order',
+              source: 'carry_action_creation',
+              notes: ['Carry planned orders persist the best market identity already attached to the execution intent.'],
+            }) ?? createCanonicalMarketIdentity({
+              venueId: order.venueId,
+              asset: order.asset,
+              marketType: order.metadata['instrumentType'],
+              provenance: 'derived',
+              capturedAtStage: 'carry_planned_order',
+              source: 'carry_action_creation',
+              notes: ['Carry planned orders derived market identity because upstream intent metadata did not carry richer venue-native identifiers.'],
+            });
+
+            return {
+              carryActionId: row.id,
+              intentId: order.intentId,
+              venueId: order.venueId,
+              asset: order.asset,
+              side: order.side,
+              orderType: order.type,
+              requestedSize: order.size,
+              requestedPrice: order.limitPrice,
+              reduceOnly: order.reduceOnly,
+              metadata: attachCanonicalMarketIdentityToMetadata(order.metadata, marketIdentity),
+              createdAt: order.createdAt,
+            };
+          }),
         );
       }
 
@@ -8309,6 +9516,23 @@ export class RuntimeStore {
     metadata?: Record<string, unknown>;
     completedAt?: Date | null;
   }): Promise<CarryExecutionStepView> {
+    const marketIdentity = readCanonicalMarketIdentityFromMetadata(input.metadata ?? {}, {
+      venueId: input.venueId,
+      asset: input.asset,
+      marketType: input.metadata?.['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'carry_execution_step',
+      source: 'carry_execution_step_creation',
+      notes: ['Carry execution steps persist the best market identity already attached to the planned order or execution result.'],
+    }) ?? createCanonicalMarketIdentity({
+      venueId: input.venueId,
+      asset: input.asset,
+      marketType: input.metadata?.['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'carry_execution_step',
+      source: 'carry_execution_step_creation',
+      notes: ['Carry execution steps derived market identity because no richer upstream metadata was available.'],
+    });
     const [row] = await this.db
       .insert(carryExecutionSteps)
       .values({
@@ -8339,7 +9563,7 @@ export class RuntimeStore {
         outcomeSummary: input.outcomeSummary ?? null,
         outcome: input.outcome ?? {},
         lastError: input.lastError ?? null,
-        metadata: input.metadata ?? {},
+        metadata: attachCanonicalMarketIdentityToMetadata(input.metadata ?? {}, marketIdentity),
         createdAt: new Date(),
         updatedAt: new Date(),
         completedAt: input.completedAt ?? null,
@@ -8732,10 +9956,41 @@ export class RuntimeStore {
       .where(eq(treasuryVenueSnapshots.treasuryRunId, latestRun.treasuryRunId))
       .limit(limit);
 
-    return rows
+    const venues = rows
       .map(mapTreasuryVenueRow)
       .sort((left, right) => left.venueName.localeCompare(right.venueName))
       .slice(0, limit);
+    const inventory = await this.listVenueInventoryCore(500);
+    const inventoryByVenueId = new Map(inventory.map((venue) => [venue.venueId, venue] as const));
+    const promotionSummaryMap = await this.buildPromotionSummaryMap(inventory);
+
+    return venues.map((venue) => {
+      const inventoryView = inventoryByVenueId.get(venue.venueId);
+      const promotion = inventoryView === undefined
+        ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
+          venueId: venue.venueId,
+          venueName: venue.venueName,
+          connectorType: 'treasury_adapter',
+          sleeveApplicability: ['treasury'],
+          truthMode: venue.simulationState === 'simulated' ? 'simulated' : 'real',
+          executionSupport: venue.executionSupported,
+          readOnlySupport: venue.readOnly,
+          healthy: venue.healthy,
+          healthState: venue.healthy ? 'healthy' : 'degraded',
+          degradedReason: venue.healthy ? null : 'treasury_venue_snapshot_reported_unhealthy',
+          lastSnapshotAt: venue.lastSnapshotAt,
+          missingPrerequisites: venue.missingPrerequisites,
+        }))
+        : promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
+          buildConnectorReadinessEvidence(inventoryView),
+        );
+
+      return {
+        ...venue,
+        approvedForLiveUse: promotion.approvedForLiveUse,
+        promotion,
+      };
+    });
   }
 
   async getTreasuryVenue(venueId: string): Promise<TreasuryVenueDetailView | null> {
@@ -8794,7 +10049,37 @@ export class RuntimeStore {
       ))
       .limit(1);
 
-    return row === undefined ? null : mapTreasuryVenueRow(row);
+    if (row === undefined) {
+      return null;
+    }
+
+    const venue = mapTreasuryVenueRow(row);
+    const inventory = await this.listVenueInventoryCore(500);
+    const inventoryView = inventory.find((item) => item.venueId === venueId);
+    const promotion = inventoryView === undefined
+      ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
+        venueId: venue.venueId,
+        venueName: venue.venueName,
+        connectorType: 'treasury_adapter',
+        sleeveApplicability: ['treasury'],
+        truthMode: venue.simulationState === 'simulated' ? 'simulated' : 'real',
+        executionSupport: venue.executionSupported,
+        readOnlySupport: venue.readOnly,
+        healthy: venue.healthy,
+        healthState: venue.healthy ? 'healthy' : 'degraded',
+        degradedReason: venue.healthy ? null : 'treasury_venue_snapshot_reported_unhealthy',
+        lastSnapshotAt: venue.lastSnapshotAt,
+        missingPrerequisites: venue.missingPrerequisites,
+      }))
+      : (await this.buildPromotionSummaryMap([inventoryView])).get(venueId) ?? buildDefaultPromotionSummary(
+        buildConnectorReadinessEvidence(inventoryView),
+      );
+
+    return {
+      ...venue,
+      approvedForLiveUse: promotion.approvedForLiveUse,
+      promotion,
+    };
   }
 
   async approveTreasuryAction(actionId: string, actorId: string): Promise<TreasuryActionView | null> {

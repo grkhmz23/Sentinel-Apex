@@ -1,107 +1,130 @@
 # Connector Readiness Matrix
 
-## Canonical States
+Date: 2026-04-04
 
-- `simulated`: in-repo simulated adapter only
-- `read_only`: real external truth can be fetched, but execution is not supported
-- `ready_for_review`: execution support exists in code but is not approved for live use
-- `approved_for_live`: approved for live use
+## Purpose
 
-## Current Connectors
+This matrix separates three questions that operators previously had to infer from raw connector snapshots:
 
-| Venue | Truth Mode | Sleeve Scope | Read-only | Execution | Approved Live | Notes |
+- what the connector can technically do
+- what operators have approved
+- whether the connector is currently eligible for sensitive execution
+
+These are now separate backend concepts.
+
+## Canonical Dimensions
+
+### Capability Class
+
+- `simulated_only`
+  - the connector is in-repo simulation only
+  - it must never be treated as real venue truth or live-ready execution
+- `real_readonly`
+  - the connector talks to a real venue and can supply external truth
+  - it is not execution-capable
+- `execution_capable`
+  - the connector can submit execution actions in code
+  - this does not imply live approval
+  - the concrete execution contract can still be narrower than "generic live trading" and must be read from connector metadata
+
+### Promotion Status
+
+- `not_requested`
+- `pending_review`
+- `approved`
+- `rejected`
+- `suspended`
+
+This status is durable and operator-controlled.
+
+### Effective Posture
+
+- `simulated_only`
+- `real_readonly`
+- `execution_capable_unapproved`
+- `promotion_pending`
+- `approved_for_live`
+- `rejected`
+- `suspended`
+
+This is the operator-facing summary shown in API and dashboard read models.
+
+### Sensitive-Execution Eligibility
+
+Sensitive execution is only eligible when all of the following are true:
+
+- capability class is `execution_capable`
+- promotion status is `approved`
+- latest venue truth is fresh
+- latest venue truth is healthy
+- snapshot completeness and read-only validation are sufficient
+- no required prerequisites remain missing
+- recent real executions are `confirmed_full` when post-trade confirmation is required
+
+Approved connectors can still be currently ineligible when evidence becomes stale or degraded.
+
+## Current Connector Matrix
+
+| Venue | Sleeve Scope | Capability Class | Promotion Status | Effective Posture | Sensitive Execution Eligible | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `sim-venue-a` / `sim-venue-b` | simulated | carry | no | yes, simulated only | no | deterministic carry adapter with simulated balance/exposure truth |
-| `atlas-t0-sim` / `atlas-t1-sim` | simulated | treasury | no | yes, simulated only | no | deterministic treasury adapter with simulated capacity/allocation truth |
-| `drift-solana-readonly` | real | carry | yes | no | no | dedicated Drift-native read-only decode for user/subaccount semantics, positions, health/margin, open orders, and recent signatures |
+| `sim-venue-a` / `sim-venue-b` | carry | `simulated_only` | `not_requested` | `simulated_only` | no | deterministic simulated carry adapters |
+| `atlas-t0-sim` / `atlas-t1-sim` | treasury | `simulated_only` | `not_requested` | `simulated_only` | no | deterministic simulated treasury adapters |
+| `drift-solana-readonly` | carry | `real_readonly` | `not_requested` | `real_readonly` | no | Drift-native read-only decode path; strong truth, no execution support |
+| `drift-solana-devnet-carry` | carry | `execution_capable` | `not_requested` | `execution_capable_unapproved` | no | first real execution-capable connector; devnet-only, BTC-PERP reduce-only market orders only |
 
-## Truth Depth By Connector
+## Evidence Interpretation
 
-- `sim-venue-a` / `sim-venue-b`
-  - account state: unsupported
-  - balance state: available in simulation
-  - capacity state: unsupported
-  - exposure state: available in simulation
-  - execution references: unsupported
-  - derivative account state: unsupported
-  - derivative position state: unsupported
-  - derivative health state: unsupported
-  - order/reference state: unsupported
-- `atlas-t0-sim` / `atlas-t1-sim`
-  - account state: unsupported
-  - balance state: unsupported
-  - capacity state: available in simulation
-  - exposure state: available as allocation state in simulation
-  - execution references: unsupported
-  - derivative account state: unsupported
-  - derivative position state: unsupported
-  - derivative health state: unsupported
-  - order/reference state: unsupported
-- `drift-solana-readonly`
-  - account state: available when `DRIFT_READONLY_ACCOUNT_ADDRESS` is configured, or when `DRIFT_READONLY_AUTHORITY_ADDRESS` plus `DRIFT_READONLY_SUBACCOUNT_ID` resolves the user account
-  - balance state: unsupported; this connector intentionally models derivative collateral and positions rather than generic wallet balances
-  - capacity state: unsupported
-  - exposure state: available as a derived convenience view over decoded Drift positions
-  - execution references: available as recent account signatures for the tracked Drift user account
-  - derivative account state: available when the Drift user account can be decoded; partial when the locator is configured but the account is missing or decode prerequisites fail
-  - derivative position state: available when the Drift user account and supporting market context can be decoded; valuation fields may carry mixed provenance
-  - derivative health state: available as Drift SDK-derived health, collateral, free-collateral, leverage, and margin metrics when required data is available
-  - order/reference state: available as decoded venue open-order inventory from the Drift user account; recent signatures remain a separate execution-reference surface
+- `approvedForLiveUse`
+  - durable output of the connector promotion workflow
+  - this is no longer just an adapter claim
+  - for devnet-scoped connectors, approval remains scoped to that connector's declared contract and does not imply mainnet permission
+- `promotion.capabilityClass`
+  - derived from latest persisted connector truth and connector support
+- `promotion.promotionStatus`
+  - latest durable operator decision state
+- `promotion.effectivePosture`
+  - high-level posture badge for operators
+- `promotion.sensitiveExecutionEligible`
+  - current truth-backed execution gate result
+- `promotion.blockers`
+  - explicit reasons why current evidence does not permit sensitive execution
+- `promotion.latestNote`
+  - latest operator note from request, approval, rejection, or suspension workflow
 
-## Operator Interpretation
+## Truth And Validation Signals
 
-- `truthMode=simulated` means the snapshot is generated entirely in-repo.
-- `truthMode=real` means the snapshot came from an external system.
-- `executionSupport=false` means the connector must not be treated as live-execution capable.
-- `approvedForLiveUse=false` means operators must not infer production trading readiness.
-- `sourceMetadata.connectorDepth=drift_native_readonly` means the snapshot came from the dedicated Drift-native read-only decode path rather than the generic RPC-only adapter.
-- `truthProfile=minimal` means the venue only has minimal connectivity or failure-bounded truth.
-- `truthProfile=generic_wallet` means the venue has generic wallet/account/balance truth but no derivative-aware semantics.
-- `truthProfile=capacity_only` means the venue has capacity/allocation-style truth but not generic wallet or derivative truth.
-- `truthProfile=derivative_aware` means the latest snapshot includes some derivative-oriented or order/reference semantics, even if those domains are only partial.
-- `snapshotCompleteness=complete` means the connector captured every truth section it claims to support for that snapshot attempt.
-- `snapshotCompleteness=partial` means the connector captured some supported sections but degraded during the same snapshot attempt.
-- `snapshotCompleteness=minimal` means only a narrow subset of truth was captured, usually connectivity-only or failure-bounded state.
-- `snapshotFreshness=stale` means the latest real venue snapshot is outside the runtime freshness window and should be treated as degraded operator truth.
-- `healthState=unavailable` means the latest connector snapshot failed or could not reach the external venue.
-- `truthCoverage.*.status=unsupported` means the current connector or source cannot supply that field honestly.
-- `truthCoverage.*.status=partial` means the connector can usually support that field, but the latest snapshot only captured it partially.
-- `truthCoverage.*.status=available` means the latest snapshot captured that field within the connector's supported depth.
-- `provenance.classification=exact` means the field was decoded or observed directly from the venue source.
-- `provenance.classification=mixed` means the field combines direct venue decode with market or oracle enrichment.
-- `provenance.classification=derived` means the field is calculated from venue-native state rather than copied directly from a single raw venue field.
-- `comparisonCoverage.*.status=unsupported` means operator-visible venue truth exists, but the runtime does not yet maintain a matching internal model for direct comparison.
-- `comparisonCoverage.*.status=partial` means the runtime has some truthful comparison coverage, but one or more required internal or external keys are still missing.
-- `comparisonCoverage.*.status=available` means the runtime can compare that section directly within its current modeled granularity.
+Eligibility uses only repo-known evidence:
 
-## Reconciliation Signals
+- `snapshotFreshness`
+- `healthState`
+- `snapshotCompleteness`
+- truth-coverage rollups
+- connector config/readiness markers captured in snapshot metadata
+- explicit `missingPrerequisites`
+- durable promotion history
+- post-trade confirmation entries, including:
+  - signature/reference presence
+  - venue-native event correlation status and confidence
+  - refreshed position-delta confirmation state
 
-Phase 5.3 exposes explicit reconciliation findings for real connectors:
+The system does not infer completion from external runbooks or tribal knowledge.
 
-- `missing_venue_truth_snapshot`
-  - no successful persisted venue snapshot has been recorded yet
-- `stale_venue_truth_snapshot`
-  - the latest persisted real snapshot is outside the freshness window
-- `venue_truth_unavailable`
-  - the latest persisted real snapshot reports unavailable connector health
-- `venue_truth_partial_coverage`
-  - the latest persisted real snapshot did not fully cover the connector's supported truth depth
-- `venue_execution_reference_mismatch`
-  - persisted internal execution references are missing from the latest observed venue-native recent references, but only for connectors that actually expose recent references
+## Operator Rules
 
-These findings indicate whether the runtime can currently rely on fresh, healthy, sufficiently complete external truth for that connector.
+- simulated connectors are never promotion candidates
+- read-only connectors are never execution-eligible
+- execution-capable connectors are not actionable for live use until promotion is explicitly approved
+- `approved` means the operator decision is durable
+- `sensitiveExecutionEligible=false` means current runtime gating still blocks sensitive execution
+- `rejected` and `suspended` always block sensitive execution
 
-Phase 5.6 adds direct Drift mismatch classes where both sides now exist and are genuinely comparable:
+## Where To Inspect
 
-- `drift_subaccount_identity_mismatch`
-- `drift_position_mismatch`
-- `drift_order_inventory_mismatch`
-- `drift_truth_comparison_gap`
-- `stale_internal_derivative_state`
-
-Current honest boundary:
-
-- account identity is directly comparable when both internal and external account sections exist
-- positions are directly comparable at `asset + marketType` granularity
-- open orders are directly comparable only when a venue order id exists internally and externally
-- health remains externally visible but internally unsupported, so there is still no direct health mismatch class
+- `/api/v1/venues`
+- `/api/v1/venues/:venueId`
+- `/api/v1/venues/promotion-summary`
+- `/api/v1/venues/:venueId/promotion`
+- `/api/v1/venues/:venueId/promotion/history`
+- `/api/v1/venues/:venueId/promotion/eligibility`
+- ops dashboard `/venues`
+- ops dashboard `/venues/:venueId`

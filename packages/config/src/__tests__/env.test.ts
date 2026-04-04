@@ -50,6 +50,9 @@ describe('config/env — valid configuration', () => {
       DRIFT_READONLY_AUTHORITY_ADDRESS: 'readonly-authority',
       DRIFT_READONLY_SUBACCOUNT_ID: '2',
       DRIFT_READONLY_ACCOUNT_LABEL: 'Treasury watch wallet',
+      DRIFT_EXECUTION_ENV: 'devnet',
+      DRIFT_EXECUTION_SUBACCOUNT_ID: '3',
+      DRIFT_EXECUTION_ACCOUNT_LABEL: 'Devnet execution wallet',
     });
 
     expect(cfg.LOG_LEVEL).toBe('debug');
@@ -66,6 +69,9 @@ describe('config/env — valid configuration', () => {
     expect(cfg.DRIFT_READONLY_AUTHORITY_ADDRESS).toBe('readonly-authority');
     expect(cfg.DRIFT_READONLY_SUBACCOUNT_ID).toBe(2);
     expect(cfg.DRIFT_READONLY_ACCOUNT_LABEL).toBe('Treasury watch wallet');
+    expect(cfg.DRIFT_EXECUTION_ENV).toBe('devnet');
+    expect(cfg.DRIFT_EXECUTION_SUBACCOUNT_ID).toBe(3);
+    expect(cfg.DRIFT_EXECUTION_ACCOUNT_LABEL).toBe('Devnet execution wallet');
   });
 });
 

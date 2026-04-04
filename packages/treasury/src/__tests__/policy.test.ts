@@ -6,6 +6,30 @@ import {
   TreasuryPolicyEngine,
 } from '../index.js';
 
+import type { TreasuryVenueCapabilities } from '../types.js';
+
+function createVenueCapabilities(
+  overrides: Partial<TreasuryVenueCapabilities> = {},
+): TreasuryVenueCapabilities {
+  return {
+    venueId: 'atlas-t1-sim',
+    venueMode: 'simulated',
+    supportsAllocation: true,
+    supportsReduction: true,
+    executionSupported: true,
+    readOnly: false,
+    approvedForLiveUse: false,
+    sensitiveExecutionEligible: false,
+    promotionStatus: 'not_requested',
+    promotionBlockedReasons: [],
+    onboardingState: 'simulated',
+    missingPrerequisites: [],
+    healthy: true,
+    metadata: {},
+    ...overrides,
+  };
+}
+
 describe('TreasuryPolicyEngine', () => {
   const engine = new TreasuryPolicyEngine();
   const planner = new TreasuryExecutionPlanner();
@@ -134,19 +158,7 @@ describe('TreasuryPolicyEngine', () => {
       policy: DEFAULT_TREASURY_POLICY,
       executionMode: 'dry-run',
       liveExecutionEnabled: false,
-      venueCapabilities: [{
-        venueId: 'atlas-t1-sim',
-        venueMode: 'simulated',
-        supportsAllocation: true,
-        supportsReduction: true,
-        executionSupported: true,
-        readOnly: false,
-        approvedForLiveUse: false,
-        onboardingState: 'simulated',
-        missingPrerequisites: [],
-        healthy: true,
-        metadata: {},
-      }],
+      venueCapabilities: [createVenueCapabilities()],
     });
 
     expect(intents).toHaveLength(1);
@@ -193,23 +205,95 @@ describe('TreasuryPolicyEngine', () => {
       policy: DEFAULT_TREASURY_POLICY,
       executionMode: 'dry-run',
       liveExecutionEnabled: false,
-      venueCapabilities: [{
+      venueCapabilities: [createVenueCapabilities({
         venueId: 'atlas-t0-sim',
-        venueMode: 'simulated',
-        supportsAllocation: true,
-        supportsReduction: true,
-        executionSupported: true,
-        readOnly: false,
-        approvedForLiveUse: false,
-        onboardingState: 'simulated',
-        missingPrerequisites: [],
-        healthy: true,
-        metadata: {},
-      }],
+      })],
     });
 
     expect(intents[0]?.readiness).toBe('blocked');
     expect(intents[0]?.blockedReasons.some((reason) => reason.code === 'reserve_floor_breach')).toBe(true);
     expect(intents[0]?.blockedReasons.some((reason) => reason.code === 'venue_concentration_breach')).toBe(true);
+  });
+
+  it('blocks live treasury execution when a venue is execution-capable but not live-approved', () => {
+    const evaluation = engine.evaluate({
+      totalNavUsd: '100000',
+      idleCapitalUsd: '40000',
+      policy: DEFAULT_TREASURY_POLICY,
+      venueSnapshots: [
+        {
+          venueId: 'atlas-live',
+          venueName: 'Atlas Live',
+          mode: 'live',
+          liquidityTier: 'same_day',
+          healthy: true,
+          aprBps: 620,
+          availableCapacityUsd: '50000',
+          currentAllocationUsd: '10000',
+          withdrawalAvailableUsd: '10000',
+          concentrationPct: '0',
+          updatedAt: new Date().toISOString(),
+          metadata: {},
+        },
+      ],
+    });
+
+    const intents = planner.createExecutionIntents({
+      evaluation,
+      policy: DEFAULT_TREASURY_POLICY,
+      executionMode: 'live',
+      liveExecutionEnabled: true,
+      venueCapabilities: [createVenueCapabilities({
+        venueId: 'atlas-live',
+        venueMode: 'live',
+        onboardingState: 'ready_for_review',
+      })],
+    });
+
+    expect(intents[0]?.readiness).toBe('blocked');
+    expect(intents[0]?.blockedReasons.some((reason) => reason.code === 'venue_live_unapproved')).toBe(true);
+  });
+
+  it('blocks approved live treasury execution when readiness evidence is stale or degraded', () => {
+    const evaluation = engine.evaluate({
+      totalNavUsd: '100000',
+      idleCapitalUsd: '40000',
+      policy: DEFAULT_TREASURY_POLICY,
+      venueSnapshots: [
+        {
+          venueId: 'atlas-live',
+          venueName: 'Atlas Live',
+          mode: 'live',
+          liquidityTier: 'same_day',
+          healthy: true,
+          aprBps: 620,
+          availableCapacityUsd: '50000',
+          currentAllocationUsd: '10000',
+          withdrawalAvailableUsd: '10000',
+          concentrationPct: '0',
+          updatedAt: new Date().toISOString(),
+          metadata: {},
+        },
+      ],
+    });
+
+    const intents = planner.createExecutionIntents({
+      evaluation,
+      policy: DEFAULT_TREASURY_POLICY,
+      executionMode: 'live',
+      liveExecutionEnabled: true,
+      venueCapabilities: [createVenueCapabilities({
+        venueId: 'atlas-live',
+        venueMode: 'live',
+        approvedForLiveUse: true,
+        sensitiveExecutionEligible: false,
+        promotionStatus: 'approved',
+        promotionBlockedReasons: ['Latest venue-truth snapshot is stale.'],
+        onboardingState: 'approved_for_live',
+      })],
+    });
+
+    expect(intents[0]?.readiness).toBe('blocked');
+    expect(intents[0]?.blockedReasons.some((reason) => reason.code === 'venue_live_ineligible')).toBe(true);
   });
 });

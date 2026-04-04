@@ -249,6 +249,37 @@ export class TreasuryExecutionPlanner {
         ));
       }
 
+      if (venueCapabilities?.venueMode === 'live' && !venueCapabilities.approvedForLiveUse) {
+        blockedReasons.push(buildBlockedReason(
+          'venue_live_unapproved',
+          `Venue ${recommendation.venueId} is not approved for live treasury execution.`,
+          'venue_capability',
+          'Complete connector promotion review before using this venue in sensitive treasury execution.',
+          {
+            venueId: recommendation.venueId,
+            promotionStatus: venueCapabilities.promotionStatus,
+          },
+        ));
+      }
+
+      if (
+        venueCapabilities?.venueMode === 'live'
+        && venueCapabilities.approvedForLiveUse
+        && !venueCapabilities.sensitiveExecutionEligible
+      ) {
+        blockedReasons.push(buildBlockedReason(
+          'venue_live_ineligible',
+          `Venue ${recommendation.venueId} is approved for live use but currently blocked by connector readiness evidence.`,
+          'venue_capability',
+          'Restore connector truth freshness and health, then re-run treasury evaluation before executing.',
+          {
+            venueId: recommendation.venueId,
+            promotionStatus: venueCapabilities.promotionStatus,
+            blockers: venueCapabilities.promotionBlockedReasons,
+          },
+        ));
+      }
+
       if (
         venueCapabilities?.venueMode === 'live'
         && (input.executionMode !== 'live' || !input.liveExecutionEnabled)

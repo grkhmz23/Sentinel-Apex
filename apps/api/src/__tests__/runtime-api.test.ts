@@ -17,6 +17,7 @@ import type {
   InternalDerivativeSnapshotView,
   RuntimeControlPlane,
   RuntimeWorker,
+  VenueSnapshotView,
 } from '@sentinel-apex/runtime';
 import type {
   VenueCapabilitySnapshot,
@@ -402,9 +403,12 @@ function createInternalDerivativeSnapshot(
         limitations: [],
       },
       healthState: {
-        status: 'unsupported',
-        reason: 'No canonical internal health model exists yet for direct comparison.',
-        limitations: ['Health remains intentionally unsupported until a canonical internal model exists.'],
+        status: 'available',
+        reason: null,
+        limitations: [
+          'Internal health posture is derived from internal portfolio and risk projections, not from venue-native Drift margin math.',
+          'Only band-level health comparison is currently truthful; exact margin fields remain external-only.',
+        ],
       },
       orderState: {
         status: 'partial',
@@ -432,7 +436,7 @@ function createInternalDerivativeSnapshot(
     positionState: {
       positions: [
         {
-          positionKey: 'perp:BTC',
+          positionKey: 'perp:0',
           asset: 'BTC',
           marketType: 'perp',
           side: 'long',
@@ -444,8 +448,27 @@ function createInternalDerivativeSnapshot(
           sourceOrderCount: 1,
           firstFilledAt: '2026-03-31T11:58:00.000Z',
           lastFilledAt: '2026-03-31T11:59:00.000Z',
+          marketIdentity: {
+            asset: 'BTC',
+            marketType: 'perp',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            normalizedKey: 'perp:0',
+            normalizedKeyType: 'market_index',
+            confidence: 'exact',
+            notes: ['Internal position identity inherited exact market metadata from a source order.'],
+            provenance: {
+              classification: 'canonical',
+              source: 'runtime_fill_ledger',
+              notes: ['Internal market identity was sourced from exact order metadata.'],
+            },
+          },
           metadata: {
             instrumentType: 'perpetual',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
           },
           provenance: {
             classification: 'derived',
@@ -464,13 +487,31 @@ function createInternalDerivativeSnapshot(
       },
     },
     healthState: {
-      healthStatus: 'unknown',
-      methodology: 'unsupported_internal_health_model',
-      notes: ['No truthful internal Drift health computation path is currently implemented.'],
+      healthStatus: 'healthy',
+      modelType: 'internal_risk_posture',
+      comparisonMode: 'status_band_only',
+      riskPosture: 'normal',
+      collateralLikeUsd: '109150.25',
+      liquidityReserveUsd: '109150.25',
+      grossExposureUsd: '51000',
+      netExposureUsd: '51000',
+      venueExposureUsd: '51000',
+      exposureToNavRatio: '0.204',
+      liquidityReservePct: 43.66,
+      leverage: '2.11',
+      openPositionCount: 1,
+      openOrderCount: 2,
+      openCircuitBreakers: [],
+      unsupportedReasons: ['Exact Drift collateral, free collateral, margin ratio, and requirement fields remain external-only.'],
+      methodology: 'portfolio_current_plus_risk_current',
+      notes: [
+        'Internal health posture is derived from persisted portfolio and risk read models.',
+        'Collateral-like posture maps to internal liquidity reserve rather than exact Drift collateral accounting.',
+      ],
       provenance: {
-        classification: 'estimated',
-        source: 'unsupported_internal_health_model',
-        notes: ['Health remains intentionally unsupported until the runtime has a canonical venue-aligned internal model.'],
+        classification: 'derived',
+        source: 'portfolio_current_plus_risk_current',
+        notes: ['Internal health posture is derived from internal runtime projections rather than external venue truth.'],
       },
     },
     orderState: {
@@ -496,8 +537,27 @@ function createInternalDerivativeSnapshot(
           submittedAt: '2026-03-31T11:58:30.000Z',
           completedAt: null,
           updatedAt: freshCapturedAt(),
+          marketIdentity: {
+            asset: 'BTC',
+            marketType: 'perp',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
+            normalizedKey: 'perp:0',
+            normalizedKeyType: 'market_index',
+            confidence: 'exact',
+            notes: ['Internal order market identity is sourced from persisted order metadata.'],
+            provenance: {
+              classification: 'canonical',
+              source: 'runtime_orders_table',
+              notes: ['Internal market identity was sourced from exact order metadata.'],
+            },
+          },
           metadata: {
             instrumentType: 'perpetual',
+            marketIndex: 0,
+            marketKey: 'perp:0',
+            marketSymbol: 'BTC-PERP',
           },
           provenance: {
             classification: 'canonical',
@@ -523,6 +583,22 @@ function createInternalDerivativeSnapshot(
           submittedAt: '2026-03-31T11:58:35.000Z',
           completedAt: null,
           updatedAt: freshCapturedAt(),
+          marketIdentity: {
+            asset: 'SOL',
+            marketType: 'spot',
+            marketIndex: null,
+            marketKey: null,
+            marketSymbol: 'SOL',
+            normalizedKey: 'spot:SOL',
+            normalizedKeyType: 'market_symbol',
+            confidence: 'derived',
+            notes: ['Internal order market identity is derived from order asset plus instrument type.'],
+            provenance: {
+              classification: 'derived',
+              source: 'runtime_orders_table',
+              notes: ['Internal market symbol is derived from asset plus market type, not from venue-native order metadata.'],
+            },
+          },
           metadata: {
             instrumentType: 'spot',
           },
@@ -554,6 +630,114 @@ async function persistInternalDerivativeSnapshot(
   const connection = await createDatabaseConnection(connectionString);
   const store = new RuntimeStore(connection.db, new DatabaseAuditWriter(connection.db));
   await store.persistInternalDerivativeSnapshots({
+    snapshots: [snapshot],
+  });
+  return connection;
+}
+
+function promotionCandidateSnapshot(
+  overrides: Partial<VenueSnapshotView> = {},
+): VenueSnapshotView {
+  const snapshot: VenueSnapshotView = {
+    id: 'promotion-candidate-snapshot',
+    venueId: 'live-carry-venue',
+    venueName: 'Live Carry Venue',
+    connectorType: 'carry_adapter',
+    sleeveApplicability: ['carry'],
+    truthMode: 'real',
+    readOnlySupport: false,
+    executionSupport: true,
+    approvedForLiveUse: false,
+    onboardingState: 'ready_for_review',
+    missingPrerequisites: [],
+    authRequirementsSummary: ['LIVE_CARRY_API_KEY'],
+    healthy: true,
+    healthState: 'healthy',
+    degradedReason: null,
+    truthProfile: 'minimal',
+    snapshotType: 'execution_capable_connector_state',
+    snapshotSuccessful: true,
+    snapshotSummary: 'Execution-capable connector snapshot is healthy and fresh.',
+    snapshotPayload: {
+      connectionState: 'ready',
+    },
+    errorMessage: null,
+    capturedAt: freshCapturedAt(),
+    snapshotCompleteness: 'complete',
+    truthCoverage: {
+      accountState: { status: 'available', reason: null, limitations: [] },
+      balanceState: { status: 'available', reason: null, limitations: [] },
+      capacityState: { status: 'unsupported', reason: 'Not a treasury connector.', limitations: [] },
+      exposureState: { status: 'available', reason: null, limitations: [] },
+      derivativeAccountState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
+      derivativePositionState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
+      derivativeHealthState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
+      orderState: { status: 'unsupported', reason: 'Order inventory is not exposed in this test fixture.', limitations: [] },
+      executionReferences: { status: 'unsupported', reason: 'Execution references are not exposed in this test fixture.', limitations: [] },
+    },
+    comparisonCoverage: {
+      executionReferences: { status: 'unsupported', reason: 'No execution-reference comparison coverage is modeled in this fixture.' },
+      positionInventory: { status: 'unsupported', reason: 'No direct comparison inventory is modeled in this fixture.' },
+      healthState: { status: 'unsupported', reason: 'No direct health comparison is modeled in this fixture.' },
+      orderInventory: { status: 'unsupported', reason: 'No direct order comparison is modeled in this fixture.' },
+      notes: [],
+    },
+    sourceMetadata: {
+      sourceKind: 'adapter',
+      sourceName: 'live_execution_adapter',
+      connectorDepth: 'execution_capable',
+      observedScope: ['balances', 'positions', 'status'],
+      provenanceNotes: ['Test fixture for connector promotion workflow.'],
+    },
+    accountState: {
+      accountAddress: 'live-carry-account',
+      accountLabel: 'Live Carry Venue',
+      accountExists: true,
+      ownerProgram: 'live-program',
+      executable: false,
+      lamports: '0',
+      nativeBalanceDisplay: '0',
+      observedSlot: '1',
+      rentEpoch: '0',
+      dataLength: 0,
+    },
+    balanceState: {
+      balances: [],
+      totalTrackedBalances: 0,
+      observedSlot: '1',
+    },
+    capacityState: null,
+    exposureState: {
+      exposures: [],
+      methodology: 'test_fixture',
+    },
+    derivativeAccountState: null,
+    derivativePositionState: null,
+    derivativeHealthState: null,
+    orderState: null,
+    executionReferenceState: null,
+    executionConfirmationState: null,
+    metadata: {
+      endpointConfigured: true,
+      apiKeyConfigured: true,
+      executionPosture: 'execution_capable',
+    },
+    ...overrides,
+  };
+
+  return {
+    ...snapshot,
+    executionConfirmationState: overrides.executionConfirmationState ?? snapshot.executionConfirmationState,
+  };
+}
+
+async function persistVenueSnapshot(
+  connectionString: string,
+  snapshot: VenueSnapshotView,
+): Promise<DatabaseConnection> {
+  const connection = await createDatabaseConnection(connectionString);
+  const store = new RuntimeStore(connection.db, new DatabaseAuditWriter(connection.db));
+  await store.persistVenueConnectorSnapshots({
     snapshots: [snapshot],
   });
   return connection;
@@ -1186,17 +1370,25 @@ describe('runtime-backed API routes', () => {
             healthState: { status: string };
             orderState: { status: string };
           };
-          positionState: { openPositionCount: number; positions: Array<{ positionKey: string; netQuantity: string }> } | null;
+          positionState: {
+            openPositionCount: number;
+            positions: Array<{ positionKey: string; netQuantity: string; marketIdentity?: { normalizedKey: string | null } | null }>;
+          } | null;
           orderState: { openOrderCount: number; comparableOpenOrderCount: number; nonComparableOpenOrderCount: number } | null;
-          healthState: { healthStatus: string; methodology: string } | null;
+          healthState: { healthStatus: string; methodology: string; comparisonMode: string; riskPosture: string | null } | null;
         };
       }>();
       const comparisonSummaryBody = comparisonSummaryResponse.json<{
         data: {
           subaccountIdentity: { status: string };
           positionInventory: { status: string };
+          marketIdentity: { status: string };
           healthState: { status: string };
           orderInventory: { status: string };
+          healthComparisonMode: string;
+          exactPositionIdentityCount: number;
+          partialPositionIdentityCount: number;
+          positionIdentityGapCount: number;
           matchedPositionCount: number;
           matchedOrderCount: number;
         };
@@ -1204,9 +1396,19 @@ describe('runtime-backed API routes', () => {
       const comparisonDetailBody = comparisonDetailResponse.json<{
         data: {
           accountComparison: { status: string };
-          healthComparison: { status: string; comparable: boolean };
-          positionComparisons: Array<{ comparisonKey: string; status: string; quantityDelta: string | null }>;
-          orderComparisons: Array<{ comparisonKey: string; status: string; remainingSizeDelta: string | null }>;
+          healthComparison: { status: string; comparable: boolean; comparisonMode: string };
+          positionComparisons: Array<{
+            comparisonKey: string;
+            status: string;
+            quantityDelta: string | null;
+            marketIdentityComparison: { comparisonMode: string };
+          }>;
+          orderComparisons: Array<{
+            comparisonKey: string;
+            status: string;
+            remainingSizeDelta: string | null;
+            marketIdentityComparison: { comparisonMode: string };
+          }>;
         };
       }>();
       const venueDetailBody = venueDetailResponse.json<{
@@ -1227,40 +1429,392 @@ describe('runtime-backed API routes', () => {
       expect(internalStateBody.data.venueId).toBe('drift-solana-readonly');
       expect(internalStateBody.data.coverage.accountState.status).toBe('available');
       expect(internalStateBody.data.coverage.positionState.status).toBe('available');
-      expect(internalStateBody.data.coverage.healthState.status).toBe('unsupported');
+      expect(internalStateBody.data.coverage.healthState.status).toBe('available');
       expect(internalStateBody.data.coverage.orderState.status).toBe('partial');
       expect(internalStateBody.data.positionState?.openPositionCount).toBe(1);
-      expect(internalStateBody.data.positionState?.positions[0]?.positionKey).toBe('perp:BTC');
+      expect(internalStateBody.data.positionState?.positions[0]?.positionKey).toBe('perp:0');
       expect(internalStateBody.data.positionState?.positions[0]?.netQuantity).toBe('0.75');
+      expect(internalStateBody.data.positionState?.positions[0]?.marketIdentity?.normalizedKey).toBe('perp:0');
       expect(internalStateBody.data.orderState?.openOrderCount).toBe(2);
       expect(internalStateBody.data.orderState?.comparableOpenOrderCount).toBe(1);
       expect(internalStateBody.data.orderState?.nonComparableOpenOrderCount).toBe(1);
-      expect(internalStateBody.data.healthState?.healthStatus).toBe('unknown');
-      expect(internalStateBody.data.healthState?.methodology).toBe('unsupported_internal_health_model');
+      expect(internalStateBody.data.healthState?.healthStatus).toBe('healthy');
+      expect(internalStateBody.data.healthState?.methodology).toBe('portfolio_current_plus_risk_current');
+      expect(internalStateBody.data.healthState?.comparisonMode).toBe('status_band_only');
+      expect(internalStateBody.data.healthState?.riskPosture).toBe('normal');
 
       expect(comparisonSummaryBody.data.subaccountIdentity.status).toBe('available');
       expect(comparisonSummaryBody.data.positionInventory.status).toBe('available');
-      expect(comparisonSummaryBody.data.healthState.status).toBe('unsupported');
+      expect(comparisonSummaryBody.data.marketIdentity.status).toBe('available');
+      expect(comparisonSummaryBody.data.healthState.status).toBe('partial');
       expect(comparisonSummaryBody.data.orderInventory.status).toBe('partial');
+      expect(comparisonSummaryBody.data.healthComparisonMode).toBe('status_band_only');
+      expect(comparisonSummaryBody.data.exactPositionIdentityCount).toBe(1);
+      expect(comparisonSummaryBody.data.partialPositionIdentityCount).toBe(0);
+      expect(comparisonSummaryBody.data.positionIdentityGapCount).toBe(0);
       expect(comparisonSummaryBody.data.matchedPositionCount).toBe(1);
       expect(comparisonSummaryBody.data.matchedOrderCount).toBe(1);
 
       expect(comparisonDetailBody.data.accountComparison.status).toBe('matched');
-      expect(comparisonDetailBody.data.healthComparison.status).toBe('not_comparable');
-      expect(comparisonDetailBody.data.healthComparison.comparable).toBe(false);
-      expect(comparisonDetailBody.data.positionComparisons[0]?.comparisonKey).toBe('perp:BTC');
+      expect(comparisonDetailBody.data.healthComparison.status).toBe('matched');
+      expect(comparisonDetailBody.data.healthComparison.comparable).toBe(true);
+      expect(comparisonDetailBody.data.healthComparison.comparisonMode).toBe('status_band_only');
+      expect(comparisonDetailBody.data.positionComparisons[0]?.comparisonKey).toBe('perp:0');
       expect(comparisonDetailBody.data.positionComparisons[0]?.status).toBe('matched');
       expect(comparisonDetailBody.data.positionComparisons[0]?.quantityDelta).toBe('0');
+      expect(comparisonDetailBody.data.positionComparisons[0]?.marketIdentityComparison.comparisonMode).toBe('exact');
       expect(comparisonDetailBody.data.orderComparisons[0]?.comparisonKey).toBe('901');
       expect(comparisonDetailBody.data.orderComparisons[0]?.status).toBe('matched');
       expect(comparisonDetailBody.data.orderComparisons[0]?.remainingSizeDelta).toBe('0');
+      expect(comparisonDetailBody.data.orderComparisons[0]?.marketIdentityComparison.comparisonMode).toBe('exact');
 
       expect(venueDetailBody.data.internalState?.coverage.orderState.status).toBe('partial');
-      expect(venueDetailBody.data.comparisonSummary.healthState.status).toBe('unsupported');
+      expect(venueDetailBody.data.comparisonSummary.healthState.status).toBe('partial');
       expect(venueDetailBody.data.comparisonSummary.orderInventory.status).toBe('partial');
       expect(venueDetailBody.data.comparisonDetail.accountComparison.status).toBe('matched');
     } finally {
       await writerConnection.close();
+    }
+  });
+
+  it('exposes connector promotion workflow routes with auth and transition enforcement', async () => {
+    const seededConnection = await persistVenueSnapshot(
+      connectionString,
+      promotionCandidateSnapshot(),
+    );
+
+    try {
+      const [
+        promotionSummaryResponse,
+        promotionDetailResponse,
+        eligibilityResponse,
+      ] = await Promise.all([
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/promotion-summary',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/live-carry-venue/promotion',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/live-carry-venue/promotion/eligibility',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+      ]);
+
+      expect(promotionSummaryResponse.statusCode).toBe(200);
+      expect(promotionDetailResponse.statusCode).toBe(200);
+      expect(eligibilityResponse.statusCode).toBe(200);
+
+      const promotionSummaryBody = promotionSummaryResponse.json<{
+        data: {
+          totalVenues: number;
+          candidates: number;
+        };
+      }>();
+      const promotionDetailBody = promotionDetailResponse.json<{
+        data: {
+          current: {
+            capabilityClass: string;
+            promotionStatus: string;
+            approvedForLiveUse: boolean;
+          };
+        };
+      }>();
+      const eligibilityBody = eligibilityResponse.json<{
+        data: {
+          capabilityClass: string;
+          eligibleForPromotion: boolean;
+          blockingReasons: string[];
+        };
+      }>();
+
+      expect(promotionSummaryBody.data.totalVenues).toBeGreaterThan(0);
+      expect(promotionSummaryBody.data.candidates).toBeGreaterThan(0);
+      expect(promotionDetailBody.data.current.capabilityClass).toBe('execution_capable');
+      expect(promotionDetailBody.data.current.promotionStatus).toBe('not_requested');
+      expect(promotionDetailBody.data.current.approvedForLiveUse).toBe(false);
+      expect(eligibilityBody.data.eligibleForPromotion).toBe(true);
+      expect(eligibilityBody.data.blockingReasons).toHaveLength(0);
+
+      const requestResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/venues/live-carry-venue/promotion/request',
+        headers: operatorHeaders('operator', 'POST', '/api/v1/venues/live-carry-venue/promotion/request'),
+        payload: {},
+      });
+
+      expect(requestResponse.statusCode).toBe(202);
+
+      const approveAsOperatorResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/venues/live-carry-venue/promotion/approve',
+        headers: operatorHeaders('operator', 'POST', '/api/v1/venues/live-carry-venue/promotion/approve'),
+        payload: {},
+      });
+
+      expect(approveAsOperatorResponse.statusCode).toBe(403);
+
+      const approveAsAdminResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/venues/live-carry-venue/promotion/approve',
+        headers: operatorHeaders('admin', 'POST', '/api/v1/venues/live-carry-venue/promotion/approve'),
+        payload: {
+          note: 'Validated truth freshness and execution readiness.',
+        },
+      });
+
+      expect(approveAsAdminResponse.statusCode).toBe(200);
+
+      const suspendMissingNoteResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/venues/live-carry-venue/promotion/suspend',
+        headers: operatorHeaders('admin', 'POST', '/api/v1/venues/live-carry-venue/promotion/suspend'),
+        payload: {},
+      });
+
+      expect(suspendMissingNoteResponse.statusCode).toBe(400);
+
+      const suspendResponse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/venues/live-carry-venue/promotion/suspend',
+        headers: operatorHeaders('admin', 'POST', '/api/v1/venues/live-carry-venue/promotion/suspend'),
+        payload: {
+          note: 'Suspending after temporary venue maintenance.',
+        },
+      });
+
+      expect(suspendResponse.statusCode).toBe(200);
+
+      const historyResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/venues/live-carry-venue/promotion/history',
+        headers: { 'x-api-key': TEST_API_KEY },
+      });
+
+      expect(historyResponse.statusCode).toBe(200);
+
+      const historyBody = historyResponse.json<{
+        data: Array<{ eventType: string; toStatus: string }>;
+      }>();
+
+      expect(historyBody.data.map((entry) => entry.eventType)).toEqual([
+        'suspended',
+        'approved',
+        'requested',
+      ]);
+      expect(historyBody.data[0]?.toStatus).toBe('suspended');
+    } finally {
+      await seededConnection.close();
+    }
+  });
+
+  it('exposes devnet execution-capable connector posture and scope through venue routes', async () => {
+    const seededConnection = await persistVenueSnapshot(
+      connectionString,
+      promotionCandidateSnapshot({
+        id: 'drift-devnet-carry-snapshot',
+        venueId: 'drift-solana-devnet-carry',
+        venueName: 'Drift Solana Devnet Carry',
+        connectorType: 'drift_native_devnet_execution',
+        truthProfile: 'derivative_aware',
+        snapshotType: 'drift_devnet_execution_account',
+        snapshotSummary: 'Drift devnet execution connector is ready for operator review.',
+        authRequirementsSummary: [
+          'DRIFT_RPC_ENDPOINT',
+          'DRIFT_EXECUTION_ENV=devnet',
+          'DRIFT_PRIVATE_KEY',
+        ],
+        sourceMetadata: {
+          sourceKind: 'adapter',
+          sourceName: 'drift_native_devnet_execution',
+          connectorDepth: 'execution_capable',
+          observedScope: ['cluster_version', 'drift_user_account_decode', 'recent_signatures'],
+          provenanceNotes: ['Phase 6.0 test fixture for the first real devnet execution-capable connector.'],
+        },
+        metadata: {
+          driftEnv: 'devnet',
+          endpointConfigured: true,
+          privateKeyConfigured: true,
+          authorityAddressConfigured: true,
+          accountAddressConfigured: true,
+          executionPosture: 'devnet_execution_capable',
+          connectorMode: 'execution_capable_devnet',
+          supportedExecutionScope: [
+            'devnet only',
+            'carry sleeve only',
+            'reduce-only BTC-PERP market orders',
+            'real Solana transaction signatures persisted as execution references',
+          ],
+          unsupportedExecutionScope: [
+            'mainnet-beta execution',
+            'carry increase-exposure execution',
+            'spot orders',
+            'limit or post-only orders',
+          ],
+          executionReferenceKind: 'solana_signature',
+        },
+        executionConfirmationState: {
+          status: 'confirmed',
+          summary: 'All recent real execution references are fully confirmed by venue truth.',
+          evaluatedAt: freshCapturedAt(),
+          recentExecutionCount: 1,
+          confirmedFullCount: 1,
+          confirmedPartialCount: 0,
+          confirmedPartialEventOnlyCount: 0,
+          confirmedPartialPositionOnlyCount: 0,
+          pendingCount: 0,
+          pendingEventCount: 0,
+          pendingPositionDeltaCount: 0,
+          conflictingEventCount: 0,
+          conflictingEventVsPositionCount: 0,
+          missingReferenceCount: 0,
+          invalidCount: 0,
+          insufficientContextCount: 0,
+          latestConfirmedAt: freshCapturedAt(),
+          blockingReasons: [],
+          entries: [{
+            stepId: 'carry-step-1',
+            carryExecutionId: 'carry-execution-1',
+            carryActionId: 'carry-action-1',
+            intentId: 'intent-1',
+            clientOrderId: 'intent-1',
+            executionReference: 'drift-devnet-sig-1',
+            venueId: 'drift-solana-devnet-carry',
+            status: 'confirmed_full',
+            evidenceBasis: 'event_and_position',
+            summary: 'Execution reference drift-devnet-sig-1 has a strong Drift fill match and confirms the full requested 0.010000000 position reduction.',
+            evaluatedAt: freshCapturedAt(),
+            referenceObserved: true,
+            referenceObservedAt: freshCapturedAt(),
+            marketKey: 'perp:1',
+            marketSymbol: 'BTC-PERP',
+            requestedSize: '0.010000000',
+            confirmedSize: '0.010000000',
+            remainingSize: '0',
+            preTradePositionSide: 'long',
+            preTradePositionSize: '0.020000000',
+            observedPositionSide: 'long',
+            observedPositionSize: '0.010000000',
+            eventEvidence: {
+              executionReference: 'drift-devnet-sig-1',
+              clientOrderId: 'intent-1',
+              correlationStatus: 'event_matched_strong',
+              deduplicationStatus: 'unique',
+              correlationConfidence: 'strong',
+              evidenceOrigin: 'raw_and_derived',
+              summary: 'Strong Drift fill evidence was attributed to drift-devnet-sig-1.',
+              blockedReason: null,
+              observedAt: freshCapturedAt(),
+              eventType: 'OrderActionRecord',
+              actionType: 'fill',
+              txSignature: 'drift-devnet-sig-1',
+              accountAddress: 'devnet-user-account',
+              subaccountId: 0,
+              marketIndex: 1,
+              orderId: '101',
+              userOrderId: 11,
+              fillBaseAssetAmount: '0.010000000',
+              fillQuoteAssetAmount: '500.000000',
+              fillRole: 'taker',
+              rawEventCount: 2,
+              duplicateEventCount: 0,
+              rawEvents: [],
+            },
+            blockedReason: null,
+          }],
+        },
+      }),
+    );
+
+    try {
+      const [detailResponse, promotionResponse, eligibilityResponse] = await Promise.all([
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/drift-solana-devnet-carry',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/drift-solana-devnet-carry/promotion',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/venues/drift-solana-devnet-carry/promotion/eligibility',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+      ]);
+
+      expect(detailResponse.statusCode).toBe(200);
+      expect(promotionResponse.statusCode).toBe(200);
+      expect(eligibilityResponse.statusCode).toBe(200);
+
+      const detailBody = detailResponse.json<{
+        data: {
+          venue: {
+            connectorType: string;
+            onboardingState: string;
+            metadata: Record<string, unknown>;
+          };
+          promotion: {
+            current: {
+              capabilityClass: string;
+              promotionStatus: string;
+              approvedForLiveUse: boolean;
+            };
+          };
+        };
+      }>();
+      const promotionBody = promotionResponse.json<{
+        data: {
+          current: {
+            capabilityClass: string;
+            effectivePosture: string;
+          };
+        };
+      }>();
+      const eligibilityBody = eligibilityResponse.json<{
+        data: {
+          eligibleForPromotion: boolean;
+          blockingReasons: string[];
+          postTradeConfirmation: {
+            status: string;
+            confirmedFullCount: number;
+            entries: Array<{
+              eventEvidence: {
+                correlationStatus: string;
+                correlationConfidence: string;
+              } | null;
+            }>;
+          };
+        };
+      }>();
+
+      expect(detailBody.data.venue.connectorType).toBe('drift_native_devnet_execution');
+      expect(detailBody.data.venue.onboardingState).toBe('ready_for_review');
+      expect(detailBody.data.venue.metadata['executionPosture']).toBe('devnet_execution_capable');
+      expect(detailBody.data.venue.metadata['connectorMode']).toBe('execution_capable_devnet');
+      expect(detailBody.data.venue.metadata['executionReferenceKind']).toBe('solana_signature');
+      expect(detailBody.data.venue.metadata['supportedExecutionScope']).toContain('reduce-only BTC-PERP market orders');
+      expect(detailBody.data.venue.metadata['unsupportedExecutionScope']).toContain('carry increase-exposure execution');
+      expect(detailBody.data.promotion.current.capabilityClass).toBe('execution_capable');
+      expect(detailBody.data.promotion.current.promotionStatus).toBe('not_requested');
+      expect(detailBody.data.promotion.current.approvedForLiveUse).toBe(false);
+      expect(promotionBody.data.current.capabilityClass).toBe('execution_capable');
+      expect(promotionBody.data.current.effectivePosture).toBe('execution_capable_unapproved');
+      expect(eligibilityBody.data.eligibleForPromotion).toBe(true);
+      expect(eligibilityBody.data.blockingReasons).toHaveLength(0);
+      expect(eligibilityBody.data.postTradeConfirmation.status).toBe('confirmed');
+      expect(eligibilityBody.data.postTradeConfirmation.confirmedFullCount).toBe(1);
+      expect(eligibilityBody.data.postTradeConfirmation.entries[0]?.eventEvidence?.correlationStatus).toBe('event_matched_strong');
+      expect(eligibilityBody.data.postTradeConfirmation.entries[0]?.eventEvidence?.correlationConfidence).toBe('strong');
+    } finally {
+      await seededConnection.close();
     }
   });
 
@@ -1554,11 +2108,13 @@ describe('runtime-backed API routes', () => {
     const actionDetailBody = actionDetailResponse.json<{
       data: {
         action: { status: string; linkedCommandId: string | null };
+        plannedOrders: Array<{ marketIdentity: null | { capturedAtStage: string; confidence: string } }>;
         executions: Array<{ id: string; status: string; requestedBy: string }>;
         linkedRebalanceProposal: null | { id: string };
       };
     }>();
     expect(actionDetailBody.data.action.status).toBe('completed');
+    expect(actionDetailBody.data.plannedOrders[0]?.marketIdentity?.capturedAtStage).toBe('strategy_intent');
     expect(actionDetailBody.data.executions[0]?.requestedBy).toBe('operator-user');
 
     const carryExecutionId = actionDetailBody.data.executions[0]?.id;
@@ -1589,7 +2145,13 @@ describe('runtime-backed API routes', () => {
         command: null | { commandId: string };
         linkedRebalanceProposal: null | { id: string };
         venueSnapshots: Array<{ venueId: string; venueMode: string }>;
-        steps: Array<{ intentId: string; executionReference: string | null; venueId: string; simulated: boolean }>;
+        steps: Array<{
+          intentId: string;
+          executionReference: string | null;
+          venueId: string;
+          simulated: boolean;
+          marketIdentity: null | { capturedAtStage: string; confidence: string };
+        }>;
         timeline: Array<{ eventType: string; linkedExecutionId: string | null }>;
       };
     }>();
@@ -1604,6 +2166,7 @@ describe('runtime-backed API routes', () => {
     expect(carryExecutionBody.data.steps[0]?.intentId).toBeTruthy();
     expect(carryExecutionBody.data.steps[0]?.venueId).toBeTruthy();
     expect(carryExecutionBody.data.steps[0]?.simulated).toBe(true);
+    expect(carryExecutionBody.data.steps[0]?.marketIdentity?.capturedAtStage).toBeTruthy();
     expect(carryExecutionBody.data.timeline.some((entry) => entry.linkedExecutionId === carryExecutionId)).toBe(true);
   });
 

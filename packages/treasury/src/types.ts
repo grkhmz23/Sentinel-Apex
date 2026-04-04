@@ -30,6 +30,8 @@ export type TreasuryActionBlockedReasonCode =
   | 'venue_capacity_exceeded'
   | 'venue_concentration_breach'
   | 'venue_execution_unsupported'
+  | 'venue_live_unapproved'
+  | 'venue_live_ineligible'
   | 'venue_ineligible'
   | 'venue_not_found'
   | 'venue_unhealthy'
@@ -115,6 +117,14 @@ export interface TreasuryVenueCapabilities {
   executionSupported: boolean;
   readOnly: boolean;
   approvedForLiveUse: boolean;
+  sensitiveExecutionEligible: boolean;
+  promotionStatus:
+    | 'not_requested'
+    | 'pending_review'
+    | 'approved'
+    | 'rejected'
+    | 'suspended';
+  promotionBlockedReasons: string[];
   onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
   missingPrerequisites: string[];
   healthy: boolean;

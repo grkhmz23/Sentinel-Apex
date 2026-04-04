@@ -7,6 +7,11 @@ import Decimal from 'decimal.js';
 import type { CarryOpportunityCandidate, OpportunityLeg } from '@sentinel-apex/carry';
 import type { OpportunityId, OrderIntent } from '@sentinel-apex/domain';
 import { toOpportunityId } from '@sentinel-apex/domain';
+import {
+  attachCanonicalMarketIdentityToMetadata,
+  captureCanonicalMarketIdentity,
+  createCanonicalMarketIdentity,
+} from '@sentinel-apex/venue-adapters';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -81,7 +86,7 @@ export function buildIntentsFromOpportunity(
       opportunityId,
       reduceOnly: false,
       createdAt: new Date(timestamp),
-      metadata: {
+      metadata: attachCanonicalMarketIdentityToMetadata({
         sleeveId,
         opportunityType: opportunity.type,
         instrumentType: leg.instrumentType,
@@ -91,7 +96,20 @@ export function buildIntentsFromOpportunity(
         expectedAnnualYieldPct: opportunity.expectedAnnualYieldPct,
         netYieldPct: opportunity.netYieldPct,
         positionSizeUsd,
-      },
+      }, leg.marketIdentity === undefined || leg.marketIdentity === null
+        ? createCanonicalMarketIdentity({
+          venueId: leg.venueId,
+          asset: leg.asset,
+          marketType: leg.instrumentType,
+          provenance: 'derived',
+          capturedAtStage: 'strategy_intent',
+          source: 'strategy_intent_builder',
+          notes: ['Intent market identity is derived because the source opportunity leg did not carry venue-native market metadata.'],
+        })
+        : captureCanonicalMarketIdentity(leg.marketIdentity, {
+          capturedAtStage: 'strategy_intent',
+          source: 'strategy_intent_builder',
+        })),
     };
 
     intents.push(intent);

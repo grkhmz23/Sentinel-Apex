@@ -53,6 +53,8 @@ describe('SimulatedVenueAdapter', () => {
     expect(parseFloat(data.mid)).toBeCloseTo(100, 1);
     expect(parseFloat(data.ask)).toBeGreaterThan(parseFloat(data.mid));
     expect(parseFloat(data.bid)).toBeLessThan(parseFloat(data.mid));
+    expect(data.marketIdentity?.asset).toBe('SOL');
+    expect(data.marketIdentity?.capturedAtStage).toBe('market_data');
     expect(data.updatedAt).toBeInstanceOf(Date);
   });
 
@@ -76,6 +78,7 @@ describe('SimulatedVenueAdapter', () => {
 
     expect(result.status).toBe('filled');
     expect(result.filledSize).toBe('1');
+    expect(result.marketIdentity?.capturedAtStage).toBe('execution_result');
 
     // Fill price should be above mid (100) due to slippage
     const fillPrice = parseFloat(result.averageFillPrice ?? '0');

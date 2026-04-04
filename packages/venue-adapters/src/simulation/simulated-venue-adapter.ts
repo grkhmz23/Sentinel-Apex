@@ -11,6 +11,11 @@ import {
 } from '@sentinel-apex/observability';
 
 import { StaticPriceFeed, type PriceFeed } from './price-feed.js';
+import {
+  captureCanonicalMarketIdentity,
+  createCanonicalMarketIdentity,
+  type CanonicalMarketIdentity,
+} from '../interfaces/market-identity.js';
 
 import type { CarryVenueCapabilities } from '../interfaces/carry-venue-adapter.js';
 import type {
@@ -58,6 +63,7 @@ export interface ReplayFillParams {
   fee: string;
   reduceOnly?: boolean;
   submittedAt: Date;
+  marketIdentity?: CanonicalMarketIdentity | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +182,14 @@ export class SimulatedVenueAdapter implements VenueAdapter {
       type: 'market',
       size: params.size,
       ...(params.reduceOnly !== undefined ? { reduceOnly: params.reduceOnly } : {}),
+      ...(params.marketIdentity === undefined || params.marketIdentity === null
+        ? {}
+        : {
+          marketIdentity: captureCanonicalMarketIdentity(params.marketIdentity, {
+            capturedAtStage: 'runtime_order',
+            source: 'simulated_replay_fill',
+          }),
+        }),
     };
 
     this._applyFill(
@@ -195,6 +209,23 @@ export class SimulatedVenueAdapter implements VenueAdapter {
         averageFillPrice: fillPrice.toFixed(8),
         fees: fee.toFixed(8),
         submittedAt: params.submittedAt,
+        executionReference: params.venueOrderId,
+        executionMode: 'simulated',
+        marketIdentity: params.marketIdentity === undefined || params.marketIdentity === null
+          ? createCanonicalMarketIdentity({
+            venueId: this.venueId,
+            asset: params.asset,
+            marketType: 'spot',
+            marketSymbol: params.asset,
+            provenance: 'derived',
+            capturedAtStage: 'execution_result',
+            source: 'simulated_replay_fill',
+            notes: ['Replayed simulated fills retain derived spot identity only.'],
+          })
+          : captureCanonicalMarketIdentity(params.marketIdentity, {
+            capturedAtStage: 'execution_result',
+            source: 'simulated_replay_fill',
+          }),
       },
       open: false,
     });
@@ -228,6 +259,16 @@ export class SimulatedVenueAdapter implements VenueAdapter {
       nextFundingTime,
       openInterest: '0',
       volume24h: '0',
+      marketIdentity: createCanonicalMarketIdentity({
+        venueId: this.venueId,
+        asset,
+        marketType: 'spot',
+        marketSymbol: asset,
+        provenance: 'derived',
+        capturedAtStage: 'market_data',
+        source: 'simulated_price_feed',
+        notes: ['Simulated venues derive spot market identity from configured asset symbols rather than venue-native market registries.'],
+      }),
       updatedAt: new Date(),
     };
   }
@@ -247,6 +288,9 @@ export class SimulatedVenueAdapter implements VenueAdapter {
       supportsReduceExposure: true,
       readOnly: false,
       approvedForLiveUse: false,
+      sensitiveExecutionEligible: false,
+      promotionStatus: 'not_requested',
+      promotionBlockedReasons: [],
       healthy: true,
       onboardingState: 'simulated',
       missingPrerequisites: [],
@@ -543,6 +587,23 @@ export class SimulatedVenueAdapter implements VenueAdapter {
       averageFillPrice: null,
       fees: '0',
       submittedAt,
+      executionReference: venueOrderId,
+      executionMode: 'simulated',
+      marketIdentity: params.marketIdentity === undefined || params.marketIdentity === null
+        ? createCanonicalMarketIdentity({
+          venueId: this.venueId,
+          asset: params.asset,
+          marketType: 'spot',
+          marketSymbol: params.asset,
+          provenance: 'derived',
+          capturedAtStage: 'execution_result',
+          source: 'simulated_open_order',
+          notes: ['Simulated open orders only expose derived spot identity.'],
+        })
+        : captureCanonicalMarketIdentity(params.marketIdentity, {
+          capturedAtStage: 'execution_result',
+          source: 'simulated_open_order',
+        }),
     };
 
     this.orders.set(venueOrderId, { params, result, open: true });
@@ -651,6 +712,23 @@ export class SimulatedVenueAdapter implements VenueAdapter {
       averageFillPrice: fillPrice.toFixed(8),
       fees: fee.toFixed(8),
       submittedAt,
+      executionReference: venueOrderId,
+      executionMode: 'simulated',
+      marketIdentity: params.marketIdentity === undefined || params.marketIdentity === null
+        ? createCanonicalMarketIdentity({
+          venueId: this.venueId,
+          asset: params.asset,
+          marketType: 'spot',
+          marketSymbol: params.asset,
+          provenance: 'derived',
+          capturedAtStage: 'execution_result',
+          source: 'simulated_market_fill',
+          notes: ['Simulated market fills only expose derived spot identity.'],
+        })
+        : captureCanonicalMarketIdentity(params.marketIdentity, {
+          capturedAtStage: 'execution_result',
+          source: 'simulated_market_fill',
+        }),
     };
   }
 

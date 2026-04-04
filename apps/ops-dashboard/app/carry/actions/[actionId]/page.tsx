@@ -13,6 +13,35 @@ import { loadCarryActionDetailPageData } from '../../../../src/lib/runtime-api.s
 
 export const dynamic = 'force-dynamic';
 
+function formatMarketIdentityLabel(
+  identity: {
+    marketSymbol: string | null;
+    marketKey: string | null;
+    normalizedKey: string | null;
+  } | null,
+): string {
+  if (identity === null) {
+    return 'Unsupported';
+  }
+
+  return identity.marketSymbol ?? identity.marketKey ?? identity.normalizedKey ?? 'Unsupported';
+}
+
+function formatMarketIdentityDetail(
+  identity: {
+    provenance: string;
+    confidence: string;
+    capturedAtStage: string;
+    source: string;
+  } | null,
+): string {
+  if (identity === null) {
+    return 'No persisted market identity.';
+  }
+
+  return `${identity.provenance} / ${identity.confidence} via ${identity.capturedAtStage} (${identity.source})`;
+}
+
 export default async function CarryActionDetailPage(
   { params }: { params: { actionId: string } },
 ): Promise<JSX.Element> {
@@ -113,6 +142,8 @@ export default async function CarryActionDetailPage(
                   <tr>
                     <th>Venue</th>
                     <th>Asset</th>
+                    <th>Market</th>
+                    <th>Identity</th>
                     <th>Side</th>
                     <th>Type</th>
                     <th>Size</th>
@@ -124,6 +155,8 @@ export default async function CarryActionDetailPage(
                     <tr key={order.intentId}>
                       <td>{order.venueId}</td>
                       <td>{order.asset}</td>
+                      <td>{formatMarketIdentityLabel(order.marketIdentity)}</td>
+                      <td>{formatMarketIdentityDetail(order.marketIdentity)}</td>
                       <td>{order.side}</td>
                       <td>{order.orderType}</td>
                       <td>{order.requestedSize}</td>

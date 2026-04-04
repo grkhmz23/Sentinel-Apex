@@ -81,6 +81,9 @@ export class SimulatedTreasuryVenueAdapter implements TreasuryVenueAdapter {
       executionSupported: true,
       readOnly: false,
       approvedForLiveUse: false,
+      sensitiveExecutionEligible: false,
+      promotionStatus: 'not_requested',
+      promotionBlockedReasons: [],
       onboardingState: 'simulated',
       missingPrerequisites: [
         'Real connector implementation',

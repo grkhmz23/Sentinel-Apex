@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
-import { applyMigrations, createDatabaseConnection } from '@sentinel-apex/db';
+import {
+  applyMigrations,
+  createDatabaseConnection,
+  venueConnectorSnapshots,
+} from '@sentinel-apex/db';
 import { createId } from '@sentinel-apex/domain';
 import type {
   VenueCapabilitySnapshot,
@@ -12,16 +17,117 @@ import type {
 
 import { RuntimeControlPlane } from '../control-plane.js';
 import { SentinelRuntime } from '../runtime.js';
-import { DatabaseAuditWriter } from '../store.js';
+import { DatabaseAuditWriter, RuntimeStore } from '../store.js';
 
+import type { VenueSnapshotView } from '../types.js';
 
 async function createRuntimeConnectionString(): Promise<string> {
   return `file:///tmp/sentinel-apex-runtime-test-${randomUUID()}`;
 }
 
+function freshCapturedAt(): string {
+  return new Date(Date.now() - 60_000).toISOString();
+}
+
 async function createRuntime(overrides: Parameters<typeof SentinelRuntime.createDeterministic>[1] = {}) {
   const connectionString = await createRuntimeConnectionString();
   return SentinelRuntime.createDeterministic(connectionString, overrides);
+}
+
+function promotionCandidateSnapshot(
+  overrides: Partial<VenueSnapshotView> = {},
+): VenueSnapshotView {
+  const snapshot: VenueSnapshotView = {
+    id: 'promotion-candidate-snapshot',
+    venueId: 'live-carry-venue',
+    venueName: 'Live Carry Venue',
+    connectorType: 'carry_adapter',
+    sleeveApplicability: ['carry'],
+    truthMode: 'real',
+    readOnlySupport: false,
+    executionSupport: true,
+    approvedForLiveUse: false,
+    onboardingState: 'ready_for_review',
+    missingPrerequisites: [],
+    authRequirementsSummary: ['LIVE_CARRY_API_KEY'],
+    healthy: true,
+    healthState: 'healthy',
+    degradedReason: null,
+    truthProfile: 'minimal',
+    snapshotType: 'execution_capable_connector_state',
+    snapshotSuccessful: true,
+    snapshotSummary: 'Execution-capable connector snapshot is healthy and fresh.',
+    snapshotPayload: {
+      connectionState: 'ready',
+    },
+    errorMessage: null,
+    capturedAt: freshCapturedAt(),
+    snapshotCompleteness: 'complete',
+    truthCoverage: {
+      accountState: { status: 'available', reason: null, limitations: [] },
+      balanceState: { status: 'available', reason: null, limitations: [] },
+      capacityState: { status: 'unsupported', reason: 'Not a treasury connector.', limitations: [] },
+      exposureState: { status: 'available', reason: null, limitations: [] },
+      derivativeAccountState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
+      derivativePositionState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
+      derivativeHealthState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
+      orderState: { status: 'unsupported', reason: 'Order inventory is not exposed in this test fixture.', limitations: [] },
+      executionReferences: { status: 'unsupported', reason: 'Execution references are not exposed in this test fixture.', limitations: [] },
+    },
+    comparisonCoverage: {
+      executionReferences: { status: 'unsupported', reason: 'No execution-reference comparison coverage is modeled in this fixture.' },
+      positionInventory: { status: 'unsupported', reason: 'No direct comparison inventory is modeled in this fixture.' },
+      healthState: { status: 'unsupported', reason: 'No direct health comparison is modeled in this fixture.' },
+      orderInventory: { status: 'unsupported', reason: 'No direct order comparison is modeled in this fixture.' },
+      notes: [],
+    },
+    sourceMetadata: {
+      sourceKind: 'adapter',
+      sourceName: 'live_execution_adapter',
+      connectorDepth: 'execution_capable',
+      observedScope: ['balances', 'positions', 'status'],
+      provenanceNotes: ['Test fixture for connector promotion workflow.'],
+    },
+    accountState: {
+      accountAddress: 'live-carry-account',
+      accountLabel: 'Live Carry Venue',
+      accountExists: true,
+      ownerProgram: 'live-program',
+      executable: false,
+      lamports: '0',
+      nativeBalanceDisplay: '0',
+      observedSlot: '1',
+      rentEpoch: '0',
+      dataLength: 0,
+    },
+    balanceState: {
+      balances: [],
+      totalTrackedBalances: 0,
+      observedSlot: '1',
+    },
+    capacityState: null,
+    exposureState: {
+      exposures: [],
+      methodology: 'test_fixture',
+    },
+    derivativeAccountState: null,
+    derivativePositionState: null,
+    derivativeHealthState: null,
+    orderState: null,
+    executionReferenceState: null,
+    executionConfirmationState: null,
+    metadata: {
+      endpointConfigured: true,
+      apiKeyConfigured: true,
+      executionPosture: 'execution_capable',
+    },
+    ...overrides,
+  };
+
+  return {
+    ...snapshot,
+    executionConfirmationState: overrides.executionConfirmationState ?? snapshot.executionConfirmationState,
+  };
 }
 
 function asPositionFingerprint(position: {
@@ -625,15 +731,122 @@ describe('SentinelRuntime', () => {
     expect(state?.venueId).toBe('sim-venue-a');
     expect(state?.coverage.accountState.status).toBe('available');
     expect(state?.coverage.positionState.status).toBe('available');
-    expect(state?.coverage.healthState.status).toBe('unsupported');
+    expect(state?.coverage.healthState.status).toBe('available');
     expect(state?.coverage.orderState.status).toBe('available');
     expect(state?.accountState?.authorityAddress).toBe('sim-authority-a');
     expect(state?.positionState?.openPositionCount).toBeGreaterThan(0);
     expect(state?.positionState?.positions[0]?.provenance.source).toBe('runtime_fill_ledger');
     expect(state?.orderState?.openOrderCount).toBe(0);
-    expect(state?.healthState?.healthStatus).toBe('unknown');
-    expect(state?.healthState?.provenance.classification).toBe('estimated');
+    expect(state?.healthState?.healthStatus).toBe('healthy');
+    expect(state?.healthState?.comparisonMode).toBe('status_band_only');
+    expect(state?.healthState?.provenance.classification).toBe('derived');
 
     await runtime.close();
+  });
+
+  it('computes connector promotion eligibility and persists request, approval, and suspension history', async () => {
+    const connectionString = await createRuntimeConnectionString();
+    const connection = await createDatabaseConnection(connectionString);
+    await applyMigrations(connection);
+    const store = new RuntimeStore(connection.db, new DatabaseAuditWriter(connection.db));
+    const controlPlane = new RuntimeControlPlane(connection, store);
+
+    await store.persistVenueConnectorSnapshots({
+      snapshots: [promotionCandidateSnapshot()],
+    });
+
+    const eligibility = await controlPlane.getConnectorPromotionEligibility('live-carry-venue');
+    expect(eligibility?.eligibleForPromotion).toBe(true);
+    expect(eligibility?.blockingReasons).toHaveLength(0);
+
+    const requested = await controlPlane.requestConnectorPromotion(
+      'live-carry-venue',
+      'ops-user',
+      'operator',
+      'Requesting promotion review.',
+    );
+    expect(requested?.current.promotionStatus).toBe('pending_review');
+
+    const approved = await controlPlane.approveConnectorPromotion(
+      'live-carry-venue',
+      'admin-user',
+      'admin',
+      'Connector is eligible for live review.',
+    );
+    expect(approved?.current.promotionStatus).toBe('approved');
+    expect(approved?.current.approvedForLiveUse).toBe(true);
+    expect(approved?.current.sensitiveExecutionEligible).toBe(true);
+
+    const suspended = await controlPlane.suspendConnectorPromotion(
+      'live-carry-venue',
+      'admin-user',
+      'admin',
+      'Suspending pending venue maintenance.',
+    );
+    expect(suspended?.current.promotionStatus).toBe('suspended');
+    expect(suspended?.current.approvedForLiveUse).toBe(false);
+    expect(suspended?.history.map((entry) => entry.eventType)).toEqual([
+      'suspended',
+      'approved',
+      'requested',
+    ]);
+
+    await controlPlane.close();
+  });
+
+  it('blocks invalid connector promotion transitions and marks approved connectors ineligible when truth becomes stale', async () => {
+    const connectionString = await createRuntimeConnectionString();
+    const connection = await createDatabaseConnection(connectionString);
+    await applyMigrations(connection);
+    const store = new RuntimeStore(connection.db, new DatabaseAuditWriter(connection.db));
+    const controlPlane = new RuntimeControlPlane(connection, store);
+
+    await store.persistVenueConnectorSnapshots({
+      snapshots: [promotionCandidateSnapshot()],
+    });
+
+    await expect(controlPlane.approveConnectorPromotion(
+      'live-carry-venue',
+      'admin-user',
+      'admin',
+      'Attempting approval without a request.',
+    )).rejects.toThrow('cannot be approved from status');
+
+    await controlPlane.requestConnectorPromotion(
+      'live-carry-venue',
+      'ops-user',
+      'operator',
+      'Requesting promotion review.',
+    );
+    await controlPlane.approveConnectorPromotion(
+      'live-carry-venue',
+      'admin-user',
+      'admin',
+      'Connector is eligible for live review.',
+    );
+
+    const promotionBeforeStale = await controlPlane.getConnectorPromotion('live-carry-venue');
+    expect(promotionBeforeStale?.current.sensitiveExecutionEligible).toBe(true);
+
+    await connection.db
+      .update(venueConnectorSnapshots)
+      .set({
+        capturedAt: new Date('2020-01-01T00:00:00.000Z'),
+      })
+      .where(eq(venueConnectorSnapshots.venueId, 'live-carry-venue'));
+
+    const promotionAfterStale = await controlPlane.getConnectorPromotion('live-carry-venue');
+    expect(promotionAfterStale?.current.promotionStatus).toBe('approved');
+    expect(promotionAfterStale?.current.sensitiveExecutionEligible).toBe(false);
+    expect(promotionAfterStale?.current.blockers.some((blocker) => blocker.includes('stale'))).toBe(true);
+
+    await expect(controlPlane.requestConnectorPromotion(
+      'live-carry-venue',
+      'ops-user',
+      'operator',
+      'Trying to request again after approval.',
+    )).rejects.toThrow('already approved');
+
+    await controlPlane.close();
   });
 });

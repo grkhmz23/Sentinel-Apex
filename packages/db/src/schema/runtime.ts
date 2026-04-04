@@ -460,6 +460,82 @@ export const venueConnectorSnapshots = pgTable(
   }),
 );
 
+export const venueConnectorPromotions = pgTable(
+  'venue_connector_promotions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    venueId: text('venue_id').notNull(),
+    venueName: text('venue_name').notNull(),
+    connectorType: text('connector_type').notNull(),
+    requestedTargetPosture: text('requested_target_posture').notNull(),
+    capabilityClass: text('capability_class').notNull(),
+    promotionStatus: text('promotion_status').notNull(),
+    effectivePosture: text('effective_posture').notNull(),
+    approvedForLiveUse: boolean('approved_for_live_use').notNull().default(false),
+    sensitiveExecutionEligible: boolean('sensitive_execution_eligible').notNull().default(false),
+    readinessEvidence: jsonb('readiness_evidence').notNull().default({}),
+    missingPrerequisitesSnapshot: jsonb('missing_prerequisites_snapshot').notNull().default([]),
+    blockersSnapshot: jsonb('blockers_snapshot').notNull().default([]),
+    lastTruthSnapshotAt: timestamp('last_truth_snapshot_at', { withTimezone: true }),
+    lastSuccessfulTruthSnapshotAt: timestamp('last_successful_truth_snapshot_at', { withTimezone: true }),
+    snapshotFreshness: text('snapshot_freshness'),
+    snapshotCompleteness: text('snapshot_completeness'),
+    healthState: text('health_state'),
+    degradedReason: text('degraded_reason'),
+    requestedBy: text('requested_by').notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
+    reviewedBy: text('reviewed_by'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    rejectedBy: text('rejected_by'),
+    rejectedAt: timestamp('rejected_at', { withTimezone: true }),
+    suspendedBy: text('suspended_by'),
+    suspendedAt: timestamp('suspended_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    venueIdIdx: index('venue_connector_promotions_venue_id_idx').on(t.venueId),
+    connectorTypeIdx: index('venue_connector_promotions_connector_type_idx').on(t.connectorType),
+    promotionStatusIdx: index('venue_connector_promotions_status_idx').on(t.promotionStatus),
+    requestedAtIdx: index('venue_connector_promotions_requested_at_idx').on(t.requestedAt),
+    updatedAtIdx: index('venue_connector_promotions_updated_at_idx').on(t.updatedAt),
+  }),
+);
+
+export const venueConnectorPromotionEvents = pgTable(
+  'venue_connector_promotion_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    promotionId: uuid('promotion_id')
+      .notNull()
+      .references(() => venueConnectorPromotions.id),
+    venueId: text('venue_id').notNull(),
+    eventType: text('event_type').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status').notNull(),
+    effectivePosture: text('effective_posture').notNull(),
+    requestedTargetPosture: text('requested_target_posture').notNull(),
+    actorId: text('actor_id').notNull(),
+    note: text('note'),
+    readinessEvidence: jsonb('readiness_evidence').notNull().default({}),
+    missingPrerequisitesSnapshot: jsonb('missing_prerequisites_snapshot').notNull().default([]),
+    blockersSnapshot: jsonb('blockers_snapshot').notNull().default([]),
+    metadata: jsonb('metadata').notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    promotionIdIdx: index('venue_connector_promotion_events_promotion_id_idx').on(t.promotionId),
+    venueIdIdx: index('venue_connector_promotion_events_venue_id_idx').on(t.venueId),
+    eventTypeIdx: index('venue_connector_promotion_events_event_type_idx').on(t.eventType),
+    occurredAtIdx: index('venue_connector_promotion_events_occurred_at_idx').on(t.occurredAt),
+  }),
+);
+
 export const internalDerivativeSnapshots = pgTable(
   'internal_derivative_snapshots',
   {

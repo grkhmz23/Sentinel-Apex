@@ -154,4 +154,20 @@ describe('buildIntentsFromOpportunity', () => {
       expect(intent.limitPrice).toBeNull();
     }
   });
+
+  it('persists structured market identity metadata on generated intents', () => {
+    const opp = makeFundingArbOpportunity();
+    const intents = buildIntentsFromOpportunity(opp, 'carry', '10000');
+
+    expect(intents[0]?.metadata['marketIdentity']).toMatchObject({
+      asset: 'BTC',
+      marketType: 'perp',
+      capturedAtStage: 'strategy_intent',
+    });
+    expect(intents[1]?.metadata['marketIdentity']).toMatchObject({
+      asset: 'BTC',
+      marketType: 'spot',
+      capturedAtStage: 'strategy_intent',
+    });
+  });
 });

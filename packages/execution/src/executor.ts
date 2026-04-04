@@ -6,7 +6,16 @@ import { createId } from '@sentinel-apex/domain';
 import type { OrderIntent, OrderFill } from '@sentinel-apex/domain';
 import type { Logger, AuditWriter } from '@sentinel-apex/observability';
 import { ordersTotal, executionLatencyMs } from '@sentinel-apex/observability';
-import type { VenueAdapter } from '@sentinel-apex/venue-adapters';
+import {
+  attachCanonicalMarketIdentityToMetadata,
+  captureCanonicalMarketIdentity,
+  createCanonicalMarketIdentity,
+  preferCanonicalMarketIdentity,
+  readCanonicalMarketIdentityFromMetadata,
+  VENUE_EXECUTION_MODE_METADATA_KEY,
+  VENUE_EXECUTION_REFERENCE_METADATA_KEY,
+  type VenueAdapter,
+} from '@sentinel-apex/venue-adapters';
 
 import type { OrderRecord, OrderStore } from './order-manager.js';
 
@@ -66,6 +75,24 @@ export class OrderExecutor {
 
     await this.store.save(record);
 
+    const runtimeOrderIdentity = readCanonicalMarketIdentityFromMetadata(record.intent.metadata, {
+      venueId: record.intent.venueId,
+      asset: record.intent.asset,
+      marketType: record.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'runtime_order',
+      source: 'order_executor_submit',
+      notes: ['Runtime order market identity falls back to persisted intent metadata when no venue-native execution metadata is available.'],
+    }) ?? createCanonicalMarketIdentity({
+      venueId: record.intent.venueId,
+      asset: record.intent.asset,
+      marketType: record.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'runtime_order',
+      source: 'order_executor_submit',
+      notes: ['Runtime order market identity is derived from asset and instrument type because the intent did not carry richer market metadata.'],
+    });
+
     const startMs = Date.now();
     let lastError: Error | null = null;
 
@@ -89,6 +116,7 @@ export class OrderExecutor {
           ...(intent.limitPrice !== null ? { price: intent.limitPrice } : {}),
           reduceOnly: intent.reduceOnly,
           postOnly: intent.type === 'post_only',
+          marketIdentity: runtimeOrderIdentity,
         });
 
         const latencyMs = Date.now() - startMs;
@@ -110,7 +138,31 @@ export class OrderExecutor {
             newStatus = 'submitted';
         }
 
+        const resultIdentity = result.marketIdentity === undefined || result.marketIdentity === null
+          ? null
+          : captureCanonicalMarketIdentity(result.marketIdentity, {
+            capturedAtStage: 'execution_result',
+            source: `venue_adapter:${this.adapter.venueId}`,
+          });
+        const persistedIdentity = preferCanonicalMarketIdentity(runtimeOrderIdentity, resultIdentity);
+        const identityMetadata = attachCanonicalMarketIdentityToMetadata(
+          record.intent.metadata,
+          persistedIdentity,
+        );
+        const persistedMetadata = {
+          ...identityMetadata,
+          ...(result.executionReference === undefined
+            ? {}
+            : { [VENUE_EXECUTION_REFERENCE_METADATA_KEY]: result.executionReference }),
+          ...(result.executionMode === undefined
+            ? {}
+            : { [VENUE_EXECUTION_MODE_METADATA_KEY]: result.executionMode }),
+        };
         const updatedRecord: Partial<OrderRecord> = {
+          intent: {
+            ...record.intent,
+            metadata: persistedMetadata,
+          },
           venueOrderId: result.venueOrderId,
           filledSize: result.filledSize,
           averageFillPrice: result.averageFillPrice,
@@ -134,6 +186,8 @@ export class OrderExecutor {
           data: {
             intentId: intent.intentId,
             venueOrderId: result.venueOrderId,
+            executionReference: result.executionReference ?? null,
+            executionMode: result.executionMode ?? null,
             status: result.status,
             latencyMs,
           },

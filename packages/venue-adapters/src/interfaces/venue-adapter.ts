@@ -2,6 +2,84 @@
 // VenueAdapter interface — all venue integrations must implement this contract
 // =============================================================================
 
+import type { CanonicalMarketIdentity } from './market-identity.js';
+
+export type VenueOrderExecutionMode = 'simulated' | 'real';
+
+export const VENUE_EXECUTION_REFERENCE_METADATA_KEY = 'venueExecutionReference';
+export const VENUE_EXECUTION_MODE_METADATA_KEY = 'venueExecutionMode';
+
+export type VenueExecutionEventCorrelationStatus =
+  | 'event_matched_strong'
+  | 'event_matched_probable'
+  | 'event_unmatched'
+  | 'conflicting_event';
+
+export type VenueExecutionEventDeduplicationStatus = 'unique' | 'duplicate_event';
+export type VenueExecutionEventCorrelationConfidence = 'strong' | 'probable' | 'none' | 'conflicting';
+export type VenueExecutionEventEvidenceOrigin =
+  | 'raw_venue_event'
+  | 'derived_correlation'
+  | 'raw_and_derived';
+export type VenueExecutionEventFillRole = 'maker' | 'taker' | 'unknown';
+
+export interface VenueExecutionEventEvidenceRequest {
+  executionReference: string;
+  clientOrderId: string | null;
+  asset: string;
+  side: 'buy' | 'sell';
+  requestedSize: string;
+  reduceOnly: boolean;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface VenueExecutionRawEvent {
+  eventId: string;
+  venueEventType: string;
+  actionType: string | null;
+  txSignature: string | null;
+  clientOrderId: string | null;
+  accountAddress: string | null;
+  subaccountId: number | null;
+  marketIndex: number | null;
+  orderId: string | null;
+  userOrderId: number | null;
+  slot: string | null;
+  timestamp: string | null;
+  fillBaseAssetAmount: string | null;
+  fillQuoteAssetAmount: string | null;
+  fillRole: VenueExecutionEventFillRole | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface VenueExecutionEventEvidence {
+  executionReference: string;
+  clientOrderId: string | null;
+  correlationStatus: VenueExecutionEventCorrelationStatus;
+  deduplicationStatus: VenueExecutionEventDeduplicationStatus;
+  correlationConfidence: VenueExecutionEventCorrelationConfidence;
+  evidenceOrigin: VenueExecutionEventEvidenceOrigin;
+  summary: string;
+  blockedReason: string | null;
+  observedAt: string | null;
+  eventType: string | null;
+  actionType: string | null;
+  txSignature: string | null;
+  accountAddress: string | null;
+  subaccountId: number | null;
+  marketIndex: number | null;
+  orderId: string | null;
+  userOrderId: number | null;
+  fillBaseAssetAmount: string | null;
+  fillQuoteAssetAmount: string | null;
+  fillRole: VenueExecutionEventFillRole | null;
+  rawEventCount: number;
+  duplicateEventCount: number;
+  rawEvents: VenueExecutionRawEvent[];
+}
+
 export interface MarketData {
   venueId: string;
   asset: string;
@@ -15,6 +93,7 @@ export interface MarketData {
   nextFundingTime: Date;
   openInterest: string;
   volume24h: string;
+  marketIdentity?: CanonicalMarketIdentity | null;
   updatedAt: Date;
 }
 
@@ -52,6 +131,7 @@ export interface PlaceOrderParams {
   price?: string;
   reduceOnly?: boolean;
   postOnly?: boolean;
+  marketIdentity?: CanonicalMarketIdentity | null;
 }
 
 export interface PlaceOrderResult {
@@ -60,8 +140,11 @@ export interface PlaceOrderResult {
   status: 'submitted' | 'filled' | 'partially_filled' | 'rejected';
   filledSize: string;
   averageFillPrice: string | null;
-  fees: string;
+  fees: string | null;
   submittedAt: Date;
+  executionReference?: string | null;
+  executionMode?: VenueOrderExecutionMode;
+  marketIdentity?: CanonicalMarketIdentity | null;
 }
 
 export interface CancelOrderResult {
@@ -99,4 +182,7 @@ export interface VenueAdapter {
   getCarryCapabilities?(): Promise<import('./carry-venue-adapter.js').CarryVenueCapabilities>;
   getVenueCapabilitySnapshot?(): Promise<import('./venue-truth-adapter.js').VenueCapabilitySnapshot>;
   getVenueTruthSnapshot?(): Promise<import('./venue-truth-adapter.js').VenueTruthSnapshot>;
+  getExecutionEventEvidence?(
+    requests: VenueExecutionEventEvidenceRequest[],
+  ): Promise<VenueExecutionEventEvidence[]>;
 }

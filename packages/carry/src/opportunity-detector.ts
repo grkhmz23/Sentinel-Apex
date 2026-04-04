@@ -4,7 +4,12 @@
 
 import Decimal from 'decimal.js';
 
-import type { MarketData } from '@sentinel-apex/venue-adapters';
+import {
+  captureCanonicalMarketIdentity,
+  createCanonicalMarketIdentity,
+  type CanonicalMarketIdentity,
+  type MarketData,
+} from '@sentinel-apex/venue-adapters';
 
 import type { CarryConfig } from './config.js';
 
@@ -20,6 +25,8 @@ export interface FundingRateSnapshot {
   markPrice: string;
   nextFundingTime: Date;
   timestamp: Date;
+  perpMarketIdentity?: CanonicalMarketIdentity | null;
+  spotMarketIdentity?: CanonicalMarketIdentity | null;
 }
 
 export interface BasisSnapshot {
@@ -35,6 +42,8 @@ export interface BasisSnapshot {
   /** based on time to expiry (for futures) or 8h funding for perps */
   annualizedBasis: string;
   timestamp: Date;
+  spotMarketIdentity?: CanonicalMarketIdentity | null;
+  perpMarketIdentity?: CanonicalMarketIdentity | null;
 }
 
 export interface CrossVenueSpread {
@@ -59,6 +68,7 @@ export interface OpportunityLeg {
   estimatedSize: string;
   estimatedPrice: string;
   estimatedFee: string;
+  marketIdentity?: CanonicalMarketIdentity | null;
 }
 
 export interface CarryOpportunityCandidate {
@@ -166,6 +176,20 @@ export function detectFundingRateOpportunities(
       estimatedSize,
       estimatedPrice,
       estimatedFee,
+      marketIdentity: snap.perpMarketIdentity === undefined || snap.perpMarketIdentity === null
+        ? createCanonicalMarketIdentity({
+          venueId: snap.venueId,
+          asset: snap.asset,
+          marketType: 'perp',
+          provenance: 'derived',
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_funding_rate_detector',
+          notes: ['Funding-rate opportunities derive perpetual market identity from asset plus instrument type when venue-native market metadata is unavailable.'],
+        })
+        : captureCanonicalMarketIdentity(snap.perpMarketIdentity, {
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_funding_rate_detector',
+        }),
     };
 
     // Spot leg on the same venue for simplicity (cross-venue handled by detectCrossVenueOpportunities)
@@ -177,6 +201,20 @@ export function detectFundingRateOpportunities(
       estimatedSize,
       estimatedPrice,
       estimatedFee,
+      marketIdentity: snap.spotMarketIdentity === undefined || snap.spotMarketIdentity === null
+        ? createCanonicalMarketIdentity({
+          venueId: snap.venueId,
+          asset: snap.asset,
+          marketType: 'spot',
+          provenance: 'derived',
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_funding_rate_detector',
+          notes: ['Spot-leg market identity is derived because the funding snapshot only guarantees perpetual venue metadata.'],
+        })
+        : captureCanonicalMarketIdentity(snap.spotMarketIdentity, {
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_funding_rate_detector',
+        }),
     };
 
     const expiresAt = new Date(now.getTime() + config.maxOpportunityAgeSec * 1_000);
@@ -270,6 +308,20 @@ export function detectBasisOpportunities(
       estimatedSize: '1',
       estimatedPrice: snap.perpPrice,
       estimatedFee,
+      marketIdentity: snap.perpMarketIdentity === undefined || snap.perpMarketIdentity === null
+        ? createCanonicalMarketIdentity({
+          venueId: snap.perpVenueId,
+          asset: snap.asset,
+          marketType: 'perp',
+          provenance: 'derived',
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_basis_detector',
+          notes: ['Basis-trade perpetual identity is derived when the snapshot does not carry venue-native market metadata.'],
+        })
+        : captureCanonicalMarketIdentity(snap.perpMarketIdentity, {
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_basis_detector',
+        }),
     };
 
     const spotLeg: OpportunityLeg = {
@@ -280,6 +332,20 @@ export function detectBasisOpportunities(
       estimatedSize: '1',
       estimatedPrice: snap.spotPrice,
       estimatedFee,
+      marketIdentity: snap.spotMarketIdentity === undefined || snap.spotMarketIdentity === null
+        ? createCanonicalMarketIdentity({
+          venueId: snap.spotVenueId,
+          asset: snap.asset,
+          marketType: 'spot',
+          provenance: 'derived',
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_basis_detector',
+          notes: ['Basis-trade spot identity is derived when the snapshot does not carry venue-native market metadata.'],
+        })
+        : captureCanonicalMarketIdentity(snap.spotMarketIdentity, {
+          capturedAtStage: 'opportunity_leg',
+          source: 'carry_basis_detector',
+        }),
     };
 
     const expiresAt = new Date(now.getTime() + config.maxOpportunityAgeSec * 1_000);
@@ -413,6 +479,20 @@ export function detectCrossVenueOpportunities(
           estimatedSize: '1',
           estimatedPrice: longPrice.toFixed(),
           estimatedFee,
+          marketIdentity: longVenue.marketIdentity === undefined || longVenue.marketIdentity === null
+            ? createCanonicalMarketIdentity({
+              venueId: longVenue.venueId,
+              asset,
+              marketType: 'spot',
+              provenance: 'derived',
+              capturedAtStage: 'opportunity_leg',
+              source: 'carry_cross_venue_detector',
+              notes: ['Cross-venue long-leg identity is derived because the market-data snapshot did not provide venue-native market metadata.'],
+            })
+            : captureCanonicalMarketIdentity(longVenue.marketIdentity, {
+              capturedAtStage: 'opportunity_leg',
+              source: 'carry_cross_venue_detector',
+            }),
         };
 
         const shortLeg: OpportunityLeg = {
@@ -423,6 +503,20 @@ export function detectCrossVenueOpportunities(
           estimatedSize: '1',
           estimatedPrice: shortPrice.toFixed(),
           estimatedFee,
+          marketIdentity: shortVenue.marketIdentity === undefined || shortVenue.marketIdentity === null
+            ? createCanonicalMarketIdentity({
+              venueId: shortVenue.venueId,
+              asset,
+              marketType: 'spot',
+              provenance: 'derived',
+              capturedAtStage: 'opportunity_leg',
+              source: 'carry_cross_venue_detector',
+              notes: ['Cross-venue short-leg identity is derived because the market-data snapshot did not provide venue-native market metadata.'],
+            })
+            : captureCanonicalMarketIdentity(shortVenue.marketIdentity, {
+              capturedAtStage: 'opportunity_leg',
+              source: 'carry_cross_venue_detector',
+            }),
         };
 
         const expiresAt = new Date(now.getTime() + config.maxOpportunityAgeSec * 1_000);

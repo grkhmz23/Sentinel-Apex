@@ -6,7 +6,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import type { OrderIntent } from '@sentinel-apex/domain';
 import { ConsoleAuditWriter, createLogger } from '@sentinel-apex/observability';
-import { SimulatedVenueAdapter } from '@sentinel-apex/venue-adapters';
+import {
+  attachCanonicalMarketIdentityToMetadata,
+  createCanonicalMarketIdentity,
+  readCanonicalMarketIdentityFromMetadata,
+  SimulatedVenueAdapter,
+} from '@sentinel-apex/venue-adapters';
 import type { SimulatedVenueConfig } from '@sentinel-apex/venue-adapters';
 
 import { OrderExecutor } from '../executor.js';
@@ -104,6 +109,42 @@ describe('OrderExecutor', () => {
     // Should still only have one record
     const allFilled = await store.listByStatus('filled');
     expect(allFilled).toHaveLength(1);
+  });
+
+  it('preserves structured market identity through order submission and result promotion', async () => {
+    const { executor } = makeExecutor(adapter);
+    const intent = makeIntent('exec-market-identity-001', {
+      asset: 'BTC',
+      metadata: attachCanonicalMarketIdentityToMetadata(
+        { instrumentType: 'perp' },
+        createCanonicalMarketIdentity({
+          venueId: 'exec-sim',
+          asset: 'BTC',
+          marketType: 'perp',
+          marketIndex: 7,
+          marketKey: 'perp:7',
+          marketSymbol: 'BTC-PERP',
+          provenance: 'venue_native',
+          capturedAtStage: 'strategy_intent',
+          source: 'executor_test',
+        }),
+      ),
+    });
+
+    const record = await executor.submitIntent(intent);
+    const persistedIdentity = readCanonicalMarketIdentityFromMetadata(record.intent.metadata, {
+      venueId: record.intent.venueId,
+      asset: record.intent.asset,
+      marketType: record.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'runtime_order',
+      source: 'executor_test',
+    });
+
+    expect(persistedIdentity?.normalizedKey).toBe('perp:7');
+    expect(persistedIdentity?.confidence).toBe('exact');
+    expect(persistedIdentity?.provenance).toBe('venue_native');
+    expect(persistedIdentity?.capturedAtStage).toBe('execution_result');
   });
 
   // ── cancelOrder ──────────────────────────────────────────────────────────

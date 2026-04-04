@@ -14,6 +14,7 @@ import {
   DEFAULT_CARRY_CONFIG,
   DEFAULT_CARRY_OPERATIONAL_POLICY,
   buildCarryReductionIntents,
+  type CarryOperationalBlockedReason,
   type CarryExecutionRecommendation,
   type CarryOpportunityCandidate,
   type CarryPositionSnapshot,
@@ -46,7 +47,11 @@ import {
   type TreasuryVenueSnapshot,
 } from '@sentinel-apex/treasury';
 import {
+  DriftDevnetCarryAdapter,
   DriftReadonlyTruthAdapter,
+  VENUE_EXECUTION_MODE_METADATA_KEY,
+  VENUE_EXECUTION_REFERENCE_METADATA_KEY,
+  readCanonicalMarketIdentityFromMetadata,
   SimulatedVenueAdapter,
   SimulatedTreasuryVenueAdapter,
   type SimulatedVenueConfig,
@@ -55,6 +60,8 @@ import {
   type TreasuryVenueCapabilities,
   type VenueAdapter,
   type VenueCapabilitySnapshot,
+  type VenueExecutionEventEvidence,
+  type VenueExecutionEventEvidenceRequest,
   type VenuePosition,
   type VenueTruthAdapter,
   type VenueTruthSnapshot,
@@ -73,9 +80,11 @@ import type {
   AuditEventView,
   CarryActionDetailView,
   CarryActionView,
+  CarryExecutionPostTradeConfirmationView,
   CarryExecutionDetailView,
   CarryExecutionView,
   CarryVenueView,
+  ConnectorPostTradeConfirmationEvidenceView,
   OpportunityView,
   OrderView,
   PnlSummaryView,
@@ -184,6 +193,756 @@ function normaliseCarryOpportunityScore(opportunities: OpportunityView[]): numbe
   return Number((scored.reduce((sum, value) => sum + value, 0) / scored.length).toFixed(4));
 }
 
+function readVenueExecutionReference(metadata: Record<string, unknown>): string | null {
+  const value = metadata[VENUE_EXECUTION_REFERENCE_METADATA_KEY];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readVenueExecutionMode(
+  metadata: Record<string, unknown>,
+): 'real' | 'simulated' | null {
+  const value = metadata[VENUE_EXECUTION_MODE_METADATA_KEY];
+  return value === 'real' || value === 'simulated' ? value : null;
+}
+
+const PRE_TRADE_POSITION_CONTEXT_METADATA_KEY = 'preTradePositionContext';
+const POST_TRADE_CONFIRMATION_OUTCOME_KEY = 'postTradeConfirmation';
+const POST_TRADE_CONFIRMATION_CANDIDATE_LIMIT = 10;
+const POST_TRADE_POSITION_TOLERANCE = new Decimal('0.000000001');
+
+type CarryExecutionConfirmationCandidate =
+  Awaited<ReturnType<RuntimeStore['listRecentCarryExecutionConfirmationCandidates']>>[number];
+
+interface PreTradePositionContext {
+  captureStatus: 'captured' | 'unavailable';
+  observedAt: string;
+  asset: string;
+  marketKey: string | null;
+  marketSymbol: string | null;
+  side: 'long' | 'short' | 'flat' | null;
+  size: string | null;
+  reason: string | null;
+}
+
+interface PositionBoundaryContext {
+  side: 'long' | 'short' | 'flat';
+  size: string;
+  marketKey: string | null;
+  marketSymbol: string | null;
+}
+
+interface CarryExecutionPostTradeConfirmationEvaluation {
+  candidate: CarryExecutionConfirmationCandidate;
+  confirmation: CarryExecutionPostTradeConfirmationView;
+  statusPatch?: string;
+  filledSizePatch?: string | null;
+}
+
+type CarryExecutionEventEvidenceMap = Map<string, VenueExecutionEventEvidence>;
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normaliseDecimalString(value: string): string {
+  if (!value.includes('.')) {
+    return value;
+  }
+
+  return value.replace(/\.?0+$/, '');
+}
+
+function decimalMax(left: Decimal, right: Decimal): Decimal {
+  return left.greaterThan(right) ? left : right;
+}
+
+function marketValue(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readPreTradePositionContext(metadata: Record<string, unknown>): PreTradePositionContext | null {
+  const value = asRecord(metadata[PRE_TRADE_POSITION_CONTEXT_METADATA_KEY]);
+  if (typeof value['captureStatus'] !== 'string' || typeof value['observedAt'] !== 'string') {
+    return null;
+  }
+
+  return {
+    captureStatus: value['captureStatus'] === 'captured' ? 'captured' : 'unavailable',
+    observedAt: value['observedAt'],
+    asset: typeof value['asset'] === 'string' ? value['asset'] : '',
+    marketKey: marketValue(value['marketKey']),
+    marketSymbol: marketValue(value['marketSymbol']),
+    side: value['side'] === 'long' || value['side'] === 'short' || value['side'] === 'flat'
+      ? value['side']
+      : null,
+    size: marketValue(value['size']),
+    reason: marketValue(value['reason']),
+  };
+}
+
+function capturePreTradePositionContext(input: {
+  asset: string;
+  side: 'buy' | 'sell';
+  marketKey: string | null;
+  marketSymbol: string | null;
+  capturedAt: Date;
+  positions: VenuePosition[];
+}): PreTradePositionContext {
+  const expectedPositionSide = input.side === 'sell' ? 'long' : 'short';
+  const matchingPosition = input.positions.find((position) => (
+    position.asset.trim().toUpperCase() === input.asset.trim().toUpperCase()
+      && position.side === expectedPositionSide
+  ));
+
+  if (matchingPosition === undefined) {
+    return {
+      captureStatus: 'unavailable',
+      observedAt: input.capturedAt.toISOString(),
+      asset: input.asset,
+      marketKey: input.marketKey,
+      marketSymbol: input.marketSymbol,
+      side: null,
+      size: null,
+      reason: `No ${expectedPositionSide} ${input.asset} position was available before submission.`,
+    };
+  }
+
+  return {
+    captureStatus: 'captured',
+    observedAt: input.capturedAt.toISOString(),
+    asset: input.asset,
+    marketKey: input.marketKey,
+    marketSymbol: input.marketSymbol,
+    side: matchingPosition.side,
+    size: matchingPosition.size,
+    reason: null,
+  };
+}
+
+function defaultPositionBoundary(context: PreTradePositionContext): PositionBoundaryContext {
+  return {
+    side: 'flat',
+    size: '0',
+    marketKey: context.marketKey,
+    marketSymbol: context.marketSymbol,
+  };
+}
+
+function candidateGroupKey(candidate: CarryExecutionConfirmationCandidate): string {
+  const context = readPreTradePositionContext(candidate.metadata);
+  return [
+    candidate.venueId,
+    context?.asset ?? candidate.asset,
+    context?.marketKey ?? context?.marketSymbol ?? candidate.asset,
+    context?.side ?? (candidate.side === 'sell' ? 'long' : 'short'),
+  ].join(':');
+}
+
+function findSnapshotPositionBoundary(
+  snapshot: VenueSnapshotView,
+  context: PreTradePositionContext,
+): PositionBoundaryContext {
+  const positions = snapshot.derivativePositionState?.positions ?? [];
+  const matchingPosition = positions.find((position) => (
+    (context.marketKey !== null && position.marketKey === context.marketKey)
+      || (context.marketSymbol !== null && position.marketSymbol === context.marketSymbol)
+      || (position.marketSymbol !== null && position.marketSymbol.startsWith(`${context.asset.trim().toUpperCase()}-`))
+  ));
+
+  if (
+    matchingPosition === undefined
+    || matchingPosition.side === 'unknown'
+    || matchingPosition.baseAssetAmount === null
+  ) {
+    return defaultPositionBoundary(context);
+  }
+
+  return {
+    side: matchingPosition.side === 'long' || matchingPosition.side === 'short'
+      ? matchingPosition.side
+      : 'flat',
+    size: matchingPosition.baseAssetAmount === null
+      ? '0'
+      : normaliseDecimalString(new Decimal(matchingPosition.baseAssetAmount).abs().toFixed(9)),
+    marketKey: matchingPosition.marketKey,
+    marketSymbol: matchingPosition.marketSymbol,
+  };
+}
+
+function buildPostTradeConfirmationSummary(
+  status: CarryExecutionPostTradeConfirmationView['status'],
+  requestedSize: string,
+  confirmedSize: string | null,
+  executionReference: string,
+  eventEvidence: VenueExecutionEventEvidence | null,
+): string {
+  switch (status) {
+    case 'confirmed_full':
+      return `Execution reference ${executionReference} has a strong Drift fill match and confirms the full requested ${requestedSize} position reduction.`;
+    case 'confirmed_partial':
+      return `Execution reference ${executionReference} has attributed Drift fill evidence and venue truth, but only ${confirmedSize ?? '0'} of the requested ${requestedSize} reduction is jointly confirmed.`;
+    case 'confirmed_partial_event_only':
+      return eventEvidence?.fillBaseAssetAmount == null
+        ? `Execution reference ${executionReference} has a strong Drift fill match, but venue position truth has not fully reflected the reduction yet.`
+        : `Execution reference ${executionReference} has a strong Drift fill match for ${eventEvidence.fillBaseAssetAmount}, but venue position truth has not fully reflected that reduction yet.`;
+    case 'confirmed_partial_position_only':
+      return `Execution reference ${executionReference} confirms ${confirmedSize ?? '0'} of the requested ${requestedSize} reduction in venue truth, but venue-native Drift fill evidence is still missing or only probable.`;
+    case 'pending_event':
+      return `Execution reference ${executionReference} is present in venue truth, but a strong venue-native Drift fill match has not been attributed yet.`;
+    case 'pending_position_delta':
+      return `Execution reference ${executionReference} has a strong Drift fill match, but the expected position delta is not yet visible in venue truth.`;
+    case 'conflicting_event':
+      return `Execution reference ${executionReference} has Drift venue events that conflict with the expected reduce-only BTC-PERP execution semantics.`;
+    case 'conflicting_event_vs_position':
+      return `Execution reference ${executionReference} has Drift event evidence that conflicts with the observed position delta.`;
+    case 'missing_reference':
+      return `Execution reference ${executionReference} is not present in the latest venue truth snapshot.`;
+    case 'invalid_position_delta':
+      return `Execution reference ${executionReference} was observed, but the latest venue position state does not reflect a safe reduce-only delta.`;
+    case 'insufficient_context':
+      return `Execution reference ${executionReference} cannot be confirmed because the required pre-trade position context was not persisted.`;
+    default:
+      return `Execution reference ${executionReference} has an unknown confirmation state.`;
+  }
+}
+
+function formatOptionalDecimal(value: Decimal | null): string | null {
+  return value === null ? null : normaliseDecimalString(value.toFixed(9));
+}
+
+function parseOptionalDecimal(value: string | null | undefined): Decimal | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  try {
+    const decimal = new Decimal(value);
+    return decimal.isFinite() ? decimal : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildCarryExecutionPostTradeConfirmation(input: {
+  candidate: CarryExecutionConfirmationCandidate;
+  status: CarryExecutionPostTradeConfirmationView['status'];
+  evidenceBasis: CarryExecutionPostTradeConfirmationView['evidenceBasis'];
+  evaluatedAt: string;
+  referenceObserved: boolean;
+  referenceObservedAt: string | null;
+  context: PreTradePositionContext | null;
+  boundary: PositionBoundaryContext | null;
+  confirmedSize: Decimal | null;
+  remainingSize: Decimal | null;
+  blockedReason: string | null;
+  eventEvidence: VenueExecutionEventEvidence | null;
+}): CarryExecutionPostTradeConfirmationView {
+  const confirmedSize = formatOptionalDecimal(input.confirmedSize);
+  const remainingSize = formatOptionalDecimal(input.remainingSize);
+
+  return {
+    status: input.status,
+    evidenceBasis: input.evidenceBasis,
+    summary: buildPostTradeConfirmationSummary(
+      input.status,
+      input.candidate.requestedSize,
+      confirmedSize,
+      input.candidate.executionReference,
+      input.eventEvidence,
+    ),
+    evaluatedAt: input.evaluatedAt,
+    referenceObserved: input.referenceObserved,
+    referenceObservedAt: input.referenceObservedAt,
+    marketKey: input.boundary?.marketKey ?? input.context?.marketKey ?? null,
+    marketSymbol: input.boundary?.marketSymbol ?? input.context?.marketSymbol ?? null,
+    requestedSize: input.candidate.requestedSize,
+    confirmedSize,
+    remainingSize,
+    preTradePositionSide: input.context?.side ?? null,
+    preTradePositionSize: input.context?.size ?? null,
+    observedPositionSide: input.boundary?.side ?? null,
+    observedPositionSize: input.boundary === null
+      ? null
+      : normaliseDecimalString(new Decimal(input.boundary.size).toFixed(9)),
+    eventEvidence: input.eventEvidence,
+    blockedReason: input.blockedReason,
+  };
+}
+
+function dedupeCarryExecutionConfirmationCandidates(
+  candidates: CarryExecutionConfirmationCandidate[],
+): CarryExecutionConfirmationCandidate[] {
+  return Array.from(
+    candidates.reduce((map, candidate) => {
+      const key = candidate.clientOrderId ?? candidate.executionReference;
+      const existing = map.get(key);
+      if (existing === undefined || existing.updatedAt < candidate.updatedAt) {
+        map.set(key, candidate);
+      }
+      return map;
+    }, new Map<string, CarryExecutionConfirmationCandidate>()).values(),
+  ).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function countConfirmationEntries(
+  entries: ConnectorPostTradeConfirmationEvidenceView['entries'],
+  statuses: CarryExecutionPostTradeConfirmationView['status'][],
+): number {
+  return entries.filter((entry) => statuses.includes(entry.status)).length;
+}
+
+function buildUnavailableExecutionEventEvidence(
+  request: VenueExecutionEventEvidenceRequest,
+  message: string,
+): VenueExecutionEventEvidence {
+  return {
+    executionReference: request.executionReference,
+    clientOrderId: request.clientOrderId,
+    correlationStatus: 'event_unmatched',
+    deduplicationStatus: 'unique',
+    correlationConfidence: 'none',
+    evidenceOrigin: 'derived_correlation',
+    summary: `Venue-native execution event evidence is unavailable for ${request.executionReference}.`,
+    blockedReason: message,
+    observedAt: null,
+    eventType: null,
+    actionType: null,
+    txSignature: request.executionReference,
+    accountAddress: null,
+    subaccountId: null,
+    marketIndex: null,
+    orderId: null,
+    userOrderId: null,
+    fillBaseAssetAmount: null,
+    fillQuoteAssetAmount: null,
+    fillRole: null,
+    rawEventCount: 0,
+    duplicateEventCount: 0,
+    rawEvents: [],
+  };
+}
+
+function deriveConfirmationPatch(
+  candidate: CarryExecutionConfirmationCandidate,
+  confirmation: CarryExecutionPostTradeConfirmationView,
+): Pick<CarryExecutionPostTradeConfirmationEvaluation, 'statusPatch' | 'filledSizePatch'> {
+  const requestedSize = new Decimal(candidate.requestedSize);
+  const observedFilledSize = [
+    parseOptionalDecimal(confirmation.confirmedSize),
+    parseOptionalDecimal(confirmation.eventEvidence?.fillBaseAssetAmount),
+  ].reduce<Decimal | null>((current, value) => {
+    if (value === null) {
+      return current;
+    }
+
+    const bounded = decimalMax(Decimal.min(value, requestedSize), new Decimal(0));
+    if (current === null || bounded.greaterThan(current)) {
+      return bounded;
+    }
+    return current;
+  }, null);
+  const filledSizePatch = formatOptionalDecimal(observedFilledSize);
+
+  switch (confirmation.status) {
+    case 'confirmed_full':
+      return {
+        statusPatch: 'filled',
+        filledSizePatch: candidate.requestedSize,
+      };
+    case 'confirmed_partial':
+    case 'confirmed_partial_event_only':
+    case 'confirmed_partial_position_only':
+    case 'pending_position_delta':
+      return filledSizePatch === null
+        ? {}
+        : {
+          statusPatch: 'partially_filled',
+          filledSizePatch,
+        };
+    default:
+      return {};
+  }
+}
+
+function evaluatePostTradeConfirmationGroup(
+  snapshot: VenueSnapshotView,
+  candidates: CarryExecutionConfirmationCandidate[],
+  eventEvidenceByStepId: CarryExecutionEventEvidenceMap,
+): CarryExecutionPostTradeConfirmationEvaluation[] {
+  const observedReferences = new Map(
+    (snapshot.executionReferenceState?.references ?? []).map((reference) => [reference.reference, reference] as const),
+  );
+  const evaluations: CarryExecutionPostTradeConfirmationEvaluation[] = [];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (candidate === undefined) {
+      continue;
+    }
+
+    const eventEvidence = eventEvidenceByStepId.get(candidate.stepId) ?? null;
+    const context = readPreTradePositionContext(candidate.metadata);
+    const observedReference = observedReferences.get(candidate.executionReference);
+
+    if (
+      context === null
+      || context.captureStatus !== 'captured'
+      || context.size === null
+      || (context.side !== 'long' && context.side !== 'short')
+    ) {
+      evaluations.push({
+        candidate,
+        confirmation: buildCarryExecutionPostTradeConfirmation({
+          candidate,
+          status: 'insufficient_context',
+          evidenceBasis: 'insufficient',
+          evaluatedAt: snapshot.capturedAt,
+          referenceObserved: observedReference !== undefined,
+          referenceObservedAt: observedReference?.blockTime ?? null,
+          context,
+          boundary: null,
+          confirmedSize: null,
+          remainingSize: new Decimal(candidate.requestedSize),
+          blockedReason: context?.reason ?? 'Pre-trade position context was unavailable.',
+          eventEvidence,
+        }),
+      });
+      continue;
+    }
+
+    if (observedReference === undefined) {
+      evaluations.push({
+        candidate,
+        confirmation: buildCarryExecutionPostTradeConfirmation({
+          candidate,
+          status: 'missing_reference',
+          evidenceBasis: eventEvidence === null ? 'signature_only' : 'insufficient',
+          evaluatedAt: snapshot.capturedAt,
+          referenceObserved: false,
+          referenceObservedAt: null,
+          context,
+          boundary: null,
+          confirmedSize: null,
+          remainingSize: new Decimal(candidate.requestedSize),
+          blockedReason: 'The latest venue truth snapshot does not include the submitted execution reference.',
+          eventEvidence,
+        }),
+      });
+      continue;
+    }
+
+    const nextCandidate = candidates[index + 1];
+    const nextContext = nextCandidate === undefined ? null : readPreTradePositionContext(nextCandidate.metadata);
+    const boundary = nextCandidate === undefined
+      ? findSnapshotPositionBoundary(snapshot, context)
+      : nextContext !== null
+        && nextContext.captureStatus === 'captured'
+        && nextContext.size !== null
+        && (nextContext.side === 'long' || nextContext.side === 'short' || nextContext.side === 'flat')
+        ? {
+          side: nextContext.side,
+          size: nextContext.size,
+          marketKey: nextContext.marketKey,
+          marketSymbol: nextContext.marketSymbol,
+        }
+        : null;
+
+    if (boundary === null) {
+      evaluations.push({
+        candidate,
+        confirmation: buildCarryExecutionPostTradeConfirmation({
+          candidate,
+          status: 'insufficient_context',
+          evidenceBasis: 'insufficient',
+          evaluatedAt: snapshot.capturedAt,
+          referenceObserved: true,
+          referenceObservedAt: observedReference.blockTime,
+          context,
+          boundary: null,
+          confirmedSize: null,
+          remainingSize: new Decimal(candidate.requestedSize),
+          blockedReason: 'A later carry execution did not persist its own pre-trade position boundary, so this delta cannot be attributed safely.',
+          eventEvidence,
+        }),
+      });
+      continue;
+    }
+
+    const preSize = new Decimal(context.size);
+    const boundarySize = new Decimal(boundary.size);
+    const requestedSize = new Decimal(candidate.requestedSize);
+    const invalidDirection = boundary.side !== 'flat' && boundary.side !== context.side;
+    const increasedExposure = boundarySize.minus(preSize).greaterThan(POST_TRADE_POSITION_TOLERANCE);
+    const rawReduction = decimalMax(preSize.minus(boundarySize), new Decimal(0));
+    const positionConfirmedSize = decimalMax(
+      Decimal.min(rawReduction, requestedSize),
+      new Decimal(0),
+    );
+    const remainingSize = decimalMax(requestedSize.minus(positionConfirmedSize), new Decimal(0));
+    const eventFilledSize = parseOptionalDecimal(eventEvidence?.fillBaseAssetAmount);
+    const boundedEventFilledSize = eventFilledSize === null
+      ? null
+      : decimalMax(Decimal.min(eventFilledSize, requestedSize), new Decimal(0));
+    const expectedEventSize = boundedEventFilledSize ?? requestedSize;
+    const hasStrongEventMatch = eventEvidence?.correlationStatus === 'event_matched_strong';
+    const hasProbableEventMatch = eventEvidence?.correlationStatus === 'event_matched_probable';
+    const hasConflictingEvent = eventEvidence?.correlationStatus === 'conflicting_event';
+
+    let confirmation = buildCarryExecutionPostTradeConfirmation({
+      candidate,
+      status: 'pending_event',
+      evidenceBasis: 'signature_only',
+      evaluatedAt: snapshot.capturedAt,
+      referenceObserved: true,
+      referenceObservedAt: observedReference.blockTime,
+      context,
+      boundary,
+      confirmedSize: null,
+      remainingSize,
+      blockedReason: 'Execution reference is visible, but venue-native Drift fill evidence has not been attributed yet.',
+      eventEvidence,
+    });
+
+    if (hasConflictingEvent) {
+      confirmation = buildCarryExecutionPostTradeConfirmation({
+        candidate,
+        status: positionConfirmedSize.gt(POST_TRADE_POSITION_TOLERANCE) || invalidDirection || increasedExposure
+          ? 'conflicting_event_vs_position'
+          : 'conflicting_event',
+        evidenceBasis: 'conflicting',
+        evaluatedAt: snapshot.capturedAt,
+        referenceObserved: true,
+        referenceObservedAt: observedReference.blockTime,
+        context,
+        boundary,
+        confirmedSize: positionConfirmedSize.gt(POST_TRADE_POSITION_TOLERANCE) ? positionConfirmedSize : null,
+        remainingSize,
+        blockedReason: eventEvidence?.blockedReason
+          ?? 'Drift venue events conflicted with the expected market, side, or reduce-only execution semantics.',
+        eventEvidence,
+      });
+    } else if (invalidDirection || increasedExposure) {
+      confirmation = buildCarryExecutionPostTradeConfirmation({
+        candidate,
+        status: hasStrongEventMatch || hasProbableEventMatch
+          ? 'conflicting_event_vs_position'
+          : 'invalid_position_delta',
+        evidenceBasis: hasStrongEventMatch || hasProbableEventMatch ? 'conflicting' : 'signature_only',
+        evaluatedAt: snapshot.capturedAt,
+        referenceObserved: true,
+        referenceObservedAt: observedReference.blockTime,
+        context,
+        boundary,
+        confirmedSize: null,
+        remainingSize: requestedSize,
+        blockedReason: invalidDirection
+          ? 'Latest venue truth shows a position-side flip after a reduce-only submission.'
+          : 'Latest venue truth shows a larger position than was present before submission.',
+        eventEvidence,
+      });
+    } else if (hasStrongEventMatch) {
+      if (positionConfirmedSize.lte(POST_TRADE_POSITION_TOLERANCE)) {
+        confirmation = buildCarryExecutionPostTradeConfirmation({
+          candidate,
+          status: 'pending_position_delta',
+          evidenceBasis: 'event_only',
+          evaluatedAt: snapshot.capturedAt,
+          referenceObserved: true,
+          referenceObservedAt: observedReference.blockTime,
+          context,
+          boundary,
+          confirmedSize: null,
+          remainingSize: requestedSize,
+          blockedReason: 'Strong Drift fill evidence was attributed, but the expected position delta is not yet reflected in venue truth.',
+          eventEvidence,
+        });
+      } else if (expectedEventSize.minus(positionConfirmedSize).greaterThan(POST_TRADE_POSITION_TOLERANCE)) {
+        confirmation = buildCarryExecutionPostTradeConfirmation({
+          candidate,
+          status: 'confirmed_partial_event_only',
+          evidenceBasis: 'event_only',
+          evaluatedAt: snapshot.capturedAt,
+          referenceObserved: true,
+          referenceObservedAt: observedReference.blockTime,
+          context,
+          boundary,
+          confirmedSize: positionConfirmedSize,
+          remainingSize,
+          blockedReason: `Drift fill evidence reports ${formatOptionalDecimal(expectedEventSize) ?? '0'} filled, but venue truth currently confirms only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'}.`,
+          eventEvidence,
+        });
+      } else if (remainingSize.lte(POST_TRADE_POSITION_TOLERANCE)) {
+        confirmation = buildCarryExecutionPostTradeConfirmation({
+          candidate,
+          status: 'confirmed_full',
+          evidenceBasis: 'event_and_position',
+          evaluatedAt: snapshot.capturedAt,
+          referenceObserved: true,
+          referenceObservedAt: observedReference.blockTime,
+          context,
+          boundary,
+          confirmedSize: requestedSize,
+          remainingSize: new Decimal(0),
+          blockedReason: null,
+          eventEvidence,
+        });
+      } else {
+        confirmation = buildCarryExecutionPostTradeConfirmation({
+          candidate,
+          status: 'confirmed_partial',
+          evidenceBasis: 'event_and_position',
+          evaluatedAt: snapshot.capturedAt,
+          referenceObserved: true,
+          referenceObservedAt: observedReference.blockTime,
+          context,
+          boundary,
+          confirmedSize: positionConfirmedSize,
+          remainingSize,
+          blockedReason: `Only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize} is jointly confirmed by Drift fill evidence and venue truth.`,
+          eventEvidence,
+        });
+      }
+    } else if (positionConfirmedSize.gt(POST_TRADE_POSITION_TOLERANCE)) {
+      confirmation = buildCarryExecutionPostTradeConfirmation({
+        candidate,
+        status: 'confirmed_partial_position_only',
+        evidenceBasis: 'position_only',
+        evaluatedAt: snapshot.capturedAt,
+        referenceObserved: true,
+        referenceObservedAt: observedReference.blockTime,
+        context,
+        boundary,
+        confirmedSize: positionConfirmedSize,
+        remainingSize,
+        blockedReason: hasProbableEventMatch
+          ? `Venue truth confirms ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize}, but only probable Drift lifecycle evidence is currently attributed.`
+          : `Venue truth confirms ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize}, but venue-native Drift fill evidence is still missing.`,
+        eventEvidence,
+      });
+    } else {
+      confirmation = buildCarryExecutionPostTradeConfirmation({
+        candidate,
+        status: 'pending_event',
+        evidenceBasis: 'signature_only',
+        evaluatedAt: snapshot.capturedAt,
+        referenceObserved: true,
+        referenceObservedAt: observedReference.blockTime,
+        context,
+        boundary,
+        confirmedSize: null,
+        remainingSize: requestedSize,
+        blockedReason: hasProbableEventMatch
+          ? 'Execution reference is visible and a probable Drift lifecycle event was observed, but a strong fill match is still required.'
+          : 'Execution reference is visible, but venue-native Drift fill evidence has not been attributed yet.',
+        eventEvidence,
+      });
+    }
+
+    evaluations.push({
+      candidate,
+      confirmation,
+      ...deriveConfirmationPatch(candidate, confirmation),
+    });
+  }
+
+  return evaluations;
+}
+
+function evaluatePostTradeConfirmation(
+  snapshot: VenueSnapshotView,
+  candidates: CarryExecutionConfirmationCandidate[],
+  eventEvidenceByStepId: CarryExecutionEventEvidenceMap,
+): {
+  evidence: ConnectorPostTradeConfirmationEvidenceView;
+  evaluations: CarryExecutionPostTradeConfirmationEvaluation[];
+} {
+  if (candidates.length === 0) {
+    return {
+      evidence: {
+        status: 'not_required',
+        summary: 'No recent real execution references currently require post-trade confirmation.',
+        evaluatedAt: snapshot.capturedAt,
+        recentExecutionCount: 0,
+        confirmedFullCount: 0,
+        confirmedPartialCount: 0,
+        confirmedPartialEventOnlyCount: 0,
+        confirmedPartialPositionOnlyCount: 0,
+        pendingCount: 0,
+        pendingEventCount: 0,
+        pendingPositionDeltaCount: 0,
+        conflictingEventCount: 0,
+        conflictingEventVsPositionCount: 0,
+        missingReferenceCount: 0,
+        invalidCount: 0,
+        insufficientContextCount: 0,
+        latestConfirmedAt: null,
+        blockingReasons: [],
+        entries: [],
+      },
+      evaluations: [],
+    };
+  }
+
+  const groupedCandidates = new Map<string, CarryExecutionConfirmationCandidate[]>();
+  for (const candidate of candidates) {
+    const groupKey = candidateGroupKey(candidate);
+    const group = groupedCandidates.get(groupKey) ?? [];
+    group.push(candidate);
+    groupedCandidates.set(groupKey, group);
+  }
+
+  const evaluations = Array.from(groupedCandidates.values())
+    .flatMap((group) => evaluatePostTradeConfirmationGroup(snapshot, group, eventEvidenceByStepId))
+    .sort((left, right) => left.candidate.createdAt.localeCompare(right.candidate.createdAt));
+
+  const entries = evaluations.map(({ candidate, confirmation }) => ({
+    ...confirmation,
+    stepId: candidate.stepId,
+    carryExecutionId: candidate.carryExecutionId,
+    carryActionId: candidate.carryActionId,
+    intentId: candidate.intentId,
+    clientOrderId: candidate.clientOrderId,
+    executionReference: candidate.executionReference,
+    venueId: candidate.venueId,
+  }));
+  const confirmedEntries = entries.filter((entry) => entry.status === 'confirmed_full');
+  const blockingEntries = entries.filter((entry) => entry.status !== 'confirmed_full');
+  const blockingReasons = blockingEntries.map((entry) => entry.blockedReason ?? entry.summary);
+
+  return {
+    evidence: {
+      status: blockingEntries.length === 0 ? 'confirmed' : 'blocked',
+      summary: blockingEntries.length === 0
+        ? `All ${entries.length} recent real execution reference(s) are fully confirmed by Drift event evidence and venue truth.`
+        : `${blockingEntries.length} of ${entries.length} recent real execution reference(s) still require operator review before the connector is considered execution-ready.`,
+      evaluatedAt: snapshot.capturedAt,
+      recentExecutionCount: entries.length,
+      confirmedFullCount: countConfirmationEntries(entries, ['confirmed_full']),
+      confirmedPartialCount: countConfirmationEntries(entries, [
+        'confirmed_partial',
+        'confirmed_partial_event_only',
+        'confirmed_partial_position_only',
+      ]),
+      confirmedPartialEventOnlyCount: countConfirmationEntries(entries, ['confirmed_partial_event_only']),
+      confirmedPartialPositionOnlyCount: countConfirmationEntries(entries, ['confirmed_partial_position_only']),
+      pendingCount: countConfirmationEntries(entries, ['pending_event', 'pending_position_delta']),
+      pendingEventCount: countConfirmationEntries(entries, ['pending_event']),
+      pendingPositionDeltaCount: countConfirmationEntries(entries, ['pending_position_delta']),
+      conflictingEventCount: countConfirmationEntries(entries, ['conflicting_event']),
+      conflictingEventVsPositionCount: countConfirmationEntries(entries, ['conflicting_event_vs_position']),
+      missingReferenceCount: countConfirmationEntries(entries, ['missing_reference']),
+      invalidCount: countConfirmationEntries(entries, ['invalid_position_delta']),
+      insufficientContextCount: countConfirmationEntries(entries, ['insufficient_context']),
+      latestConfirmedAt: confirmedEntries.at(-1)?.referenceObservedAt ?? null,
+      blockingReasons,
+      entries,
+    },
+    evaluations,
+  };
+}
+
 function deriveVenueTruthProfile(snapshot: VenueTruthSnapshot): VenueTruthProfile {
   if (
     snapshot.truthCoverage.derivativeAccountState.status !== 'unsupported'
@@ -276,6 +1035,7 @@ export interface DeterministicRuntimeScenario {
   riskLimits?: Partial<RiskLimits>;
   pipelineConfig?: Partial<PipelineConfig>;
   venues?: SimulatedVenueConfig[];
+  carryAdapters?: VenueAdapter[];
   treasuryVenues?: SimulatedTreasuryVenueConfig[];
   truthAdapters?: VenueTruthAdapter[];
   internalDerivativeTargets?: InternalDerivativeTrackedVenueConfig[];
@@ -378,6 +1138,9 @@ export class SentinelRuntime {
       const adapter = new SimulatedVenueAdapter(venue);
       adapters.set(venue.venueId, adapter);
     }
+    for (const adapter of overrides.carryAdapters ?? []) {
+      adapters.set(adapter.venueId, adapter);
+    }
     const treasuryAdapters = new Map<string, TreasuryVenueAdapter>();
     for (const venue of defaultTreasuryVenues) {
       const adapter = new SimulatedTreasuryVenueAdapter(venue);
@@ -391,6 +1154,40 @@ export class SentinelRuntime {
       (overrides.internalDerivativeTargets ?? []).map((target) => [target.venueId, target] as const),
     );
     const driftRpcEndpoint = process.env['DRIFT_RPC_ENDPOINT'];
+    if (
+      !adapters.has('drift-solana-devnet-carry')
+      && process.env['DRIFT_EXECUTION_ENV'] === 'devnet'
+    ) {
+      const adapter = new DriftDevnetCarryAdapter({
+        venueId: 'drift-solana-devnet-carry',
+        venueName: 'Drift Solana Devnet Carry',
+        rpcEndpoint: driftRpcEndpoint ?? '',
+        driftEnv: 'devnet',
+        ...(process.env['DRIFT_PRIVATE_KEY'] === undefined
+          ? {}
+          : { privateKey: process.env['DRIFT_PRIVATE_KEY'] }),
+        ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
+          ? {}
+          : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
+        ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
+          ? {}
+          : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
+      });
+      adapters.set(adapter.venueId, adapter);
+
+      if (!internalDerivativeTargets.has(adapter.venueId)) {
+        internalDerivativeTargets.set(adapter.venueId, {
+          venueId: adapter.venueId,
+          venueName: 'Drift Solana Devnet Carry',
+          ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
+            ? {}
+            : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
+          ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
+            ? {}
+            : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
+        });
+      }
+    }
     if (
       !truthAdapters.has('drift-solana-readonly')
       && driftRpcEndpoint !== undefined
@@ -465,7 +1262,7 @@ export class SentinelRuntime {
     const carryConfig = {
       ...DEFAULT_CARRY_CONFIG,
       sleeveId,
-      approvedVenues: Array.from(adapters.keys()),
+      approvedVenues: overrides.carryConfig?.approvedVenues ?? defaultVenues.map((venue) => venue.venueId),
       approvedAssets: ['BTC'],
       minAnnualYieldPct: '2.0',
       minFundingRateAnnualized: '4.0',
@@ -1043,6 +1840,9 @@ export class SentinelRuntime {
     supportsReduceExposure: boolean;
     readOnly: boolean;
     approvedForLiveUse: boolean;
+    sensitiveExecutionEligible: boolean;
+    promotionStatus: 'not_requested' | 'pending_review' | 'approved' | 'rejected' | 'suspended';
+    promotionBlockedReasons: string[];
     healthy: boolean;
     onboardingState: 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
     missingPrerequisites: string[];
@@ -1051,6 +1851,9 @@ export class SentinelRuntime {
     createdAt: string;
   }>> {
     const now = new Date().toISOString();
+    const promotionByVenueId = new Map(
+      (await this.options.store.listVenues(500)).map((venue) => [venue.venueId, venue.promotion] as const),
+    );
     const views = [];
 
     for (const adapter of this.options.adapters.values()) {
@@ -1071,6 +1874,7 @@ export class SentinelRuntime {
             venueType: adapter.venueType,
           },
         };
+      const promotion = promotionByVenueId.get(capabilities.venueId);
 
       views.push({
         strategyRunId,
@@ -1080,11 +1884,18 @@ export class SentinelRuntime {
         supportsIncreaseExposure: capabilities.supportsIncreaseExposure,
         supportsReduceExposure: capabilities.supportsReduceExposure,
         readOnly: capabilities.readOnly,
-        approvedForLiveUse: capabilities.approvedForLiveUse,
+        approvedForLiveUse: promotion?.approvedForLiveUse ?? false,
+        sensitiveExecutionEligible: promotion?.sensitiveExecutionEligible ?? false,
+        promotionStatus: promotion?.promotionStatus ?? 'not_requested',
+        promotionBlockedReasons: promotion?.blockers ?? capabilities.missingPrerequisites,
         healthy: capabilities.healthy,
         onboardingState: capabilities.onboardingState,
         missingPrerequisites: capabilities.missingPrerequisites,
-        metadata: capabilities.metadata,
+        metadata: {
+          ...capabilities.metadata,
+          reportedApprovedForLiveUse: capabilities.approvedForLiveUse,
+          connectorPromotionStatus: promotion?.promotionStatus ?? 'not_requested',
+        },
         updatedAt: now,
         createdAt: now,
       });
@@ -1093,8 +1904,8 @@ export class SentinelRuntime {
     return views;
   }
 
-  private async refreshVenueTruthInventory(): Promise<void> {
-    const snapshots = await this.collectVenueTruthSnapshots();
+  private async refreshVenueTruthInventory(venueIds?: readonly string[]): Promise<void> {
+    const snapshots = await this.collectVenueTruthSnapshots(venueIds);
     await this.options.store.persistVenueConnectorSnapshots({ snapshots });
   }
 
@@ -1126,7 +1937,11 @@ export class SentinelRuntime {
     }
 
     const capturedAt = new Date().toISOString();
-    const fillHistory = await this.options.store.listFillHistory();
+    const [fillHistory, portfolioSummary, riskSummary] = await Promise.all([
+      this.options.store.listFillHistory(),
+      this.options.store.getPortfolioSummary(),
+      this.options.store.getRiskSummary(),
+    ]);
     const snapshots = await Promise.all(
       trackedVenues.map(async (venue) => {
         const orders = await this.options.store.listOrdersByVenue(venue.venueId);
@@ -1134,6 +1949,8 @@ export class SentinelRuntime {
           venue,
           orders,
           fills: fillHistory.filter((fill) => fill.venueId === venue.venueId),
+          portfolioSummary,
+          riskSummary,
           capturedAt,
           sourceComponent: input.sourceComponent,
           sourceRunId: input.sourceRunId ?? null,
@@ -1145,22 +1962,34 @@ export class SentinelRuntime {
     await this.options.store.persistInternalDerivativeSnapshots({ snapshots });
   }
 
-  private async collectVenueTruthSnapshots(): Promise<VenueSnapshotView[]> {
+  private async collectVenueTruthSnapshots(venueIds?: readonly string[]): Promise<VenueSnapshotView[]> {
+    const scopedVenueIds = venueIds === undefined ? null : new Set(venueIds);
     const snapshots: VenueSnapshotView[] = [];
 
     for (const adapter of this.options.adapters.values()) {
+      if (scopedVenueIds !== null && !scopedVenueIds.has(adapter.venueId)) {
+        continue;
+      }
       const capability = await this.collectVenueCapabilityForCarryAdapter(adapter);
       const snapshot = await this.collectVenueTruthForCarryAdapter(adapter);
-      snapshots.push(this.composeVenueSnapshot(capability, snapshot));
+      snapshots.push(await this.enrichVenueSnapshotWithExecutionConfirmation(
+        this.composeVenueSnapshot(capability, snapshot),
+      ));
     }
 
     for (const adapter of this.options.treasuryAdapters.values()) {
+      if (scopedVenueIds !== null && !scopedVenueIds.has(adapter.venueId)) {
+        continue;
+      }
       const capability = await this.collectVenueCapabilityForTreasuryAdapter(adapter);
       const snapshot = await this.collectVenueTruthForTreasuryAdapter(adapter);
       snapshots.push(this.composeVenueSnapshot(capability, snapshot));
     }
 
     for (const adapter of this.options.truthAdapters.values()) {
+      if (scopedVenueIds !== null && !scopedVenueIds.has(adapter.venueId)) {
+        continue;
+      }
       const [capability, snapshot] = await Promise.all([
         adapter.getVenueCapabilitySnapshot(),
         adapter.getVenueTruthSnapshot(),
@@ -1211,11 +2040,263 @@ export class SentinelRuntime {
       derivativeHealthState: snapshot.derivativeHealthState,
       orderState: snapshot.orderState,
       executionReferenceState: snapshot.executionReferenceState,
+      executionConfirmationState: null,
       metadata: {
         ...capability.metadata,
         ...snapshot.metadata,
       },
     };
+  }
+
+  private buildExecutionEventEvidenceRequests(
+    candidates: CarryExecutionConfirmationCandidate[],
+  ): VenueExecutionEventEvidenceRequest[] {
+    return candidates.map((candidate) => ({
+      executionReference: candidate.executionReference,
+      clientOrderId: candidate.clientOrderId,
+      asset: candidate.asset,
+      side: candidate.side,
+      requestedSize: candidate.requestedSize,
+      reduceOnly: candidate.reduceOnly,
+      createdAt: candidate.createdAt,
+      updatedAt: candidate.updatedAt,
+      metadata: candidate.metadata,
+    }));
+  }
+
+  private async loadExecutionEventEvidence(
+    snapshot: VenueSnapshotView,
+    candidates: CarryExecutionConfirmationCandidate[],
+  ): Promise<CarryExecutionEventEvidenceMap> {
+    if (candidates.length === 0) {
+      return new Map();
+    }
+
+    const requests = this.buildExecutionEventEvidenceRequests(candidates);
+    const adapter = this.options.adapters.get(snapshot.venueId);
+    if (adapter === undefined || typeof adapter.getExecutionEventEvidence !== 'function') {
+      return new Map(
+        candidates.map((candidate, index) => [
+          candidate.stepId,
+          buildUnavailableExecutionEventEvidence(
+            requests[index] ?? {
+              executionReference: candidate.executionReference,
+              clientOrderId: candidate.clientOrderId,
+              asset: candidate.asset,
+              side: candidate.side,
+              requestedSize: candidate.requestedSize,
+              reduceOnly: candidate.reduceOnly,
+              createdAt: candidate.createdAt,
+              updatedAt: candidate.updatedAt,
+              metadata: candidate.metadata,
+            },
+            'Connector does not expose venue-native execution event evidence.',
+          ),
+        ] as const),
+      );
+    }
+
+    try {
+      const evidence = await adapter.getExecutionEventEvidence(requests);
+      return new Map(
+        candidates.map((candidate, index) => [
+          candidate.stepId,
+          evidence[index] ?? buildUnavailableExecutionEventEvidence(
+            requests[index] ?? {
+              executionReference: candidate.executionReference,
+              clientOrderId: candidate.clientOrderId,
+              asset: candidate.asset,
+              side: candidate.side,
+              requestedSize: candidate.requestedSize,
+              reduceOnly: candidate.reduceOnly,
+              createdAt: candidate.createdAt,
+              updatedAt: candidate.updatedAt,
+              metadata: candidate.metadata,
+            },
+            'Adapter returned no event evidence for this execution attempt.',
+          ),
+        ] as const),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.options.logger.warn('Failed to load execution event evidence', {
+        venueId: snapshot.venueId,
+        error: message,
+      });
+      return new Map(
+        candidates.map((candidate, index) => [
+          candidate.stepId,
+          buildUnavailableExecutionEventEvidence(
+            requests[index] ?? {
+              executionReference: candidate.executionReference,
+              clientOrderId: candidate.clientOrderId,
+              asset: candidate.asset,
+              side: candidate.side,
+              requestedSize: candidate.requestedSize,
+              reduceOnly: candidate.reduceOnly,
+              createdAt: candidate.createdAt,
+              updatedAt: candidate.updatedAt,
+              metadata: candidate.metadata,
+            },
+            message,
+          ),
+        ] as const),
+      );
+    }
+  }
+
+  private async persistExecutionEventEvidence(
+    candidate: CarryExecutionConfirmationCandidate,
+    confirmation: CarryExecutionPostTradeConfirmationView,
+    occurredAtFallback: string,
+  ): Promise<void> {
+    const strategyRunId = candidate.strategyRunId;
+    const eventEvidence = confirmation.eventEvidence;
+
+    if (strategyRunId === null || eventEvidence === null || eventEvidence.rawEvents.length === 0) {
+      return;
+    }
+
+    for (const rawEvent of eventEvidence.rawEvents) {
+      const occurredAt = rawEvent.timestamp === null ? new Date(occurredAtFallback) : new Date(rawEvent.timestamp);
+      await this.options.store.persistExecutionEvent({
+        eventId: `carry-step:${candidate.stepId}:${rawEvent.eventId}`,
+        runId: strategyRunId,
+        intentId: candidate.intentId,
+        clientOrderId: candidate.clientOrderId,
+        venueOrderId: candidate.executionReference,
+        eventType: `venue_execution.${rawEvent.venueEventType}`,
+        status: eventEvidence.correlationStatus,
+        payload: {
+          source: 'venue_native_execution_event_ingestion',
+          venueId: candidate.venueId,
+          carryExecutionId: candidate.carryExecutionId,
+          carryActionId: candidate.carryActionId,
+          stepId: candidate.stepId,
+          executionReference: candidate.executionReference,
+          correlationStatus: eventEvidence.correlationStatus,
+          correlationConfidence: eventEvidence.correlationConfidence,
+          deduplicationStatus: eventEvidence.deduplicationStatus,
+          evidenceOrigin: eventEvidence.evidenceOrigin,
+          rawEvent,
+        },
+        occurredAt: Number.isNaN(occurredAt.getTime()) ? new Date(occurredAtFallback) : occurredAt,
+      });
+    }
+  }
+
+  private async enrichVenueSnapshotWithExecutionConfirmation(
+    snapshot: VenueSnapshotView,
+  ): Promise<VenueSnapshotView> {
+    if (
+      snapshot.truthMode !== 'real'
+      || !snapshot.executionSupport
+      || !snapshot.sleeveApplicability.includes('carry')
+    ) {
+      return snapshot;
+    }
+
+    const candidates = dedupeCarryExecutionConfirmationCandidates(
+      await this.options.store.listRecentCarryExecutionConfirmationCandidates(
+        snapshot.venueId,
+        POST_TRADE_CONFIRMATION_CANDIDATE_LIMIT,
+      ),
+    );
+    const eventEvidenceByStepId = await this.loadExecutionEventEvidence(snapshot, candidates);
+    const { evidence, evaluations } = evaluatePostTradeConfirmation(
+      snapshot,
+      candidates,
+      eventEvidenceByStepId,
+    );
+
+    for (const evaluation of evaluations) {
+      await this.persistExecutionEventEvidence(
+        evaluation.candidate,
+        evaluation.confirmation,
+        snapshot.capturedAt,
+      );
+    }
+
+    for (const evaluation of evaluations) {
+      const nextOutcome = {
+        ...evaluation.candidate.outcome,
+        [POST_TRADE_CONFIRMATION_OUTCOME_KEY]: evaluation.confirmation,
+      };
+      const statusPatch = evaluation.statusPatch;
+      const filledSizePatch = evaluation.filledSizePatch;
+      const confirmationChanged = JSON.stringify(
+        evaluation.candidate.outcome[POST_TRADE_CONFIRMATION_OUTCOME_KEY] ?? null,
+      ) !== JSON.stringify(evaluation.confirmation);
+      const statusChanged = statusPatch !== undefined && evaluation.candidate.status !== statusPatch;
+      const filledSizeChanged = filledSizePatch !== undefined
+        && evaluation.candidate.outcome['filledSize'] !== filledSizePatch;
+      const summaryChanged = evaluation.candidate.outcome['postTradeConfirmationSummary'] !== evaluation.confirmation.summary;
+
+      if (!confirmationChanged && !statusChanged && !filledSizeChanged && !summaryChanged) {
+        continue;
+      }
+
+      await this.options.store.updateCarryExecutionStep(evaluation.candidate.stepId, {
+        ...(statusPatch === undefined ? {} : { status: statusPatch }),
+        ...(filledSizePatch === undefined ? {} : { filledSize: filledSizePatch }),
+        outcomeSummary: evaluation.confirmation.summary,
+        outcome: {
+          ...nextOutcome,
+          postTradeConfirmationSummary: evaluation.confirmation.summary,
+        },
+      });
+    }
+
+    return {
+      ...snapshot,
+      executionConfirmationState: evidence,
+    };
+  }
+
+  private async buildCarryExecutionStepMetadata(
+    adapter: VenueAdapter,
+    plannedOrder: CarryActionDetailView['plannedOrders'][number],
+  ): Promise<Record<string, unknown>> {
+    const capturedAt = new Date();
+    const existingMetadata = plannedOrder.metadata;
+    const marketIdentity = readCanonicalMarketIdentityFromMetadata(existingMetadata, {
+      venueId: plannedOrder.venueId,
+      asset: plannedOrder.asset,
+      marketType: existingMetadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'carry_execution_step',
+      source: 'carry_execution_pretrade_capture',
+      notes: ['Pre-trade position context captures the best market identity available immediately before submission.'],
+    });
+
+    try {
+      const positions = await adapter.getPositions();
+      return {
+        ...existingMetadata,
+        [PRE_TRADE_POSITION_CONTEXT_METADATA_KEY]: capturePreTradePositionContext({
+          asset: plannedOrder.asset,
+          side: plannedOrder.side,
+          marketKey: marketIdentity?.marketKey ?? marketValue(existingMetadata['marketKey']),
+          marketSymbol: marketIdentity?.marketSymbol ?? marketValue(existingMetadata['marketSymbol']),
+          capturedAt,
+          positions,
+        }),
+      };
+    } catch (error) {
+      return {
+        ...existingMetadata,
+        [PRE_TRADE_POSITION_CONTEXT_METADATA_KEY]: {
+          captureStatus: 'unavailable',
+          observedAt: capturedAt.toISOString(),
+          asset: plannedOrder.asset,
+          marketKey: marketIdentity?.marketKey ?? marketValue(existingMetadata['marketKey']),
+          marketSymbol: marketIdentity?.marketSymbol ?? marketValue(existingMetadata['marketSymbol']),
+          side: null,
+          size: null,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   }
 
   private async collectVenueCapabilityForCarryAdapter(adapter: VenueAdapter): Promise<VenueCapabilitySnapshot> {
@@ -2397,6 +3478,65 @@ export class SentinelRuntime {
     const orderStore = new RuntimeOrderStore(this.options.store.db);
     const carryVenues = await this.collectCarryVenueViews(detail.action.strategyRunId);
     const carryVenueById = new Map(carryVenues.map((venue) => [venue.venueId, venue] as const));
+    const currentConnectorBlocks: CarryOperationalBlockedReason[] = detail.action.executionMode === 'live'
+      ? detail.plannedOrders.flatMap((plannedOrder): CarryOperationalBlockedReason[] => {
+        const venue = carryVenueById.get(plannedOrder.venueId);
+        if (venue === undefined) {
+          return [{
+            code: 'venue_execution_unsupported',
+            category: 'venue_capability',
+            message: `Carry venue ${plannedOrder.venueId} is not registered for execution.`,
+            operatorAction: 'Register the connector and re-run carry evaluation before executing this action.',
+            details: {
+              venueId: plannedOrder.venueId,
+            },
+          }];
+        }
+
+        const blockedReasons: CarryOperationalBlockedReason[] = [];
+
+        if (!venue.executionSupported || venue.readOnly) {
+          blockedReasons.push({
+            code: 'venue_execution_unsupported',
+            category: 'venue_capability',
+            message: `Carry venue ${plannedOrder.venueId} is not currently executable.`,
+            operatorAction: 'Restore execution-capable connector posture before retrying this action.',
+            details: {
+              venueId: plannedOrder.venueId,
+              readOnly: venue.readOnly,
+              executionSupported: venue.executionSupported,
+            },
+          });
+        }
+
+        if (!venue.approvedForLiveUse) {
+          blockedReasons.push({
+            code: 'venue_live_unapproved',
+            category: 'venue_capability',
+            message: `Carry venue ${plannedOrder.venueId} is not approved for live use.`,
+            operatorAction: 'Request and approve connector promotion before retrying this action.',
+            details: {
+              venueId: plannedOrder.venueId,
+              promotionStatus: venue.promotionStatus,
+            },
+          });
+        } else if (!venue.sensitiveExecutionEligible) {
+          blockedReasons.push({
+            code: 'venue_live_ineligible',
+            category: 'venue_capability',
+            message: `Carry venue ${plannedOrder.venueId} is approved but currently blocked by connector readiness evidence.`,
+            operatorAction: 'Restore connector freshness and health, then re-run carry evaluation before retrying.',
+            details: {
+              venueId: plannedOrder.venueId,
+              promotionStatus: venue.promotionStatus,
+              blockers: venue.promotionBlockedReasons,
+            },
+          });
+        }
+
+        return blockedReasons;
+      })
+      : [];
     const orderResults: Array<{
       stepId: string;
       intentId: string;
@@ -2406,7 +3546,42 @@ export class SentinelRuntime {
       filledSize: string;
       averageFillPrice: string | null;
       executionReference: string | null;
+      executionMode: 'real' | 'simulated' | null;
     }> = [];
+
+    if (currentConnectorBlocks.length > 0) {
+      const errorMessage = currentConnectorBlocks.map((reason) => reason.message).join('; ');
+      await this.options.store.updateCarryExecution(execution.id, {
+        status: 'failed',
+        blockedReasons: currentConnectorBlocks,
+        lastError: errorMessage,
+        outcomeSummary: errorMessage,
+        outcome: {
+          blockedReasons: currentConnectorBlocks,
+        },
+        completedAt: new Date(),
+      });
+      await this.options.store.failCarryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage,
+      });
+      await syncLinkedBundle();
+      await this.options.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'carry.execution_blocked',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId: input.actorId,
+        sleeveId: 'carry',
+        data: {
+          carryActionId: detail.action.id,
+          executionId: execution.id,
+          blockedReasons: currentConnectorBlocks,
+        },
+      });
+      throw new Error(errorMessage);
+    }
 
     for (const plannedOrder of detail.plannedOrders) {
       const venueSnapshot = carryVenueById.get(plannedOrder.venueId) ?? {
@@ -2415,8 +3590,15 @@ export class SentinelRuntime {
         executionSupported: false,
         readOnly: true,
         approvedForLiveUse: false,
+        sensitiveExecutionEligible: false,
+        promotionStatus: 'not_requested' as const,
+        promotionBlockedReasons: ['carry_venue_not_registered'],
         onboardingState: 'read_only' as const,
       };
+      const adapter = this.options.adapters.get(plannedOrder.venueId);
+      const stepMetadata = adapter === undefined
+        ? plannedOrder.metadata
+        : await this.buildCarryExecutionStepMetadata(adapter, plannedOrder);
       const step = await this.options.store.createCarryExecutionStep({
         carryExecutionId: execution.id,
         carryActionId: detail.action.id,
@@ -2438,9 +3620,8 @@ export class SentinelRuntime {
         clientOrderId: plannedOrder.intentId,
         status: 'pending',
         simulated: detail.action.simulated,
-        metadata: plannedOrder.metadata,
+        metadata: stepMetadata,
       });
-      const adapter = this.options.adapters.get(plannedOrder.venueId);
       if (adapter === undefined) {
         await this.options.store.updateCarryExecutionStep(step.id, {
           status: 'failed',
@@ -2489,12 +3670,15 @@ export class SentinelRuntime {
           opportunityId: (detail.action.opportunityId ?? createId()) as never,
           reduceOnly: plannedOrder.reduceOnly,
           createdAt: new Date(plannedOrder.createdAt),
-          metadata: plannedOrder.metadata,
+          metadata: stepMetadata,
         });
         if (detail.action.strategyRunId !== null) {
           await this.persistExecutionRecord(detail.action.strategyRunId, orderRecord);
         }
-        const executionReference = orderRecord.venueOrderId ?? plannedOrder.intentId;
+        const executionReference = readVenueExecutionReference(orderRecord.intent.metadata)
+          ?? orderRecord.venueOrderId
+          ?? plannedOrder.intentId;
+        const executionMode = readVenueExecutionMode(orderRecord.intent.metadata);
         await this.options.store.updateCarryExecutionStep(step.id, {
           clientOrderId: plannedOrder.intentId,
           venueOrderId: orderRecord.venueOrderId,
@@ -2511,8 +3695,20 @@ export class SentinelRuntime {
             feesPaid: orderRecord.feesPaid,
             fillCount: orderRecord.fills.length,
             submittedAt: orderRecord.submittedAt?.toISOString() ?? null,
+            executionReference,
+            executionMode,
+            marketIdentity: readCanonicalMarketIdentityFromMetadata(orderRecord.intent.metadata, {
+              venueId: orderRecord.intent.venueId,
+              asset: orderRecord.intent.asset,
+              marketType: orderRecord.intent.metadata['instrumentType'],
+              provenance: 'derived',
+              capturedAtStage: 'carry_execution_step',
+              source: 'carry_action_execution',
+              notes: ['Carry execution outcomes expose the best market identity available after order submission.'],
+            }),
           },
           lastError: orderRecord.lastError,
+          metadata: orderRecord.intent.metadata,
           completedAt: orderRecord.completedAt ?? new Date(),
         });
         orderResults.push({
@@ -2524,6 +3720,7 @@ export class SentinelRuntime {
           filledSize: orderRecord.filledSize,
           averageFillPrice: orderRecord.averageFillPrice,
           executionReference,
+          executionMode,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Carry order execution failed.';
@@ -2564,6 +3761,11 @@ export class SentinelRuntime {
       outcome: {
         stepCount: orderResults.length,
         orderResults,
+        executionModes: Array.from(new Set(
+          orderResults
+            .map((result) => result.executionMode)
+            .filter((value): value is 'real' | 'simulated' => value !== null),
+        )),
       },
       venueExecutionReference: orderResults
         .map((result) => result.executionReference)
@@ -2575,6 +3777,9 @@ export class SentinelRuntime {
       actionId: detail.action.id,
       latestExecutionId: execution.id,
     });
+    await this.refreshVenueTruthInventory(
+      Array.from(new Set(detail.plannedOrders.map((plannedOrder) => plannedOrder.venueId))),
+    );
     await this.refreshInternalDerivativeState({
       sourceComponent: 'carry-execution',
       sourceRunId: detail.action.strategyRunId,
@@ -2593,6 +3798,9 @@ export class SentinelRuntime {
         executionId: execution.id,
         orderCount: orderResults.length,
         simulated: detail.action.simulated,
+        venueExecutionReferences: orderResults
+          .map((result) => result.executionReference)
+          .filter((value): value is string => value !== null && value.length > 0),
       },
     });
 
@@ -3000,6 +4208,7 @@ export class SentinelRuntime {
         fee: fill.fee,
         reduceOnly: fill.reduceOnly,
         submittedAt: fill.filledAt,
+        marketIdentity: fill.marketIdentity,
       });
     }
   }
@@ -3032,16 +4241,41 @@ export class SentinelRuntime {
   }
 
   private async collectTreasuryVenueCapabilities(): Promise<TreasuryVenueCapabilities[]> {
+    const promotionByVenueId = new Map(
+      (await this.options.store.listVenues(500)).map((venue) => [venue.venueId, venue.promotion] as const),
+    );
     const capabilities: TreasuryVenueCapabilities[] = [];
 
     for (const adapter of this.options.treasuryAdapters.values()) {
-      capabilities.push(await adapter.getCapabilities());
+      const venueCapabilities = await adapter.getCapabilities();
+      const promotion = promotionByVenueId.get(venueCapabilities.venueId);
+      capabilities.push({
+        ...venueCapabilities,
+        approvedForLiveUse: promotion?.approvedForLiveUse ?? false,
+        sensitiveExecutionEligible: promotion?.sensitiveExecutionEligible ?? false,
+        promotionStatus: promotion?.promotionStatus ?? 'not_requested',
+        promotionBlockedReasons: promotion?.blockers ?? venueCapabilities.missingPrerequisites,
+        metadata: {
+          ...venueCapabilities.metadata,
+          reportedApprovedForLiveUse: venueCapabilities.approvedForLiveUse,
+          connectorPromotionStatus: promotion?.promotionStatus ?? 'not_requested',
+        },
+      });
     }
 
     return capabilities;
   }
 
   private async persistExecutionRecord(runId: string, record: OrderRecord): Promise<void> {
+    const marketIdentity = readCanonicalMarketIdentityFromMetadata(record.intent.metadata, {
+      venueId: record.intent.venueId,
+      asset: record.intent.asset,
+      marketType: record.intent.metadata['instrumentType'],
+      provenance: 'derived',
+      capturedAtStage: 'execution_result',
+      source: 'runtime_execution_record',
+      notes: ['Execution events expose the best market identity persisted on the runtime order at submission time.'],
+    });
     await this.options.store.persistExecutionEvent({
       eventId: createId(),
       runId,
@@ -3054,6 +4288,9 @@ export class SentinelRuntime {
         filledSize: record.filledSize,
         averageFillPrice: record.averageFillPrice,
         feesPaid: record.feesPaid,
+        executionReference: readVenueExecutionReference(record.intent.metadata),
+        executionMode: readVenueExecutionMode(record.intent.metadata),
+        marketIdentity,
       },
       occurredAt: new Date(),
     });

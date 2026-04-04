@@ -1,8 +1,23 @@
 import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { authenticate } from '../middleware/auth.js';
+import { getRequiredOperator, requireOperatorRole } from '../middleware/operator-auth.js';
 
 import type { FastifyInstance } from 'fastify';
+
+function mutationErrorStatus(message: string): number {
+  if (message.includes('requires') || message.includes('access')) {
+    return 403;
+  }
+  if (message.includes('not found')) {
+    return 404;
+  }
+  if (message.includes('required')) {
+    return 400;
+  }
+
+  return 409;
+}
 
 export async function venueRoutes(
   app: FastifyInstance,
@@ -44,6 +59,20 @@ export async function venueRoutes(
   );
 
   app.get(
+    '/api/v1/venues/promotion-summary',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const summary = await controlPlane.getConnectorPromotionOverview();
+      return reply.status(200).send({
+        data: summary,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get(
     '/api/v1/venues/truth-summary',
     {
       preHandler: authenticate,
@@ -75,6 +104,281 @@ export async function venueRoutes(
           limit,
         },
       });
+    },
+  );
+
+  app.get<{
+    Params: { venueId: string };
+  }>(
+    '/api/v1/venues/:venueId/promotion',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const promotion = await controlPlane.getConnectorPromotion(request.params.venueId);
+      if (promotion === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Connector promotion state for venue '${request.params.venueId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: promotion,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { venueId: string };
+  }>(
+    '/api/v1/venues/:venueId/promotion/history',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const history = await controlPlane.listConnectorPromotionHistory(request.params.venueId);
+      return reply.status(200).send({
+        data: history,
+        meta: {
+          correlationId: request.id,
+          count: history.length,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { venueId: string };
+  }>(
+    '/api/v1/venues/:venueId/promotion/eligibility',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const eligibility = await controlPlane.getConnectorPromotionEligibility(request.params.venueId);
+      if (eligibility === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Connector promotion eligibility for venue '${request.params.venueId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: eligibility,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.post<{
+    Params: { venueId: string };
+    Body: { note?: string };
+  }>(
+    '/api/v1/venues/:venueId/promotion/request',
+    {
+      preHandler: [authenticate, requireOperatorRole('operator')],
+    },
+    async (request, reply) => {
+      const operator = getRequiredOperator(request);
+
+      try {
+        const promotion = await controlPlane.requestConnectorPromotion(
+          request.params.venueId,
+          operator.operatorId,
+          operator.role,
+          request.body.note,
+        );
+        if (promotion === null) {
+          return reply.status(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: `Venue '${request.params.venueId}' was not found.`,
+              correlationId: request.id,
+            },
+          });
+        }
+
+        return reply.status(202).send({
+          data: promotion,
+          meta: { correlationId: request.id },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Connector promotion request failed.';
+        const statusCode = mutationErrorStatus(message);
+        return reply.status(statusCode).send({
+          error: {
+            code: statusCode === 403 ? 'FORBIDDEN' : statusCode === 404 ? 'NOT_FOUND' : statusCode === 400 ? 'BAD_REQUEST' : 'CONFLICT',
+            message,
+            correlationId: request.id,
+          },
+        });
+      }
+    },
+  );
+
+  app.post<{
+    Params: { venueId: string };
+    Body: { note?: string };
+  }>(
+    '/api/v1/venues/:venueId/promotion/approve',
+    {
+      preHandler: [authenticate, requireOperatorRole('admin')],
+    },
+    async (request, reply) => {
+      const operator = getRequiredOperator(request);
+
+      try {
+        const promotion = await controlPlane.approveConnectorPromotion(
+          request.params.venueId,
+          operator.operatorId,
+          operator.role,
+          request.body.note,
+        );
+        if (promotion === null) {
+          return reply.status(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: `Venue '${request.params.venueId}' was not found.`,
+              correlationId: request.id,
+            },
+          });
+        }
+
+        return reply.status(200).send({
+          data: promotion,
+          meta: { correlationId: request.id },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Connector promotion approval failed.';
+        const statusCode = mutationErrorStatus(message);
+        return reply.status(statusCode).send({
+          error: {
+            code: statusCode === 403 ? 'FORBIDDEN' : statusCode === 404 ? 'NOT_FOUND' : statusCode === 400 ? 'BAD_REQUEST' : 'CONFLICT',
+            message,
+            correlationId: request.id,
+          },
+        });
+      }
+    },
+  );
+
+  app.post<{
+    Params: { venueId: string };
+    Body: { note?: string };
+  }>(
+    '/api/v1/venues/:venueId/promotion/reject',
+    {
+      preHandler: [authenticate, requireOperatorRole('admin')],
+    },
+    async (request, reply) => {
+      const operator = getRequiredOperator(request);
+      const note = request.body.note?.trim();
+      if (note === undefined || note.length === 0) {
+        return reply.status(400).send({
+          error: {
+            code: 'BAD_REQUEST',
+            message: 'A rejection note is required.',
+            correlationId: request.id,
+          },
+        });
+      }
+
+      try {
+        const promotion = await controlPlane.rejectConnectorPromotion(
+          request.params.venueId,
+          operator.operatorId,
+          operator.role,
+          note,
+        );
+        if (promotion === null) {
+          return reply.status(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: `Venue '${request.params.venueId}' was not found.`,
+              correlationId: request.id,
+            },
+          });
+        }
+
+        return reply.status(200).send({
+          data: promotion,
+          meta: { correlationId: request.id },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Connector promotion rejection failed.';
+        const statusCode = mutationErrorStatus(message);
+        return reply.status(statusCode).send({
+          error: {
+            code: statusCode === 403 ? 'FORBIDDEN' : statusCode === 404 ? 'NOT_FOUND' : statusCode === 400 ? 'BAD_REQUEST' : 'CONFLICT',
+            message,
+            correlationId: request.id,
+          },
+        });
+      }
+    },
+  );
+
+  app.post<{
+    Params: { venueId: string };
+    Body: { note?: string };
+  }>(
+    '/api/v1/venues/:venueId/promotion/suspend',
+    {
+      preHandler: [authenticate, requireOperatorRole('admin')],
+    },
+    async (request, reply) => {
+      const operator = getRequiredOperator(request);
+      const note = request.body.note?.trim();
+      if (note === undefined || note.length === 0) {
+        return reply.status(400).send({
+          error: {
+            code: 'BAD_REQUEST',
+            message: 'A suspension note is required.',
+            correlationId: request.id,
+          },
+        });
+      }
+
+      try {
+        const promotion = await controlPlane.suspendConnectorPromotion(
+          request.params.venueId,
+          operator.operatorId,
+          operator.role,
+          note,
+        );
+        if (promotion === null) {
+          return reply.status(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: `Venue '${request.params.venueId}' was not found.`,
+              correlationId: request.id,
+            },
+          });
+        }
+
+        return reply.status(200).send({
+          data: promotion,
+          meta: { correlationId: request.id },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Connector promotion suspension failed.';
+        const statusCode = mutationErrorStatus(message);
+        return reply.status(statusCode).send({
+          error: {
+            code: statusCode === 403 ? 'FORBIDDEN' : statusCode === 404 ? 'NOT_FOUND' : statusCode === 400 ? 'BAD_REQUEST' : 'CONFLICT',
+            message,
+            correlationId: request.id,
+          },
+        });
+      }
     },
   );
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { createCanonicalMarketIdentity } from '@sentinel-apex/venue-adapters';
+
 import {
   buildInternalDerivativeSnapshot,
   buildVenueDerivativeComparisonDetail,
@@ -9,6 +11,8 @@ import {
 
 import type {
   OrderView,
+  PortfolioSummaryView,
+  RiskSummaryView,
   RuntimeReconciliationFindingView,
   VenueSnapshotView,
 } from '../types.js';
@@ -33,8 +37,23 @@ function createOrder(overrides: Partial<OrderView> = {}): OrderView {
     attemptCount: 1,
     lastError: null,
     reduceOnly: false,
+    marketIdentity: createCanonicalMarketIdentity({
+      venueId: 'drift-solana-readonly',
+      asset: 'BTC',
+      marketType: 'perpetual',
+      marketIndex: 0,
+      marketKey: 'perp:0',
+      marketSymbol: 'BTC-PERP',
+      provenance: 'venue_native',
+      capturedAtStage: 'strategy_intent',
+      source: 'internal-derivative-state-test',
+      notes: ['Test order carries exact market identity.'],
+    }),
     metadata: {
       instrumentType: 'perpetual',
+      marketIndex: 0,
+      marketKey: 'perp:0',
+      marketSymbol: 'BTC-PERP',
     },
     submittedAt: '2026-03-20T12:00:00.000Z',
     completedAt: null,
@@ -52,6 +71,51 @@ function createTrackedVenue(overrides: Partial<InternalDerivativeTrackedVenueCon
     subaccountId: 0,
     accountLabel: 'Apex Carry',
     ...overrides,
+  };
+}
+
+function createPortfolioSummary(): PortfolioSummaryView {
+  return {
+    totalNav: '250000',
+    grossExposure: '51000',
+    netExposure: '51000',
+    liquidityReserve: '109150.25',
+    openPositionCount: 1,
+    dailyPnl: '1250',
+    cumulativePnl: '8900',
+    sleeves: [
+      {
+        sleeveId: 'carry',
+        nav: '250000',
+        allocationPct: 100,
+      },
+    ],
+    venueExposures: {
+      'drift-solana-readonly': '51000',
+    },
+    assetExposures: {
+      BTC: '51000',
+    },
+    updatedAt: '2026-03-20T12:01:00.000Z',
+  };
+}
+
+function createRiskSummary(): RiskSummaryView {
+  return {
+    summary: {
+      grossExposurePct: 20.4,
+      netExposurePct: 20.4,
+      leverage: 2.11,
+      liquidityReservePct: 43.66,
+      dailyDrawdownPct: 0.8,
+      weeklyDrawdownPct: 1.2,
+      portfolioDrawdownPct: 2.4,
+      openCircuitBreakers: [],
+      riskLevel: 'normal',
+    },
+    approvedIntentCount: 2,
+    rejectedIntentCount: 0,
+    capturedAt: '2026-03-20T12:01:00.000Z',
   };
 }
 
@@ -84,6 +148,19 @@ function createInternalSnapshot() {
       feeAsset: 'USDC',
       reduceOnly: false,
       filledAt: new Date('2026-03-20T11:59:00.000Z'),
+      marketIdentity: createCanonicalMarketIdentity({
+        venueId: 'drift-solana-readonly',
+        asset: 'BTC',
+        marketType: 'perpetual',
+        marketIndex: 0,
+        marketKey: 'perp:0',
+        marketSymbol: 'BTC-PERP',
+        provenance: 'venue_native',
+        capturedAtStage: 'fill',
+        source: 'internal-derivative-state-test',
+        notes: ['Test fill carries exact market identity.'],
+      }),
+      metadata: {},
     },
     {
       venueId: 'drift-solana-readonly',
@@ -97,6 +174,19 @@ function createInternalSnapshot() {
       feeAsset: 'USDC',
       reduceOnly: true,
       filledAt: new Date('2026-03-20T12:00:30.000Z'),
+      marketIdentity: createCanonicalMarketIdentity({
+        venueId: 'drift-solana-readonly',
+        asset: 'BTC',
+        marketType: 'perpetual',
+        marketIndex: 0,
+        marketKey: 'perp:0',
+        marketSymbol: 'BTC-PERP',
+        provenance: 'venue_native',
+        capturedAtStage: 'fill',
+        source: 'internal-derivative-state-test',
+        notes: ['Test fill carries exact market identity.'],
+      }),
+      metadata: {},
     },
   ];
 
@@ -104,6 +194,8 @@ function createInternalSnapshot() {
     venue: createTrackedVenue(),
     orders,
     fills,
+    portfolioSummary: createPortfolioSummary(),
+    riskSummary: createRiskSummary(),
     capturedAt: '2026-03-20T12:01:00.000Z',
     sourceComponent: 'sentinel-runtime',
     sourceRunId: 'run-1',
@@ -306,7 +398,127 @@ function createExternalSnapshot(): VenueSnapshotView {
       },
     },
     executionReferenceState: null,
+    executionConfirmationState: null,
     metadata: {},
+  };
+}
+
+function createPartialInternalSnapshot() {
+  return buildInternalDerivativeSnapshot({
+    venue: createTrackedVenue(),
+    orders: [
+      createOrder({
+        marketIdentity: createCanonicalMarketIdentity({
+          venueId: 'drift-solana-readonly',
+          asset: 'BTC',
+          marketType: 'perpetual',
+          marketSymbol: 'BTC-PERP',
+          provenance: 'derived',
+          capturedAtStage: 'runtime_order',
+          source: 'internal-derivative-state-test',
+          notes: ['Partial snapshot order only carries derived market identity.'],
+        }),
+        metadata: {
+          instrumentType: 'perpetual',
+        },
+      }),
+    ],
+    fills: [
+      {
+        venueId: 'drift-solana-readonly',
+        venueOrderId: '901',
+        clientOrderId: 'client-order-1',
+        asset: 'BTC',
+        side: 'buy',
+        size: '0.75',
+        price: '68000',
+        fee: '1.5',
+        feeAsset: 'USDC',
+        reduceOnly: false,
+        filledAt: new Date('2026-03-20T12:00:30.000Z'),
+        marketIdentity: createCanonicalMarketIdentity({
+          venueId: 'drift-solana-readonly',
+          asset: 'BTC',
+          marketType: 'perpetual',
+          marketSymbol: 'BTC-PERP',
+          provenance: 'derived',
+          capturedAtStage: 'fill',
+          source: 'internal-derivative-state-test',
+          notes: ['Test fill only carries derived market identity.'],
+        }),
+        metadata: {},
+      },
+    ],
+    portfolioSummary: createPortfolioSummary(),
+    riskSummary: createRiskSummary(),
+    capturedAt: '2026-03-20T12:01:00.000Z',
+    sourceComponent: 'sentinel-runtime',
+  });
+}
+
+function createAmbiguousExternalSnapshot(): VenueSnapshotView {
+  const snapshot = createExternalSnapshot();
+
+  return {
+    ...snapshot,
+    derivativePositionState: {
+      positions: [
+        {
+          marketIndex: 0,
+          marketKey: 'perp:0',
+          marketSymbol: 'BTC-PERP',
+          positionType: 'perp',
+          side: 'long',
+          baseAssetAmount: '0.75',
+          quoteAssetAmount: '-51000',
+          entryPrice: '68000',
+          breakEvenPrice: '68010',
+          unrealizedPnlUsd: '50',
+          liquidationPrice: '52000',
+          positionValueUsd: '51000',
+          openOrders: 1,
+          openBids: '0.1',
+          openAsks: '0',
+          metadata: {},
+          provenance: {
+            classification: 'mixed',
+            source: 'drift_user_account_with_market_context',
+            notes: [],
+          },
+        },
+        {
+          marketIndex: 99,
+          marketKey: 'perp:99',
+          marketSymbol: 'BTC-PERP',
+          positionType: 'perp',
+          side: 'long',
+          baseAssetAmount: '0.75',
+          quoteAssetAmount: '-51000',
+          entryPrice: '68000',
+          breakEvenPrice: '68010',
+          unrealizedPnlUsd: '50',
+          liquidationPrice: '52000',
+          positionValueUsd: '51000',
+          openOrders: 0,
+          openBids: '0',
+          openAsks: '0',
+          metadata: {},
+          provenance: {
+            classification: 'mixed',
+            source: 'drift_user_account_with_market_context',
+            notes: [],
+          },
+        },
+      ],
+      openPositionCount: 2,
+      methodology: 'drift_user_account_with_market_context',
+      notes: [],
+      provenance: {
+        classification: 'mixed',
+        source: 'drift_user_account_with_market_context',
+        notes: [],
+      },
+    },
   };
 }
 
@@ -324,12 +536,12 @@ function createFinding(): RuntimeReconciliationFindingView {
     entityType: 'venue_connector',
     entityId: 'drift-solana-readonly',
     mismatchId: null,
-    summary: 'Health comparison remains unsupported internally.',
+    summary: 'Health comparison remains partial internally.',
     expectedState: {
       healthState: 'available_or_external_unsupported',
     },
     actualState: {
-      healthState: 'unsupported',
+      healthState: 'partial',
     },
     delta: {},
     details: {},
@@ -339,26 +551,48 @@ function createFinding(): RuntimeReconciliationFindingView {
 }
 
 describe('internal derivative state', () => {
-  it('builds canonical internal account and order state while keeping unsupported health explicit', () => {
+  it('builds canonical internal account and order state with derived internal health posture', () => {
     const snapshot = createInternalSnapshot();
 
     expect(snapshot.coverage.accountState.status).toBe('available');
     expect(snapshot.coverage.positionState.status).toBe('available');
-    expect(snapshot.coverage.healthState.status).toBe('unsupported');
+    expect(snapshot.coverage.healthState.status).toBe('available');
     expect(snapshot.coverage.orderState.status).toBe('partial');
     expect(snapshot.accountState?.accountLocatorMode).toBe('authority_subaccount');
     expect(snapshot.positionState?.openPositionCount).toBe(1);
-    expect(snapshot.positionState?.positions[0]?.positionKey).toBe('perp:BTC');
+    expect(snapshot.positionState?.positions[0]?.positionKey).toBe('perp:0');
     expect(snapshot.positionState?.positions[0]?.netQuantity).toBe('0.75');
     expect(snapshot.positionState?.positions[0]?.averageEntryPrice).toBe('68000');
+    expect(snapshot.positionState?.positions[0]?.marketIdentity?.normalizedKey).toBe('perp:0');
     expect(snapshot.orderState?.openOrderCount).toBe(2);
     expect(snapshot.orderState?.comparableOpenOrderCount).toBe(1);
     expect(snapshot.orderState?.nonComparableOpenOrderCount).toBe(1);
-    expect(snapshot.healthState?.healthStatus).toBe('unknown');
-    expect(snapshot.healthState?.provenance.classification).toBe('estimated');
+    expect(snapshot.healthState?.healthStatus).toBe('healthy');
+    expect(snapshot.healthState?.comparisonMode).toBe('status_band_only');
+    expect(snapshot.healthState?.riskPosture).toBe('normal');
+    expect(snapshot.healthState?.venueExposureUsd).toBe('51000');
+    expect(snapshot.healthState?.provenance.classification).toBe('derived');
   });
 
-  it('marks only genuinely comparable derivative sections as matched and leaves health unsupported', () => {
+  it('marks health as unsupported when internal portfolio and risk projections are missing', () => {
+    const snapshot = buildInternalDerivativeSnapshot({
+      venue: createTrackedVenue(),
+      orders: [createOrder()],
+      fills: [],
+      portfolioSummary: null,
+      riskSummary: null,
+      capturedAt: '2026-03-20T12:01:00.000Z',
+      sourceComponent: 'sentinel-runtime',
+    });
+
+    expect(snapshot.coverage.healthState.status).toBe('unsupported');
+    expect(snapshot.healthState?.healthStatus).toBe('unknown');
+    expect(snapshot.healthState?.comparisonMode).toBe('unsupported');
+    expect(snapshot.healthState?.provenance.classification).toBe('unsupported');
+    expect(snapshot.healthState?.unsupportedReasons.length).toBeGreaterThan(0);
+  });
+
+  it('marks exact market identity and partial health comparison honestly', () => {
     const internalSnapshot = createInternalSnapshot();
     const detail = buildVenueDerivativeComparisonDetail({
       venueId: 'drift-solana-readonly',
@@ -374,8 +608,13 @@ describe('internal derivative state', () => {
 
     expect(detail.summary.subaccountIdentity.status).toBe('available');
     expect(detail.summary.positionInventory.status).toBe('available');
-    expect(detail.summary.healthState.status).toBe('unsupported');
+    expect(detail.summary.marketIdentity.status).toBe('available');
+    expect(detail.summary.healthState.status).toBe('partial');
     expect(detail.summary.orderInventory.status).toBe('partial');
+    expect(detail.summary.healthComparisonMode).toBe('status_band_only');
+    expect(detail.summary.exactPositionIdentityCount).toBe(1);
+    expect(detail.summary.partialPositionIdentityCount).toBe(0);
+    expect(detail.summary.positionIdentityGapCount).toBe(0);
     expect(detail.summary.matchedPositionCount).toBe(1);
     expect(detail.summary.mismatchedPositionCount).toBe(0);
     expect(detail.summary.matchedOrderCount).toBe(1);
@@ -383,8 +622,47 @@ describe('internal derivative state', () => {
     expect(detail.summary.activeFindingCount).toBe(1);
     expect(detail.accountComparison.status).toBe('matched');
     expect(detail.positionComparisons[0]?.status).toBe('matched');
+    expect(detail.positionComparisons[0]?.marketIdentityComparison.comparisonMode).toBe('exact');
     expect(detail.orderComparisons[0]?.status).toBe('matched');
-    expect(detail.healthComparison.status).toBe('not_comparable');
-    expect(detail.healthComparison.comparable).toBe(false);
+    expect(detail.orderComparisons[0]?.marketIdentityComparison.comparisonMode).toBe('exact');
+    expect(detail.healthComparison.status).toBe('matched');
+    expect(detail.healthComparison.comparable).toBe(true);
+    expect(detail.healthComparison.comparisonMode).toBe('status_band_only');
+  });
+
+  it('reports partial market identity honestly when the external side cannot be paired uniquely', () => {
+    const internalSnapshot = createPartialInternalSnapshot();
+    const detail = buildVenueDerivativeComparisonDetail({
+      venueId: 'drift-solana-readonly',
+      venueName: 'Drift Solana Read-Only',
+      internalState: {
+        ...internalSnapshot,
+        id: 'internal-snapshot-2',
+        updatedAt: internalSnapshot.capturedAt,
+      },
+      externalSnapshot: createAmbiguousExternalSnapshot(),
+      activeFindings: [],
+    });
+
+    expect(detail.summary.positionInventory.status).toBe('partial');
+    expect(detail.summary.marketIdentity.status).toBe('partial');
+    expect(detail.summary.exactPositionIdentityCount).toBe(0);
+    expect(detail.summary.partialPositionIdentityCount).toBe(0);
+    expect(detail.summary.positionIdentityGapCount).toBe(1);
+    const identityGapComparison = detail.positionComparisons.find(
+      (comparison) => comparison.status === 'not_comparable' && comparison.internalPosition !== null,
+    );
+    expect(identityGapComparison?.status).toBe('not_comparable');
+    expect(identityGapComparison?.marketIdentityComparison.comparisonMode).toBe('unsupported');
+    expect(identityGapComparison?.marketIdentityComparison.notes[0]).toContain('Multiple external positions');
+    expect(detail.healthComparison.comparisonMode).toBe('status_band_only');
+  });
+
+  it('promotes exact internal position identity when exact fill metadata is captured earlier', () => {
+    const snapshot = createInternalSnapshot();
+
+    expect(snapshot.positionState?.positions[0]?.positionKey).toBe('perp:0');
+    expect(snapshot.positionState?.positions[0]?.marketIdentity?.confidence).toBe('exact');
+    expect(snapshot.positionState?.positions[0]?.marketIdentity?.normalizedKeyType).toBe('market_index');
   });
 });
