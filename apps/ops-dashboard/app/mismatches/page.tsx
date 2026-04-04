@@ -9,6 +9,7 @@ import { AppShell } from '../../src/components/app-shell';
 import { EmptyState } from '../../src/components/empty-state';
 import { ErrorState } from '../../src/components/error-state';
 import { Panel } from '../../src/components/panel';
+import { ReconciliationActions } from '../../src/components/reconciliation-actions';
 import { StatusBadge } from '../../src/components/status-badge';
 import { requireDashboardSession } from '../../src/lib/auth.server';
 import { formatDateTime } from '../../src/lib/format';
@@ -51,6 +52,7 @@ export default async function MismatchesPage(
             <p className="eyebrow">Mismatches</p>
             <h1>Integrity Incident Queue</h1>
           </div>
+          <ReconciliationActions idleLabel="Run Manual Recon" />
         </header>
 
         <Panel subtitle="Filter current and historical mismatches" title="Filters">

@@ -36,3 +36,7 @@ export function useOperator(): OperatorContextValue {
 
   return value;
 }
+
+export function useOptionalOperator(): OperatorContextValue | null {
+  return useContext(OperatorContext);
+}

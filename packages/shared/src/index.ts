@@ -50,6 +50,19 @@ export {
 export type { RetryOptions } from './retry.js';
 export { retry } from './retry.js';
 
+export type { DeploymentProfile } from './deployment.js';
+export {
+  BLOCKED_EXECUTION_SCOPE,
+  buildDeploymentProfile,
+  DEFAULT_ENVIRONMENT_LABEL,
+  DEFAULT_EXECUTION_BADGE,
+  envFlagEnabled,
+  getDevnetExecutionSafetyErrors,
+  getDevnetExecutionSafetyWarnings,
+  READINESS_TRUTH_STATEMENT,
+  SUPPORTED_EXECUTION_SCOPE,
+} from './deployment.js';
+
 export type {
   OpsOperatorRole,
   SignedOperatorContext,

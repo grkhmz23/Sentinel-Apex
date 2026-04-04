@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "tsc",
+    "build:deploy": "pnpm --filter @sentinel-apex/api... build",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",

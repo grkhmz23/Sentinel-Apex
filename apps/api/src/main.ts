@@ -2,10 +2,14 @@ import { config } from '@sentinel-apex/config';
 import { createLogger } from '@sentinel-apex/observability';
 
 import { createApp } from './app.js';
+import { assertApiStartupSafety, logApiStartup } from './deployment.js';
 
 const logger = createLogger('api:main');
 
 async function main(): Promise<void> {
+  assertApiStartupSafety();
+  logApiStartup();
+
   const app = await createApp();
   const port = config.API_PORT;
 

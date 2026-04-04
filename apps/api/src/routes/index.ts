@@ -94,7 +94,7 @@ export async function registerRoutes(
   controlPlane: RuntimeControlPlane,
 ): Promise<void> {
   // Unauthenticated
-  await app.register(healthRoutes);
+  await healthRoutes(app, controlPlane);
 
   // Authenticated API routes
   await allocatorRoutes(app, controlPlane);

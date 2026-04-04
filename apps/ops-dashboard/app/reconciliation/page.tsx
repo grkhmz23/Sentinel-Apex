@@ -9,6 +9,7 @@ import { EmptyState } from '../../src/components/empty-state';
 import { ErrorState } from '../../src/components/error-state';
 import { JsonBlock } from '../../src/components/json-block';
 import { Panel } from '../../src/components/panel';
+import { ReconciliationActions } from '../../src/components/reconciliation-actions';
 import { StatusBadge } from '../../src/components/status-badge';
 import { requireDashboardSession } from '../../src/lib/auth.server';
 import { formatDateTime } from '../../src/lib/format';
@@ -58,6 +59,7 @@ export default async function ReconciliationPage(
           <p className="eyebrow">Reconciliation</p>
           <h1>Runs and Findings</h1>
         </div>
+        <ReconciliationActions />
       </header>
 
       <div className="grid grid--two-column">

@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "tsc",
+    "build:deploy": "pnpm --filter @sentinel-apex/runtime-worker... build",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
@@ -13,7 +14,8 @@
   "dependencies": {
     "@sentinel-apex/config": "workspace:*",
     "@sentinel-apex/observability": "workspace:*",
-    "@sentinel-apex/runtime": "workspace:*"
+    "@sentinel-apex/runtime": "workspace:*",
+    "@sentinel-apex/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",

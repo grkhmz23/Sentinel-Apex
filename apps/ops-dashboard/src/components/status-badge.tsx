@@ -3,7 +3,8 @@ export function StatusBadge(
 ): JSX.Element {
   return (
     <span className={`status-badge status-badge--${tone ?? 'neutral'}`}>
-      {label}
+      <span className="status-badge__dot" aria-hidden="true" />
+      <span>{label}</span>
     </span>
   );
 }

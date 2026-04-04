@@ -1,0 +1,45 @@
+services:
+  - type: web
+    runtime: node
+    name: sentinel-apex-api
+    rootDir: apps/api
+    plan: starter
+    autoDeployTrigger: checksPass
+    buildCommand: pnpm build:deploy
+    startCommand: pnpm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: staging
+      - key: EXECUTION_MODE
+        value: dry-run
+      - key: FEATURE_FLAG_LIVE_EXECUTION
+        value: "false"
+      - key: SENTINEL_ENVIRONMENT_LABEL
+        value: staging demo
+      - key: SENTINEL_EXECUTION_BADGE
+        value: devnet only
+      - key: API_PORT
+        value: "10000"
+
+  - type: worker
+    runtime: node
+    name: sentinel-apex-runtime-worker
+    rootDir: apps/runtime-worker
+    plan: starter
+    autoDeployTrigger: checksPass
+    buildCommand: pnpm build:deploy
+    startCommand: pnpm start
+    envVars:
+      - key: NODE_ENV
+        value: staging
+      - key: EXECUTION_MODE
+        value: dry-run
+      - key: FEATURE_FLAG_LIVE_EXECUTION
+        value: "false"
+      - key: SENTINEL_ENVIRONMENT_LABEL
+        value: staging demo
+      - key: SENTINEL_EXECUTION_BADGE
+        value: devnet only
+      - key: RUNTIME_WORKER_CYCLE_INTERVAL_MS
+        value: "60000"

@@ -2,6 +2,8 @@ import { config } from '@sentinel-apex/config';
 import { createLogger } from '@sentinel-apex/observability';
 import { RuntimeWorker } from '@sentinel-apex/runtime';
 
+import { assertWorkerStartupSafety, logWorkerStartup } from './deployment.js';
+
 const logger = createLogger('runtime-worker:main');
 
 function getCycleIntervalMs(): number {
@@ -19,6 +21,11 @@ function getCycleIntervalMs(): number {
 }
 
 async function main(): Promise<void> {
+  assertWorkerStartupSafety();
+
+  const cycleIntervalMs = getCycleIntervalMs();
+  logWorkerStartup(cycleIntervalMs);
+
   const worker = await RuntimeWorker.createDeterministic(
     config.DATABASE_URL,
     {
@@ -26,7 +33,7 @@ async function main(): Promise<void> {
       liveExecutionEnabled: config.FEATURE_FLAG_LIVE_EXECUTION,
     },
     {
-      cycleIntervalMs: getCycleIntervalMs(),
+      cycleIntervalMs,
     },
   );
 
@@ -34,7 +41,7 @@ async function main(): Promise<void> {
 
   logger.info('Runtime worker started', {
     component: 'runtime-worker:main',
-    cycleIntervalMs: getCycleIntervalMs(),
+    cycleIntervalMs,
   });
 
   const shutdown = async (signal: string): Promise<void> => {

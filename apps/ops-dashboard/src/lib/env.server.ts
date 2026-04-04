@@ -17,7 +17,10 @@ function getOptionalEnv(name: string): string | null {
 }
 
 export function getDashboardApiBaseUrl(): string {
-  return getRequiredEnv('OPS_DASHBOARD_API_BASE_URL').replace(/\/$/, '');
+  return (
+    getOptionalEnv('OPS_DASHBOARD_API_BASE_URL')
+    ?? getRequiredEnv('NEXT_PUBLIC_API_BASE_URL')
+  ).replace(/\/$/, '');
 }
 
 export function getDashboardApiKey(): string {

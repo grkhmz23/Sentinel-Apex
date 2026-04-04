@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
+    "build:deploy": "pnpm --filter @sentinel-apex/ops-dashboard... build",
     "bootstrap:operator": "tsx scripts/bootstrap-operator.ts",
     "dev": "next dev",
     "start": "next start",
@@ -13,7 +14,6 @@
   },
   "dependencies": {
     "@sentinel-apex/db": "workspace:*",
-    "@sentinel-apex/runtime": "workspace:*",
     "@sentinel-apex/shared": "workspace:*",
     "drizzle-orm": "^0.30.10",
     "next": "^14.2.32",
@@ -27,6 +27,7 @@
     "@types/node": "^20.12.12",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@sentinel-apex/runtime": "workspace:*",
     "jsdom": "^24.1.1",
     "tsx": "^4.11.0",
     "typescript": "^5.4.5",

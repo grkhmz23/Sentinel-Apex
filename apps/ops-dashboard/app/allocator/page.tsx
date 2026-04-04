@@ -1,5 +1,6 @@
 import Link from 'next/link';
 
+import { AllocatorActions } from '../../src/components/allocator-actions';
 import { AppShell } from '../../src/components/app-shell';
 import { DefinitionList } from '../../src/components/definition-list';
 import { EmptyState } from '../../src/components/empty-state';
@@ -42,6 +43,7 @@ export default async function AllocatorPage(): Promise<JSX.Element> {
             <p className="eyebrow">Sentinel</p>
             <h1>Allocator</h1>
           </div>
+          <AllocatorActions />
         </header>
 
         <div className="grid grid--metrics">
