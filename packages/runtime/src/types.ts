@@ -18,6 +18,7 @@ import type {
   CarryExecutionMode,
   CarryExecutionStatus,
   CarryOperationalBlockedReason,
+  CarryStrategyProfile,
 } from '@sentinel-apex/carry';
 import type { RiskAssessment } from '@sentinel-apex/domain';
 import type { RiskSummary } from '@sentinel-apex/risk-engine';
@@ -1023,6 +1024,9 @@ export type ConnectorPromotionTargetPosture = 'approved_for_live';
 export type ConnectorReadOnlyValidationState = 'not_applicable' | 'complete' | 'partial' | 'insufficient';
 export type ConnectorPromotionEventType = 'requested' | 'approved' | 'rejected' | 'suspended';
 export type ConnectorPostTradeConfirmationStatus = 'not_required' | 'confirmed' | 'blocked';
+export type CarryStrategyProfileView = CarryStrategyProfile;
+export type CarryStrategyEligibilityView = CarryStrategyProfileView['eligibility'];
+export type CarryStrategyRuleResultView = CarryStrategyEligibilityView['ruleResults'][number];
 
 export interface ConnectorConfigReadinessMarkerView {
   key: string;
@@ -1243,6 +1247,7 @@ export interface CarryActionView {
   approvalRequirement: CarryApprovalRequirement;
   executionMode: CarryExecutionMode;
   simulated: boolean;
+  strategyProfile: CarryStrategyProfileView;
   executionPlan: Record<string, unknown>;
   approvedBy: string | null;
   approvedAt: string | null;
@@ -2165,6 +2170,7 @@ export interface RuntimeReadApi {
   getRuntimeStatus(): Promise<RuntimeStatusView>;
   listCarryRecommendations(limit?: number): Promise<CarryActionView[]>;
   listCarryActions(limit?: number): Promise<CarryActionView[]>;
+  getCarryStrategyProfile(): Promise<CarryStrategyProfileView>;
   getCarryAction(actionId: string): Promise<CarryActionDetailView | null>;
   listCarryExecutions(limit?: number): Promise<CarryExecutionView[]>;
   listCarryExecutionsForAction(actionId: string): Promise<CarryExecutionView[]>;

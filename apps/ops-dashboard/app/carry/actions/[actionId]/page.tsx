@@ -8,6 +8,12 @@ import { Panel } from '../../../../src/components/panel';
 import { StatusBadge } from '../../../../src/components/status-badge';
 import { requireDashboardSession } from '../../../../src/lib/auth.server';
 import { carryModeTone, carryReadinessTone, carryStatusTone } from '../../../../src/lib/carry-display';
+import {
+  carryStrategyEligibilityTone,
+  carryStrategyRuleTone,
+  formatCarryStrategyEnvironment,
+  formatCarryStrategyEvidenceLabel,
+} from '../../../../src/lib/carry-strategy-display';
 import { formatDateTime, formatUsd } from '../../../../src/lib/format';
 import { loadCarryActionDetailPageData } from '../../../../src/lib/runtime-api.server';
 
@@ -104,6 +110,41 @@ export default async function CarryActionDetailPage(
         </div>
 
         <div className="grid grid--two-column">
+          <Panel subtitle="Persisted strategy and vault snapshot attached to this carry action" title="Strategy Snapshot">
+            <DefinitionList
+              items={[
+                {
+                  label: 'Eligibility',
+                  value: <StatusBadge label={detail.action.strategyProfile.eligibility.status} tone={carryStrategyEligibilityTone(detail.action.strategyProfile.eligibility.status)} />,
+                },
+                { label: 'Vault base asset', value: detail.action.strategyProfile.vaultBaseAsset },
+                { label: 'Tenor', value: `${detail.action.strategyProfile.tenor.lockPeriodMonths}-month rolling` },
+                { label: 'Reassessment', value: `Every ${detail.action.strategyProfile.tenor.reassessmentCadenceMonths} months` },
+                { label: 'Target APY floor', value: `${detail.action.strategyProfile.apy.targetFloorPct}%` },
+                { label: 'Configured target APY', value: `${detail.action.strategyProfile.apy.targetApyPct}%` },
+                {
+                  label: 'Projected APY',
+                  value: detail.action.strategyProfile.apy.projectedApyPct === null
+                    ? `Unknown (${formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.apy.projectedApySource)})`
+                    : `${detail.action.strategyProfile.apy.projectedApyPct}% (${formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.apy.projectedApySource)})`,
+                },
+                {
+                  label: 'Realized APY',
+                  value: detail.action.strategyProfile.apy.realizedApyPct === null
+                    ? `Unknown (${formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.apy.realizedApySource)})`
+                    : `${detail.action.strategyProfile.apy.realizedApyPct}% (${formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.apy.realizedApySource)})`,
+                },
+                { label: 'Yield source', value: formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.yieldSourceCategory) },
+                { label: 'Leverage model', value: formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.leverageModel) },
+                { label: 'Health threshold', value: detail.action.strategyProfile.leverageHealthThreshold ?? 'Unavailable' },
+                { label: 'Oracle dependency', value: formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.oracleDependencyClass) },
+                { label: 'Evidence environment', value: formatCarryStrategyEnvironment(detail.action.strategyProfile.evidence.environment) },
+                { label: 'Latest evidence source', value: formatCarryStrategyEvidenceLabel(detail.action.strategyProfile.evidence.latestEvidenceSource) },
+              ]}
+            />
+            <p className="panel__hint">{detail.action.strategyProfile.evidence.summary}</p>
+          </Panel>
+
           <Panel subtitle="Structured policy and venue gating reasons" title="Blocked Reasons">
             {detail.action.blockedReasons.length === 0 ? (
               <EmptyState message="No blocked reasons were persisted for this action." title="No blocked reasons" />
@@ -133,6 +174,21 @@ export default async function CarryActionDetailPage(
         </div>
 
         <div className="grid grid--two-column">
+          <Panel subtitle="Per-rule Build-A-Bear eligibility verdict captured when the action was planned" title="Eligibility Checks">
+            <div className="stack">
+              {detail.action.strategyProfile.eligibility.ruleResults.map((rule) => (
+                <p className={rule.status === 'pass' ? 'feedback feedback--success' : 'feedback feedback--warning'} key={rule.ruleKey}>
+                  <StatusBadge label={rule.status} tone={carryStrategyRuleTone(rule.status)} /> {rule.summary}
+                </p>
+              ))}
+              {detail.action.strategyProfile.eligibility.blockedReasons.length === 0 ? null : (
+                <p className="feedback feedback--error">
+                  Blocked reasons: {detail.action.strategyProfile.eligibility.blockedReasons.join(', ')}
+                </p>
+              )}
+            </div>
+          </Panel>
+
           <Panel subtitle="Deterministic order intents attached to this carry action" title="Planned Orders">
             {detail.plannedOrders.length === 0 ? (
               <EmptyState message="This carry action does not require order intents." title="No planned orders" />

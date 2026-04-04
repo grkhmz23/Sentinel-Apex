@@ -143,6 +143,20 @@ describe('CarryControlledExecutionPlanner', () => {
     expect(intent?.executable).toBe(false);
     expect(intent?.blockedReasons.some((reason) => reason.code === 'venue_live_ineligible')).toBe(true);
   });
+
+  it('blocks carry execution when the strategy profile is Build-A-Bear ineligible', () => {
+    const planner = new CarryControlledExecutionPlanner();
+    const [intent] = planner.createExecutionIntents(createInput({
+      strategyProfile: {
+        yieldSourceCategory: 'dex_lp',
+      },
+    }));
+
+    expect(intent?.executable).toBe(false);
+    expect(intent?.strategyProfile?.vaultBaseAsset).toBe('USDC');
+    expect(intent?.strategyProfile?.eligibility.status).toBe('ineligible');
+    expect(intent?.blockedReasons.some((reason) => reason.code === 'disallowed_yield_source')).toBe(true);
+  });
 });
 
 describe('buildCarryReductionIntents', () => {

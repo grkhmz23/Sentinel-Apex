@@ -11,6 +11,10 @@ Supported path:
 - connector: `drift-solana-devnet-carry`
 - cluster: devnet
 - sleeve: carry
+- strategy profile: `Apex USDC Delta-Neutral Carry`
+- vault base asset: `USDC`
+- tenor: 3-month rolling lock with reassessment every 3 months
+- target APY floor: `10%`
 - action: operator-approved `reduce_carry_exposure`
 - order scope: BTC-PERP reduce-only market orders
 - confirmation contract:
@@ -96,6 +100,14 @@ Expected full confirmation:
 - strong Drift fill correlation
 - valid full reduce-only position delta
 
+Expected strategy-profile truth:
+
+- `/api/v1/carry/strategy-profile` shows `vaultBaseAsset=USDC`
+- tenor stays `3 months / rolling / 3-month reassessment`
+- projected APY is labeled as projected
+- realized APY is `unknown` unless separately evidenced
+- eligibility fails closed if policy metadata drifts from the allowed Build-A-Bear profile
+
 ## Unsupported Flow
 
 The following remain unsupported and must not be used in demos:
@@ -103,6 +115,7 @@ The following remain unsupported and must not be used in demos:
 - increase-carry-exposure through the real connector
 - treasury-native real execution
 - mainnet execution
+- generic live Ranger vault deployment
 - spot orders
 - non-BTC perp orders
 - limit/post-only orders

@@ -5,6 +5,7 @@ import type {
   AllocatorSummaryView,
   CarryActionDetailView,
   CarryActionView,
+  CarryStrategyProfileView,
   CarryExecutionDetailView,
   CarryExecutionView,
   CarryVenueView,
@@ -138,6 +139,7 @@ export interface TreasuryPageData {
 }
 
 export interface CarryPageData {
+  strategyProfile: CarryStrategyProfileView;
   recommendations: CarryActionView[];
   actions: CarryActionView[];
   executions: CarryExecutionView[];

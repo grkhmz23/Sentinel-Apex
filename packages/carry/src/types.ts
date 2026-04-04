@@ -1,5 +1,11 @@
 import type { OrderIntent } from '@sentinel-apex/domain';
 
+import type {
+  BuildABearStrategyPolicy,
+  CarryStrategyProfile,
+  CarryStrategyProfileInput,
+} from './strategy-policy.js';
+
 export type CarryActionType =
   | 'increase_carry_exposure'
   | 'reduce_carry_exposure'
@@ -27,6 +33,12 @@ export type CarryOperationalBlockedReasonCode =
   | 'venue_live_ineligible'
   | 'live_execution_disabled'
   | 'simulated_execution_only'
+  | 'unsupported_strategy_base_asset'
+  | 'unsupported_strategy_tenor'
+  | 'strategy_target_apy_below_floor'
+  | 'disallowed_yield_source'
+  | 'missing_leverage_health_threshold'
+  | 'unsafe_leverage_looping'
   | 'opportunity_confidence_below_threshold'
   | 'opportunity_expired'
   | 'no_open_positions'
@@ -38,6 +50,7 @@ export type CarryOperationalBlockedReasonCategory =
   | 'budget'
   | 'venue_capability'
   | 'execution_mode'
+  | 'strategy_policy'
   | 'opportunity'
   | 'exposure';
 
@@ -102,11 +115,14 @@ export interface CarryExecutionIntent {
   simulated: boolean;
   plannedOrders: OrderIntent[];
   effects: CarryExecutionEffects;
+  strategyProfile?: CarryStrategyProfile;
 }
 
 export interface CarryControlledExecutionPlanningInput {
   recommendations: CarryExecutionRecommendation[];
   policy?: Partial<CarryOperationalPolicy>;
+  strategyPolicy?: Partial<BuildABearStrategyPolicy>;
+  strategyProfile?: CarryStrategyProfileInput;
   currentCarryAllocationUsd: string;
   approvedCarryBudgetUsd: string | null;
   totalCapitalUsd: string | null;

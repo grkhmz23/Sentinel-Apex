@@ -9,6 +9,20 @@ export async function carryRoutes(
   app: FastifyInstance,
   controlPlane: RuntimeControlPlane,
 ): Promise<void> {
+  app.get(
+    '/api/v1/carry/strategy-profile',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const strategyProfile = await controlPlane.getCarryStrategyProfile();
+      return reply.status(200).send({
+        data: strategyProfile,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
   app.get<{
     Querystring: { limit?: string };
   }>(

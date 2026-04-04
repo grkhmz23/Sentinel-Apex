@@ -79,6 +79,7 @@ import type {
   AllocatorSummaryView,
   AuditEventView,
   CarryActionDetailView,
+  CarryStrategyProfileView,
   CarryActionView,
   CarryExecutionPostTradeConfirmationView,
   CarryExecutionDetailView,
@@ -1761,6 +1762,10 @@ export class SentinelRuntime {
 
   async listCarryActions(limit = 50): Promise<CarryActionView[]> {
     return this.options.store.listCarryActions(limit);
+  }
+
+  async getCarryStrategyProfile(): Promise<CarryStrategyProfileView> {
+    return this.options.store.getCarryStrategyProfile();
   }
 
   async getCarryAction(actionId: string): Promise<CarryActionDetailView | null> {

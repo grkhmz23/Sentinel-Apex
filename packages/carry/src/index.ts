@@ -4,6 +4,31 @@
 
 export type { CarryConfig } from './config.js';
 export { DEFAULT_CARRY_CONFIG } from './config.js';
+export {
+  buildCarryStrategyProfile,
+  DEFAULT_BUILD_A_BEAR_STRATEGY_POLICY,
+  DISALLOWED_BUILD_A_BEAR_YIELD_SOURCES,
+} from './strategy-policy.js';
+export type {
+  BuildABearLeverageModel,
+  BuildABearLockReassessmentPolicy,
+  BuildABearOracleDependencyClass,
+  BuildABearStrategyPolicy,
+  BuildABearYieldSourceCategory,
+  CarryStrategyApyEvidenceKind,
+  CarryStrategyApyModel,
+  CarryStrategyEligibility,
+  CarryStrategyEligibilityStatus,
+  CarryStrategyEvidenceScope,
+  CarryStrategyEvidenceSummary,
+  CarryStrategyLatestEvidenceSource,
+  CarryStrategyProfile,
+  CarryStrategyProfileInput,
+  CarryStrategyRiskLimit,
+  CarryStrategyRuleKey,
+  CarryStrategyRuleResult,
+  CarryStrategyTenorModel,
+} from './strategy-policy.js';
 
 export type {
   FundingRateSnapshot,

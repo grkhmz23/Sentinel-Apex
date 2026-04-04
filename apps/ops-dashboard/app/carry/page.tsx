@@ -3,12 +3,19 @@ import Link from 'next/link';
 import { AppShell } from '../../src/components/app-shell';
 import { CarryActionTable } from '../../src/components/carry-action-table';
 import { CarryActions } from '../../src/components/carry-actions';
+import { DefinitionList } from '../../src/components/definition-list';
 import { EmptyState } from '../../src/components/empty-state';
 import { ErrorState } from '../../src/components/error-state';
 import { Panel } from '../../src/components/panel';
 import { StatusBadge } from '../../src/components/status-badge';
 import { requireDashboardSession } from '../../src/lib/auth.server';
 import { carryModeTone, carryOnboardingTone, carryStatusTone, formatCarryOnboardingState } from '../../src/lib/carry-display';
+import {
+  carryStrategyEligibilityTone,
+  carryStrategyRuleTone,
+  formatCarryStrategyEnvironment,
+  formatCarryStrategyEvidenceLabel,
+} from '../../src/lib/carry-strategy-display';
 import { formatDateTime, formatUsd } from '../../src/lib/format';
 import { loadCarryPageData } from '../../src/lib/runtime-api.server';
 
@@ -26,7 +33,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
     );
   }
 
-  const { recommendations, actions, executions, venues } = state.data;
+  const { strategyProfile, recommendations, actions, executions, venues } = state.data;
 
   return (
     <AppShell session={session}>
@@ -43,6 +50,65 @@ export default async function CarryPage(): Promise<JSX.Element> {
         </header>
 
         <div className="grid grid--two-column">
+          <Panel subtitle="Hackathon-facing vault policy, APY model, and current supported evidence scope" title="Strategy Profile">
+            <DefinitionList
+              items={[
+                { label: 'Strategy', value: strategyProfile.strategyName },
+                {
+                  label: 'Eligibility',
+                  value: <StatusBadge label={strategyProfile.eligibility.status} tone={carryStrategyEligibilityTone(strategyProfile.eligibility.status)} />,
+                },
+                { label: 'Vault base asset', value: strategyProfile.vaultBaseAsset },
+                { label: 'Tenor', value: `${strategyProfile.tenor.lockPeriodMonths}-month rolling` },
+                { label: 'Reassessment', value: `Every ${strategyProfile.tenor.reassessmentCadenceMonths} months` },
+                { label: 'Target APY floor', value: `${strategyProfile.apy.targetFloorPct}%` },
+                { label: 'Configured target APY', value: `${strategyProfile.apy.targetApyPct}%` },
+                {
+                  label: 'Projected APY',
+                  value: strategyProfile.apy.projectedApyPct === null
+                    ? `Unknown (${formatCarryStrategyEvidenceLabel(strategyProfile.apy.projectedApySource)})`
+                    : `${strategyProfile.apy.projectedApyPct}% (${formatCarryStrategyEvidenceLabel(strategyProfile.apy.projectedApySource)})`,
+                },
+                {
+                  label: 'Realized APY',
+                  value: strategyProfile.apy.realizedApyPct === null
+                    ? `Unknown (${formatCarryStrategyEvidenceLabel(strategyProfile.apy.realizedApySource)})`
+                    : `${strategyProfile.apy.realizedApyPct}% (${formatCarryStrategyEvidenceLabel(strategyProfile.apy.realizedApySource)})`,
+                },
+                { label: 'Yield source', value: formatCarryStrategyEvidenceLabel(strategyProfile.yieldSourceCategory) },
+                { label: 'Leverage model', value: formatCarryStrategyEvidenceLabel(strategyProfile.leverageModel) },
+                { label: 'Health threshold', value: strategyProfile.leverageHealthThreshold ?? 'Unavailable' },
+                { label: 'Oracle dependency', value: formatCarryStrategyEvidenceLabel(strategyProfile.oracleDependencyClass) },
+                { label: 'Evidence environment', value: formatCarryStrategyEnvironment(strategyProfile.evidence.environment) },
+                { label: 'Latest evidence source', value: formatCarryStrategyEvidenceLabel(strategyProfile.evidence.latestEvidenceSource) },
+                { label: 'Latest execution reference', value: strategyProfile.evidence.latestExecutionReference ?? 'Not recorded' },
+                { label: 'Latest confirmation status', value: strategyProfile.evidence.latestConfirmationStatus ?? 'Not recorded' },
+              ]}
+            />
+            <p className="panel__hint">{strategyProfile.evidence.summary}</p>
+          </Panel>
+
+          <Panel subtitle="Each Build-A-Bear rule is evaluated explicitly and fails closed when unsupported or ineligible" title="Eligibility Checks">
+            {strategyProfile.eligibility.ruleResults.length === 0 ? (
+              <EmptyState message="No eligibility rules were recorded for this strategy profile." title="No rules" />
+            ) : (
+              <div className="stack">
+                {strategyProfile.eligibility.ruleResults.map((rule) => (
+                  <p className={rule.status === 'pass' ? 'feedback feedback--success' : 'feedback feedback--warning'} key={rule.ruleKey}>
+                    <StatusBadge label={rule.status} tone={carryStrategyRuleTone(rule.status)} /> {rule.summary}
+                  </p>
+                ))}
+                {strategyProfile.eligibility.blockedReasons.length === 0 ? null : (
+                  <p className="feedback feedback--error">
+                    Blocked reasons: {strategyProfile.eligibility.blockedReasons.join(', ')}
+                  </p>
+                )}
+              </div>
+            )}
+          </Panel>
+        </div>
+
+        <div className="grid">
           <Panel subtitle="Execution-ready carry recommendations with backend-enforced gating" title="Recommendations">
             {recommendations.length === 0 ? (
               <EmptyState message="No carry recommendations are currently persisted." title="No recommendations" />
@@ -50,7 +116,9 @@ export default async function CarryPage(): Promise<JSX.Element> {
               <CarryActionTable actions={recommendations} />
             )}
           </Panel>
+        </div>
 
+        <div className="grid">
           <Panel subtitle="Venue readiness, simulation state, and execution support boundaries" title="Venue Readiness">
             {venues.length === 0 ? (
               <EmptyState message="No carry venue snapshots are persisted yet." title="No venues" />

@@ -11,6 +11,7 @@ import {
   createCarryActionDetail,
   createCarryExecutionDetail,
   createCarryExecution,
+  createCarryStrategyProfile,
   createCarryVenue,
   createCommand,
   createDashboardSession,
@@ -185,6 +186,7 @@ vi.mock('./lib/runtime-api.server', () => ({
   })),
   loadCarryPageData: vi.fn(async () => ({
     data: {
+      strategyProfile: createCarryStrategyProfile(),
       recommendations: [createCarryAction()],
       actions: [createCarryAction()],
       executions: [createCarryExecution()],
@@ -332,6 +334,8 @@ describe('ops dashboard pages', () => {
     render(await CarryPage());
 
     expect(screen.getByText('Carry Sleeve')).toBeInTheDocument();
+    expect(screen.getByText('Strategy Profile')).toBeInTheDocument();
+    expect(screen.getByText('Eligibility Checks')).toBeInTheDocument();
     expect(screen.getByText('Recommendations')).toBeInTheDocument();
     expect(screen.getByText('Venue Readiness')).toBeInTheDocument();
     expect(screen.getByText('Execution History')).toBeInTheDocument();
@@ -339,6 +343,7 @@ describe('ops dashboard pages', () => {
     render(await CarryActionDetailPage({ params: { actionId: 'carry-action-1' } }));
 
     expect(screen.getByText('Carry Action Detail')).toBeInTheDocument();
+    expect(screen.getByText('Strategy Snapshot')).toBeInTheDocument();
     expect(screen.getByText('Blocked Reasons')).toBeInTheDocument();
     expect(screen.getByText('Planned Orders')).toBeInTheDocument();
     expect(screen.getByText('Executions')).toBeInTheDocument();
@@ -356,6 +361,38 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Execution Steps')).toBeInTheDocument();
     expect(screen.getByText('Timeline')).toBeInTheDocument();
     expect(screen.getByText(/derived \/ partial via execution_result/i)).toBeInTheDocument();
+  });
+
+  it('renders ineligible carry strategy states without implying live readiness', async () => {
+    vi.mocked(runtimeApiServer.loadCarryPageData).mockResolvedValueOnce({
+      data: {
+        strategyProfile: createCarryStrategyProfile({
+          yieldSourceCategory: 'dex_lp',
+          eligibility: {
+            status: 'ineligible',
+            summary: 'Strategy metadata does not currently satisfy all Build-A-Bear product-policy rules and remains blocked.',
+            blockedReasons: ['yield_source_category_disallowed'],
+            ruleResults: [{
+              ruleKey: 'allowed_yield_source',
+              status: 'fail',
+              summary: 'Yield source category dex_lp is explicitly disallowed for Build-A-Bear.',
+              blockedReason: 'yield_source_category_disallowed',
+              details: {},
+            }],
+          },
+        }),
+        recommendations: [createCarryAction()],
+        actions: [createCarryAction()],
+        executions: [createCarryExecution()],
+        venues: [createCarryVenue()],
+      },
+      error: null,
+    });
+
+    render(await CarryPage());
+
+    expect(screen.getByText(/yield_source_category_disallowed/i)).toBeInTheDocument();
+    expect(screen.getByText(/dex_lp is explicitly disallowed/i)).toBeInTheDocument();
   });
 
   it('renders reconciliation runs and findings from server data', async () => {

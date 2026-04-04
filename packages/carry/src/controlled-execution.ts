@@ -1,7 +1,13 @@
 import Decimal from 'decimal.js';
 
-import { toOpportunityId, type OrderIntent } from '@sentinel-apex/domain';
+import { toOpportunityId } from '@sentinel-apex/domain';
+import type { OrderIntent } from '@sentinel-apex/domain';
 import type { CarryVenueCapabilities } from '@sentinel-apex/venue-adapters';
+
+import {
+  buildCarryStrategyProfile,
+  DEFAULT_BUILD_A_BEAR_STRATEGY_POLICY,
+} from './strategy-policy.js';
 
 import type {
   CarryControlledExecutionPlanningInput,
@@ -17,6 +23,18 @@ export const DEFAULT_CARRY_OPERATIONAL_POLICY: CarryOperationalPolicy = {
   minimumActionableUsd: '2500',
   minimumConfidenceScore: 0.6,
 };
+
+function normalizeDecimalString(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return null;
+}
 
 function buildBlockedReason(
   code: CarryOperationalBlockedReason['code'],
@@ -75,6 +93,69 @@ function findCarryVenueCapabilities(
 
 function notionalOfPosition(position: CarryPositionSnapshot): Decimal {
   return new Decimal(position.size).times(position.markPrice);
+}
+
+function buildStrategyPolicyBlockedReasons(
+  strategyProfile: NonNullable<CarryExecutionIntent['strategyProfile']>,
+): CarryOperationalBlockedReason[] {
+  return strategyProfile.eligibility.ruleResults.flatMap((rule) => {
+    if (rule.status !== 'fail') {
+      return [];
+    }
+
+    switch (rule.ruleKey) {
+      case 'base_asset_usdc':
+        return [buildBlockedReason(
+          'unsupported_strategy_base_asset',
+          'strategy_policy',
+          rule.summary,
+          'Use a USDC-denominated vault profile before approving or executing this carry action.',
+          rule.details,
+        )];
+      case 'tenor_three_month_rolling':
+        return [buildBlockedReason(
+          'unsupported_strategy_tenor',
+          'strategy_policy',
+          rule.summary,
+          'Keep the strategy on a 3-month rolling lock with reassessment every 3 months.',
+          rule.details,
+        )];
+      case 'target_apy_floor':
+        return [buildBlockedReason(
+          'strategy_target_apy_below_floor',
+          'strategy_policy',
+          rule.summary,
+          'Raise the configured target APY floor to at least 10% before using this strategy profile.',
+          rule.details,
+        )];
+      case 'allowed_yield_source':
+        return [buildBlockedReason(
+          'disallowed_yield_source',
+          'strategy_policy',
+          rule.summary,
+          'Remove disallowed yield sources such as DEX LP, junior tranche, insurance pool, or circular stable yield.',
+          rule.details,
+        )];
+      case 'leverage_health_metadata':
+        return [buildBlockedReason(
+          'missing_leverage_health_threshold',
+          'strategy_policy',
+          rule.summary,
+          'Attach explicit leverage health-threshold metadata or remove leverage from the strategy profile.',
+          rule.details,
+        )];
+      case 'unsafe_looping_leverage':
+        return [buildBlockedReason(
+          'unsafe_leverage_looping',
+          'strategy_policy',
+          rule.summary,
+          'Do not use looping leverage below the 1.05 health threshold on non-hardcoded oracle assets.',
+          rule.details,
+        )];
+      default:
+        return [];
+    }
+  });
 }
 
 export function buildCarryReductionIntents(
@@ -143,6 +224,24 @@ export class CarryControlledExecutionPlanner {
       const amountUsd = new Decimal(recommendation.notionalUsd);
       const blockedReasons: CarryOperationalBlockedReason[] = [];
       const effects = buildEffects(recommendation, input);
+      const projectedApyPct = normalizeDecimalString(
+        recommendation.details['netYieldPct'] ?? recommendation.details['expectedAnnualYieldPct'],
+      );
+      const strategyProfileInput = {
+        ...input.strategyProfile,
+        projectedApyPct: projectedApyPct ?? input.strategyProfile?.projectedApyPct ?? null,
+        ...(projectedApyPct === null
+          ? (input.strategyProfile?.projectedApySource === undefined
+            ? {}
+            : { projectedApySource: input.strategyProfile.projectedApySource })
+          : { projectedApySource: 'projected' as const }),
+      };
+      const strategyProfile = buildCarryStrategyProfile(strategyProfileInput, {
+        ...DEFAULT_BUILD_A_BEAR_STRATEGY_POLICY,
+        ...input.strategyPolicy,
+      });
+
+      blockedReasons.push(...buildStrategyPolicyBlockedReasons(strategyProfile));
 
       if (amountUsd.lt(policy.minimumActionableUsd)) {
         blockedReasons.push(buildBlockedReason(
@@ -394,6 +493,7 @@ export class CarryControlledExecutionPlanner {
         simulated,
         plannedOrders: recommendation.plannedOrders,
         effects,
+        strategyProfile,
       };
     });
   }

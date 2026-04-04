@@ -2045,7 +2045,12 @@ describe('runtime-backed API routes', () => {
     const command = await waitForCommand(controlPlane, evaluateBody.data.commandId);
     expect(command.status).toBe('completed');
 
-    const [recommendationsResponse, actionsResponse, executionsResponse, venuesResponse] = await Promise.all([
+    const [strategyProfileResponse, recommendationsResponse, actionsResponse, executionsResponse, venuesResponse] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/carry/strategy-profile',
+        headers: { 'x-api-key': TEST_API_KEY },
+      }),
       app.inject({
         method: 'GET',
         url: '/api/v1/carry/recommendations',
@@ -2068,17 +2073,44 @@ describe('runtime-backed API routes', () => {
       }),
     ]);
 
+    expect(strategyProfileResponse.statusCode).toBe(200);
     expect(recommendationsResponse.statusCode).toBe(200);
     expect(actionsResponse.statusCode).toBe(200);
     expect(executionsResponse.statusCode).toBe(200);
     expect(venuesResponse.statusCode).toBe(200);
 
+    const strategyProfileBody = strategyProfileResponse.json<{
+      data: {
+        vaultBaseAsset: string;
+        tenor: { lockPeriodMonths: number; reassessmentCadenceMonths: number; rolling: boolean };
+        apy: { targetFloorPct: string; realizedApyPct: string | null };
+        eligibility: {
+          status: string;
+          blockedReasons: string[];
+          ruleResults: Array<{ ruleKey: string; status: string }>;
+        };
+        evidence: { environment: string; latestEvidenceSource: string };
+      };
+    }>();
     const actionsBody = actionsResponse.json<{
       data: Array<{ id: string; status: string; executable: boolean; simulated: boolean }>;
     }>();
     const venuesBody = venuesResponse.json<{
       data: Array<{ venueId: string; venueMode: string; executionSupported: boolean }>;
     }>();
+
+    expect(strategyProfileBody.data.vaultBaseAsset).toBe('USDC');
+    expect(strategyProfileBody.data.tenor.lockPeriodMonths).toBe(3);
+    expect(strategyProfileBody.data.tenor.reassessmentCadenceMonths).toBe(3);
+    expect(strategyProfileBody.data.tenor.rolling).toBe(true);
+    expect(strategyProfileBody.data.apy.targetFloorPct).toBe('10.00');
+    expect(strategyProfileBody.data.apy.realizedApyPct).toBeNull();
+    expect(strategyProfileBody.data.eligibility.status).toBe('eligible');
+    expect(strategyProfileBody.data.eligibility.blockedReasons).toHaveLength(0);
+    expect(strategyProfileBody.data.eligibility.ruleResults.some((rule) =>
+      rule.ruleKey === 'allowed_yield_source' && rule.status === 'pass',
+    )).toBe(true);
+    expect(strategyProfileBody.data.evidence.environment).toBe('devnet');
 
     expect(actionsBody.data.length).toBeGreaterThan(0);
     expect(venuesBody.data.length).toBeGreaterThan(0);
@@ -2107,13 +2139,25 @@ describe('runtime-backed API routes', () => {
 
     const actionDetailBody = actionDetailResponse.json<{
       data: {
-        action: { status: string; linkedCommandId: string | null };
+        action: {
+          status: string;
+          linkedCommandId: string | null;
+          strategyProfile: {
+            vaultBaseAsset: string;
+            eligibility: { status: string; ruleResults: Array<{ ruleKey: string; status: string }> };
+          };
+        };
         plannedOrders: Array<{ marketIdentity: null | { capturedAtStage: string; confidence: string } }>;
         executions: Array<{ id: string; status: string; requestedBy: string }>;
         linkedRebalanceProposal: null | { id: string };
       };
     }>();
     expect(actionDetailBody.data.action.status).toBe('completed');
+    expect(actionDetailBody.data.action.strategyProfile.vaultBaseAsset).toBe('USDC');
+    expect(actionDetailBody.data.action.strategyProfile.eligibility.status).toBe('eligible');
+    expect(actionDetailBody.data.action.strategyProfile.eligibility.ruleResults.some((rule) =>
+      rule.ruleKey === 'tenor_three_month_rolling' && rule.status === 'pass',
+    )).toBe(true);
     expect(actionDetailBody.data.plannedOrders[0]?.marketIdentity?.capturedAtStage).toBe('strategy_intent');
     expect(actionDetailBody.data.executions[0]?.requestedBy).toBe('operator-user');
 

@@ -3,6 +3,32 @@
 Date: 2026-04-04
 Repo: `/workspaces/Sentinel-Apex`
 
+## Phase 6.1 Follow-On: Hackathon Strategy Eligibility Layer
+
+The repo now adds a separate strategy-policy layer on top of the Phase 6.0 connector work.
+
+What this follow-on adds:
+
+- one first-class strategy profile: `Apex USDC Delta-Neutral Carry`
+- `USDC` base-asset enforcement
+- 3-month rolling tenor enforcement
+- target APY floor defaulted to `10%`
+- explicit rejection of:
+  - circular yield-bearing stable dependencies
+  - junior tranche / insurance pool designs
+  - DEX LP vaults
+  - unsafe looping leverage below `1.05` on non-hardcoded oracle dependencies
+- carry action snapshots and carry API/dashboard surfaces that explain:
+  - whether the strategy is eligible in principle
+  - whether the execution path is currently supported
+  - what remains blocked
+
+What it still does not add:
+
+- mainnet readiness
+- generic Ranger vault integration
+- widened execution scope beyond the existing Drift devnet reduction path
+
 ## 1. Candidate Connector Options
 
 ### Option A: Treasury-side real allocation/deallocation connector

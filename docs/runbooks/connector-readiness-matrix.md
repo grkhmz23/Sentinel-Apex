@@ -12,6 +12,8 @@ This matrix separates three questions that operators previously had to infer fro
 
 These are now separate backend concepts.
 
+This matrix now sits alongside a separate carry-strategy eligibility surface. Connector readiness answers whether a connector can be used safely. Strategy eligibility answers whether the current `Apex USDC Delta-Neutral Carry` profile satisfies the Build-A-Bear product-policy rules.
+
 ## Canonical Dimensions
 
 ### Capability Class
@@ -126,5 +128,7 @@ The system does not infer completion from external runbooks or tribal knowledge.
 - `/api/v1/venues/:venueId/promotion`
 - `/api/v1/venues/:venueId/promotion/history`
 - `/api/v1/venues/:venueId/promotion/eligibility`
+- `/api/v1/carry/strategy-profile`
 - ops dashboard `/venues`
 - ops dashboard `/venues/:venueId`
+- ops dashboard `/carry`

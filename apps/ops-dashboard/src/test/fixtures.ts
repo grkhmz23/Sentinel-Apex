@@ -5,6 +5,7 @@ import type {
   AllocatorSummaryView,
   CarryActionDetailView,
   CarryActionView,
+  CarryStrategyProfileView,
   CarryExecutionDetailView,
   CarryExecutionStepView,
   CarryExecutionView,
@@ -1837,6 +1838,131 @@ export function createCarryVenue(
   };
 }
 
+export function createCarryStrategyProfile(
+  overrides: Partial<CarryStrategyProfileView> = {},
+): CarryStrategyProfileView {
+  return {
+    strategyId: 'apex-usdc-delta-neutral-carry',
+    strategyName: 'Apex USDC Delta-Neutral Carry',
+    sleeveId: 'carry',
+    vaultBaseAsset: 'USDC',
+    strategyFamily: 'delta_neutral_carry',
+    yieldSourceCategory: 'delta_neutral_carry',
+    leverageModel: 'perp_basis_hedged',
+    leverageHealthThreshold: '1.10',
+    oracleDependencyClass: 'market_oracle_non_hardcoded',
+    lockReassessmentPolicy: 'rolling_3_month',
+    thesis: 'Capture delta-neutral carry without DEX LP, junior tranche, insurance pool, or circular stable yield exposure.',
+    riskProfile: 'Constrained and operator-supervised.',
+    disallowedYieldSources: [
+      'yield_bearing_stable_circular',
+      'junior_tranche',
+      'insurance_pool',
+      'dex_lp',
+    ],
+    apy: {
+      targetFloorPct: '10.00',
+      targetApyPct: '10.00',
+      projectedApyPct: '12.40',
+      projectedApySource: 'projected',
+      realizedApyPct: null,
+      realizedApySource: 'unavailable',
+      realizedApyUpdatedAt: null,
+      summary: 'Realized APY is currently unavailable or unverified; only target and projected APY are surfaced.',
+    },
+    tenor: {
+      lockPeriodMonths: 3,
+      rolling: true,
+      reassessmentCadenceMonths: 3,
+      summary: 'Lock period is 3 months and reassessment occurs every 3 months on a rolling basis.',
+    },
+    riskLimits: [
+      {
+        key: 'max_drawdown_pct',
+        value: '12.00',
+        summary: 'Strategy-level drawdown limit for hackathon-facing vault metadata.',
+      },
+      {
+        key: 'min_health_threshold',
+        value: '1.10',
+        summary: 'Explicit leverage health threshold metadata is required whenever leverage is present.',
+      },
+      {
+        key: 'max_single_action_notional_usd',
+        value: '25000.00',
+        summary: 'Carry action notional stays bounded while the vault remains devnet-only and manually supervised.',
+      },
+    ],
+    evidence: {
+      environment: 'devnet',
+      supportLabel: 'devnet_real_execution_narrow_scope',
+      supportedScope: [
+        'USDC-denominated carry strategy metadata and policy enforcement.',
+        'Drift devnet carry execution evidence for BTC-PERP reduce-only market orders only.',
+      ],
+      blockedScope: [
+        'Mainnet deployment remains blocked.',
+        'DEX LP, junior tranche, insurance pool, and circular stable yield remain blocked.',
+      ],
+      latestExecutionId: 'carry-execution-1',
+      latestExecutionReference: 'drift-devnet:signature-1',
+      latestConfirmationStatus: 'confirmed_full',
+      latestEvidenceSource: 'devnet_execution',
+      summary: 'Latest strategy evidence includes a persisted Drift devnet execution reference plus the current confirmation state for the narrow real execution path.',
+    },
+    eligibility: {
+      status: 'eligible',
+      summary: 'Strategy metadata satisfies the Build-A-Bear product-policy rules, but execution scope remains narrow and devnet-only.',
+      blockedReasons: [],
+      ruleResults: [
+        {
+          ruleKey: 'base_asset_usdc',
+          status: 'pass',
+          summary: 'Vault base asset is USDC as required.',
+          blockedReason: null,
+          details: {},
+        },
+        {
+          ruleKey: 'tenor_three_month_rolling',
+          status: 'pass',
+          summary: 'Tenor is a 3-month rolling lock with 3-month reassessment cadence.',
+          blockedReason: null,
+          details: {},
+        },
+        {
+          ruleKey: 'target_apy_floor',
+          status: 'pass',
+          summary: 'Target APY floor is 10.00% and meets the 10.00% minimum.',
+          blockedReason: null,
+          details: {},
+        },
+        {
+          ruleKey: 'allowed_yield_source',
+          status: 'pass',
+          summary: 'Yield source category delta_neutral_carry is allowed for Build-A-Bear.',
+          blockedReason: null,
+          details: {},
+        },
+        {
+          ruleKey: 'leverage_health_metadata',
+          status: 'pass',
+          summary: 'Leverage metadata is explicit and includes a health threshold.',
+          blockedReason: null,
+          details: {},
+        },
+        {
+          ruleKey: 'unsafe_looping_leverage',
+          status: 'pass',
+          summary: 'No disqualifying unsafe looping leverage condition is present.',
+          blockedReason: null,
+          details: {},
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
 export function createCarryAction(
   overrides: Partial<CarryActionView> = {},
 ): CarryActionView {
@@ -1861,6 +1987,7 @@ export function createCarryAction(
     approvalRequirement: 'operator',
     executionMode: 'dry-run',
     simulated: true,
+    strategyProfile: createCarryStrategyProfile(),
     executionPlan: {
       effects: {
         currentCarryAllocationUsd: '450000',
@@ -1871,6 +1998,7 @@ export function createCarryAction(
         openPositionCount: 2,
       },
       plannedOrderCount: 1,
+      strategyProfile: createCarryStrategyProfile(),
     },
     approvedBy: null,
     approvedAt: null,

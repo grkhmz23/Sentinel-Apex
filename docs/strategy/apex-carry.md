@@ -4,6 +4,28 @@
 **Status:** Active
 **Last Updated:** 2026-04-01
 
+## Phase 6.1 Addendum: Build-A-Bear Strategy Eligibility
+
+Phase 6.1 does not widen carry execution scope. It adds an explicit strategy-policy layer so the repo can honestly present one hackathon-facing strategy profile.
+
+Current Build-A-Bear strategy truth:
+
+- the canonical strategy profile is `Apex USDC Delta-Neutral Carry`
+- vault base asset is `USDC`
+- tenor is a 3-month rolling lock with reassessment every 3 months
+- target APY floor defaults to `10%`
+- target APY, projected APY, and realized APY are now separate fields
+- realized APY remains null/unknown unless the repo has real evidence
+- disallowed yield sources are blocked in code:
+  - circular yield-bearing stable dependencies
+  - junior tranche
+  - insurance pool
+  - DEX LP
+- leverage metadata must carry an explicit health threshold
+- unsafe looping leverage below `1.05` on non-hardcoded oracle dependencies is blocked
+
+Operationally, this means the carry sleeve can now answer whether its strategy profile is Build-A-Bear eligible in principle, independently from whether the current execution path is broad enough for production deployment.
+
 ## Phase 6.0 Addendum: First Real Devnet Execution Boundary
 
 Phase 6.0 does not broaden the carry thesis. It adds the first honest real execution connector under the existing carry control plane.

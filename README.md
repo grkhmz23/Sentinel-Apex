@@ -4,6 +4,8 @@ Sentinel Apex is a TypeScript monorepo for the institutional Solana yield contro
 
 Phase 6.0 adds the first honest real execution path on top of the Phase 5.9 promotion workflow. Connector capability, operator approval state, and current live-readiness eligibility remain separate concepts. Approval is explicit and durable. Current sensitive-execution eligibility is recomputed from real persisted truth and can be lost when connector evidence becomes stale, degraded, or incomplete.
 
+The repo now also exposes one explicit hackathon-facing strategy profile, `Apex USDC Delta-Neutral Carry`. That profile is policy-enforced in code: base asset must remain `USDC`, tenor must remain a 3-month rolling lock with 3-month reassessment, target APY floor defaults to `10%`, projected APY is separated from realized APY, and disallowed yield sources such as DEX LP, junior tranche / insurance pool, and circular stable-yield dependencies are blocked explicitly. This is a strategy-policy/readiness surface, not a production-readiness claim.
+
 ## Local Dev Workflow
 
 Minimum environment:

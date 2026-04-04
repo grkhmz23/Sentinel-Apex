@@ -7,7 +7,11 @@ import type {
   RebalanceBlockedReason,
   RebalanceProposal,
 } from '@sentinel-apex/allocator';
-import type { CarryExecutionIntent, CarryOperationalBlockedReason } from '@sentinel-apex/carry';
+import {
+  buildCarryStrategyProfile,
+  type CarryExecutionIntent,
+  type CarryOperationalBlockedReason,
+} from '@sentinel-apex/carry';
 import {
   allocatorCurrent,
   allocatorRebalanceBundleEscalationEvents,
@@ -90,6 +94,7 @@ import type {
   AuditEventView,
   CarryActionDetailView,
   CarryActionPlannedOrderView,
+  CarryStrategyProfileView,
   CarryActionView,
   CarryExecutionPostTradeConfirmationView,
   CarryExecutionDetailView,
@@ -1216,6 +1221,40 @@ function asCarryBlockedReasons(value: unknown): CarryOperationalBlockedReason[] 
   });
 }
 
+function asCarryStrategyProfile(value: unknown): CarryStrategyProfileView | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record['strategyId'] !== 'string'
+    || typeof record['strategyName'] !== 'string'
+    || typeof record['vaultBaseAsset'] !== 'string'
+    || typeof record['strategyFamily'] !== 'string'
+    || typeof record['yieldSourceCategory'] !== 'string'
+    || typeof record['leverageModel'] !== 'string'
+    || typeof record['oracleDependencyClass'] !== 'string'
+    || typeof record['lockReassessmentPolicy'] !== 'string'
+  ) {
+    return null;
+  }
+
+  return record as unknown as CarryStrategyProfileView;
+}
+
+function asDecimalLikeString(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return null;
+}
+
 function asBundleRecoveryBlockedReasons(value: unknown): RebalanceBundleRecoveryBlockedReason[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1890,6 +1929,12 @@ function mapVenueInventoryItem(
 function mapCarryActionRow(
   row: typeof carryActions.$inferSelect,
 ): CarryActionView {
+  const details = asJsonObject(row.details);
+  const executionPlan = asJsonObject(row.executionPlan);
+  const strategyProfile = asCarryStrategyProfile(executionPlan['strategyProfile']) ?? buildCarryStrategyProfile({
+    projectedApyPct: asDecimalLikeString(details['netYieldPct'] ?? details['expectedAnnualYieldPct']),
+  });
+
   return {
     id: row.id,
     strategyRunId: row.strategyRunId ?? null,
@@ -1902,14 +1947,15 @@ function mapCarryActionRow(
     asset: row.asset ?? null,
     summary: row.summary,
     notionalUsd: row.notionalUsd,
-    details: asJsonObject(row.details),
+    details,
     readiness: row.readiness as CarryActionView['readiness'],
     executable: row.executable,
     blockedReasons: asCarryBlockedReasons(row.blockedReasons),
     approvalRequirement: row.approvalRequirement as CarryActionView['approvalRequirement'],
     executionMode: row.executionMode as CarryActionView['executionMode'],
     simulated: row.simulated,
-    executionPlan: asJsonObject(row.executionPlan),
+    strategyProfile,
+    executionPlan,
     approvedBy: row.approvedBy ?? null,
     approvedAt: toIsoString(row.approvedAt),
     executionRequestedBy: row.executionRequestedBy ?? null,
@@ -3711,6 +3757,56 @@ export class RuntimeStore {
       .limit(limit);
 
     return rows.map(mapCarryActionRow);
+  }
+
+  async getCarryStrategyProfile(): Promise<CarryStrategyProfileView> {
+    const [latestActionRow, latestExecutionRow, latestStepRow] = await Promise.all([
+      this.db
+        .select()
+        .from(carryActions)
+        .orderBy(desc(carryActions.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+      this.db
+        .select()
+        .from(carryActionExecutions)
+        .orderBy(desc(carryActionExecutions.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+      this.db
+        .select()
+        .from(carryExecutionSteps)
+        .orderBy(desc(carryExecutionSteps.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+    ]);
+
+    const latestAction = latestActionRow === null ? null : mapCarryActionRow(latestActionRow);
+    const latestExecution = latestExecutionRow === null ? null : mapCarryExecutionRow(latestExecutionRow);
+    const latestStep = latestStepRow === null ? null : mapCarryExecutionStepRow(latestStepRow);
+    const profile = latestAction?.strategyProfile ?? buildCarryStrategyProfile();
+    const latestExecutionReference = latestStep?.executionReference ?? latestExecution?.venueExecutionReference ?? null;
+    const latestConfirmationStatus = latestStep?.postTradeConfirmation?.status ?? null;
+    const latestEvidenceSource = latestStep !== null && !latestStep.simulated
+      ? 'devnet_execution'
+      : profile.apy.projectedApyPct === null
+        ? 'none'
+        : 'projected';
+
+    return {
+      ...profile,
+      evidence: {
+        ...profile.evidence,
+        environment: latestStep !== null && !latestStep.simulated ? 'devnet' : profile.evidence.environment,
+        latestExecutionId: latestExecution?.id ?? null,
+        latestExecutionReference,
+        latestConfirmationStatus,
+        latestEvidenceSource,
+        summary: latestEvidenceSource === 'devnet_execution'
+          ? 'Latest strategy evidence includes a persisted Drift devnet execution reference plus the current confirmation state for the narrow real execution path.'
+          : 'The strategy profile is eligible in principle, but current persisted evidence is limited to projected policy metadata unless a real devnet execution has completed.',
+      },
+    };
   }
 
   async getCarryAction(actionId: string): Promise<CarryActionDetailView | null> {
@@ -9260,6 +9356,9 @@ export class RuntimeStore {
           executionPlan: {
             effects: intent.effects,
             plannedOrderCount: intent.plannedOrders.length,
+            strategyProfile: intent.strategyProfile ?? buildCarryStrategyProfile({
+              projectedApyPct: asDecimalLikeString(intent.details['netYieldPct'] ?? intent.details['expectedAnnualYieldPct']),
+            }),
           },
           actorId: input.actorId,
           createdAt: input.createdAt,

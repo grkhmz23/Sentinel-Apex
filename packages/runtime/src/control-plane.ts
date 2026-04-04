@@ -24,6 +24,7 @@ import type {
   AllocatorSummaryView,
   AuditEventView,
   CarryActionDetailView,
+  CarryStrategyProfileView,
   CarryActionView,
   CarryExecutionDetailView,
   CarryExecutionView,
@@ -183,6 +184,10 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async listCarryActions(limit = 50): Promise<CarryActionView[]> {
     return this.store.listCarryActions(limit);
+  }
+
+  async getCarryStrategyProfile(): Promise<CarryStrategyProfileView> {
+    return this.store.getCarryStrategyProfile();
   }
 
   async getCarryAction(actionId: string): Promise<CarryActionDetailView | null> {
