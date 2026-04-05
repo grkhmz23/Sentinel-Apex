@@ -218,16 +218,16 @@ CREATE INDEX "open_position_pnl_sleeve_id_idx" ON "open_position_pnl" ("sleeve_i
 CREATE INDEX "open_position_pnl_asset_idx" ON "open_position_pnl" ("asset");
 
 -- =============================================================================
--- Triggers for updated_at
+-- Triggers for updated_at (using $func$ delimiter to avoid parsing issues)
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $func$
 BEGIN
   NEW.updated_at = now();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$func$ LANGUAGE plpgsql;
 
 CREATE TRIGGER update_realized_trade_pnl_updated_at
   BEFORE UPDATE ON "realized_trade_pnl"
