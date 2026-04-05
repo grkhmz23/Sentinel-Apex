@@ -200,6 +200,31 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.37)(jsdom@24.1.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
 
+  packages/backtest:
+    dependencies:
+      '@sentinel-apex/carry':
+        specifier: workspace:*
+        version: link:../carry
+      '@sentinel-apex/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@sentinel-apex/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@sentinel-apex/shared':
+        specifier: workspace:*
+        version: link:../shared
+      decimal.js:
+        specifier: ^10.4.3
+        version: 10.6.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.37
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+
   packages/carry:
     dependencies:
       '@sentinel-apex/domain':
@@ -366,11 +391,48 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.37)(jsdom@24.1.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
 
+  packages/ranger:
+    dependencies:
+      '@sentinel-apex/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@sentinel-apex/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@sentinel-apex/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@solana/spl-token':
+        specifier: ^0.4.0
+        version: 0.4.13(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@solana/web3.js':
+        specifier: ^1.98.4
+        version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      decimal.js:
+        specifier: ^10.4.3
+        version: 10.6.0
+      zod:
+        specifier: ^3.22.4
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^20.12.12
+        version: 20.19.37
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@20.19.37)(jsdom@24.1.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+
   packages/risk-engine:
     dependencies:
       '@sentinel-apex/domain':
         specifier: workspace:*
         version: link:../domain
+      '@sentinel-apex/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@sentinel-apex/shared':
         specifier: workspace:*
         version: link:../shared
@@ -393,6 +455,9 @@ importers:
       '@sentinel-apex/allocator':
         specifier: workspace:*
         version: link:../allocator
+      '@sentinel-apex/backtest':
+        specifier: workspace:*
+        version: link:../backtest
       '@sentinel-apex/carry':
         specifier: workspace:*
         version: link:../carry

@@ -78,7 +78,7 @@ export function createHedgePair(
     spotPrice: string;
     perpPrice: string;
   },
-  config: SpotPerpCoordinationConfig = DEFAULT_SPOT_PERP_COORDINATION_CONFIG,
+  _config: SpotPerpCoordinationConfig = DEFAULT_SPOT_PERP_COORDINATION_CONFIG,
 ): DeltaNeutralHedgePair {
   const notionalUsd = new Decimal(params.notionalUsd);
   const spotPrice = new Decimal(params.spotPrice);

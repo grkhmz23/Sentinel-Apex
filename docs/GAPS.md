@@ -242,16 +242,18 @@ No integration with Ranger Earn for actual TVL deployment.
 
 ---
 
-#### 8. BACKTESTING PACKAGE
-**Status:** ⏳ PENDING  
-**Priority:** LOW  
-**Estimated Effort:** 5-7 days  
+#### ~~8. BACKTESTING PACKAGE~~ ✅ COMPLETE
+**Status:** ✅ COMPLETE  
 
-**Problem:**  
-No historical validation of strategy.
-
-**Files to Create:**
-- `packages/backtest/` - NEW package
+**Implementation:**
+- Created `packages/backtest/` - Full backtesting framework
+- Historical simulation for delta-neutral carry strategies
+- Deterministic run configuration
+- Performance metrics and trade statistics
+- Funding capture analysis
+- Truthful labeling as "historical_simulation"
+- Exportable reports (JSON, Markdown, CSV)
+- Integrated with submission evidence system
 
 ---
 
@@ -263,6 +265,7 @@ No historical validation of strategy.
 4. **MULTI-ASSET SUPPORT** - Drift multi-asset adapter supporting BTC, ETH, SOL perp markets
 5. **CEX VERIFICATION PIPELINE** - Complete CEX trade import (Binance, OKX, Bybit, Coinbase) with PnL calculator and hackathon submission generator
 6. **SUBMISSION EXPORT BUNDLE** - Judge-facing export bundle with artifact checklist, verification links, and JSON export
+7. **BACKTESTING PACKAGE** - Historical simulation framework with truthful labeling and submission integration
 
 ---
 

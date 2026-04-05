@@ -238,4 +238,130 @@ export async function carryRoutes(
       }
     },
   );
+
+  // ============================================================================
+  // Multi-Leg Orchestration Routes (Phase R3)
+  // ============================================================================
+
+  app.get<{
+    Params: { actionId: string };
+  }>(
+    '/api/v1/carry/actions/:actionId/multi-leg-plans',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const plans = await controlPlane.listMultiLegPlansForAction(request.params.actionId);
+      return reply.status(200).send({
+        data: plans,
+        meta: {
+          correlationId: request.id,
+          count: plans.length,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { planId: string };
+  }>(
+    '/api/v1/carry/multi-leg-plans/:planId',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const plan = await controlPlane.getMultiLegPlan(request.params.planId);
+      if (plan === null) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Multi-leg plan '${request.params.planId}' was not found.`,
+            correlationId: request.id,
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        data: plan,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { planId: string };
+  }>(
+    '/api/v1/carry/multi-leg-plans/:planId/legs',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const legs = await controlPlane.getLegExecutionsForPlan(request.params.planId);
+      return reply.status(200).send({
+        data: legs,
+        meta: {
+          correlationId: request.id,
+          count: legs.length,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Params: { planId: string };
+  }>(
+    '/api/v1/carry/multi-leg-plans/:planId/hedge-state',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const states = await controlPlane.getHedgeStateForPlan(request.params.planId);
+      return reply.status(200).send({
+        data: states,
+        meta: {
+          correlationId: request.id,
+          count: states.length,
+        },
+      });
+    },
+  );
+
+  // ============================================================================
+  // Guardrail Routes (Phase R3)
+  // ============================================================================
+
+  app.get(
+    '/api/v1/carry/guardrail-config',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const config = await controlPlane.getGuardrailConfigSummary();
+      return reply.status(200).send({
+        data: config,
+        meta: { correlationId: request.id },
+      });
+    },
+  );
+
+  app.get<{
+    Querystring: { limit?: string };
+  }>(
+    '/api/v1/carry/guardrail-violations',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const limit = Math.min(Number.parseInt(request.query.limit ?? '50', 10), 200);
+      const violations = await controlPlane.listGuardrailViolations(limit);
+      return reply.status(200).send({
+        data: violations,
+        meta: {
+          correlationId: request.id,
+          count: violations.length,
+          limit,
+        },
+      });
+    },
+  );
 }

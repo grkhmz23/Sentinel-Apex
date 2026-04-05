@@ -937,3 +937,210 @@ export const runtimeRecoveryEvents = pgTable(
     occurredAtIdx: index('runtime_recovery_events_occurred_at_idx').on(t.occurredAt),
   }),
 );
+
+
+// =============================================================================
+// Multi-Leg Carry Orchestration Tables (Phase R2)
+// =============================================================================
+
+export const carryMultiLegPlans = pgTable(
+  'carry_multi_leg_plans',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    carryActionId: uuid('carry_action_id')
+      .notNull()
+      .references(() => carryActions.id),
+    strategyRunId: text('strategy_run_id')
+      .references(() => strategyRuns.runId),
+    planType: text('plan_type').notNull().default('delta_neutral_carry'),
+    asset: text('asset').notNull(),
+    notionalUsd: text('notional_usd').notNull(),
+    legCount: integer('leg_count').notNull().default(2),
+    coordinationConfig: jsonb('coordination_config').notNull().default({}),
+    status: text('status').notNull().default('pending'),
+    executionOrder: jsonb('execution_order').notNull().default([]),
+    hedgeDeviationPct: text('hedge_deviation_pct'),
+    maxHedgeDeviationPct: text('max_hedge_deviation_pct').notNull().default('1.0'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    outcomeSummary: text('outcome_summary'),
+    outcome: jsonb('outcome').notNull().default({}),
+    blockedReasons: jsonb('blocked_reasons').notNull().default([]),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    carryActionIdIdx: index('carry_multi_leg_plans_action_id_idx').on(t.carryActionId),
+    statusIdx: index('carry_multi_leg_plans_status_idx').on(t.status),
+    assetIdx: index('carry_multi_leg_plans_asset_idx').on(t.asset),
+    createdAtIdx: index('carry_multi_leg_plans_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const carryLegExecutions = pgTable(
+  'carry_leg_executions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => carryMultiLegPlans.id),
+    carryActionId: uuid('carry_action_id')
+      .notNull()
+      .references(() => carryActions.id),
+    legSequence: integer('leg_sequence').notNull(),
+    parentLegId: uuid('parent_leg_id'), // Self-reference handled via application logic
+    legType: text('leg_type').notNull(),
+    side: text('side').notNull(),
+    venueId: text('venue_id').notNull(),
+    asset: text('asset').notNull(),
+    marketSymbol: text('market_symbol'),
+    targetSize: text('target_size').notNull(),
+    targetNotionalUsd: text('target_notional_usd').notNull(),
+    executedSize: text('executed_size'),
+    executedNotionalUsd: text('executed_notional_usd'),
+    status: text('status').notNull().default('pending'),
+    executionMode: text('execution_mode').notNull().default('dry-run'),
+    simulated: boolean('simulated').notNull().default(true),
+    plannedOrderId: uuid('planned_order_id').references(() => carryActionOrderIntents.id),
+    executionStepId: uuid('execution_step_id').references(() => carryExecutionSteps.id),
+    venueExecutionReference: text('venue_execution_reference'),
+    clientOrderId: text('client_order_id'),
+    venueOrderId: text('venue_order_id'),
+    filledSize: text('filled_size'),
+    averageFillPrice: text('average_fill_price'),
+    fillCount: integer('fill_count').default(0),
+    lastFillAt: timestamp('last_fill_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    retryCount: integer('retry_count').notNull().default(0),
+    maxRetries: integer('max_retries').notNull().default(3),
+    outcome: jsonb('outcome').notNull().default({}),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    planIdIdx: index('carry_leg_executions_plan_id_idx').on(t.planId),
+    carryActionIdIdx: index('carry_leg_executions_action_id_idx').on(t.carryActionId),
+    statusIdx: index('carry_leg_executions_status_idx').on(t.status),
+    legSequenceIdx: index('carry_leg_executions_leg_sequence_idx').on(t.legSequence),
+    venueIdIdx: index('carry_leg_executions_venue_id_idx').on(t.venueId),
+  }),
+);
+
+export const carryHedgeState = pgTable(
+  'carry_hedge_state',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => carryMultiLegPlans.id),
+    carryActionId: uuid('carry_action_id')
+      .notNull()
+      .references(() => carryActions.id),
+    asset: text('asset').notNull(),
+    pairType: text('pair_type').notNull().default('spot_perp'),
+    spotLegId: uuid('spot_leg_id').references(() => carryLegExecutions.id),
+    spotVenueId: text('spot_venue_id'),
+    spotSide: text('spot_side'),
+    spotTargetSize: text('spot_target_size'),
+    spotExecutedSize: text('spot_executed_size'),
+    spotAveragePrice: text('spot_average_price'),
+    perpLegId: uuid('perp_leg_id').references(() => carryLegExecutions.id),
+    perpVenueId: text('perp_venue_id'),
+    perpSide: text('perp_side'),
+    perpTargetSize: text('perp_target_size'),
+    perpExecutedSize: text('perp_executed_size'),
+    perpAveragePrice: text('perp_average_price'),
+    notionalUsd: text('notional_usd').notNull(),
+    hedgeDeviationPct: text('hedge_deviation_pct'),
+    maxAllowedDeviationPct: text('max_allowed_deviation_pct').notNull().default('1.0'),
+    status: text('status').notNull().default('pending'),
+    imbalanceDirection: text('imbalance_direction'),
+    imbalanceThresholdBreached: boolean('imbalance_threshold_breached').notNull().default(false),
+    rebalanceTriggeredAt: timestamp('rebalance_triggered_at', { withTimezone: true }),
+    rebalancePlanId: uuid('rebalance_plan_id').references(() => carryMultiLegPlans.id),
+    lastCalculatedAt: timestamp('last_calculated_at', { withTimezone: true }).notNull().defaultNow(),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    planIdIdx: index('carry_hedge_state_plan_id_idx').on(t.planId),
+    carryActionIdIdx: index('carry_hedge_state_action_id_idx').on(t.carryActionId),
+    statusIdx: index('carry_hedge_state_status_idx').on(t.status),
+    assetIdx: index('carry_hedge_state_asset_idx').on(t.asset),
+  }),
+);
+
+export const executionGuardrailsConfig = pgTable(
+  'execution_guardrails_config',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    scopeType: text('scope_type').notNull(),
+    scopeId: text('scope_id').notNull(),
+    maxSingleActionNotionalUsd: text('max_single_action_notional_usd'),
+    maxDailyNotionalUsd: text('max_daily_notional_usd'),
+    maxPositionNotionalUsd: text('max_position_notional_usd'),
+    minActionNotionalUsd: text('min_action_notional_usd'),
+    maxConcurrentExecutions: integer('max_concurrent_executions'),
+    maxConcurrentLegs: integer('max_concurrent_legs'),
+    circuitBreakerEnabled: boolean('circuit_breaker_enabled').notNull().default(true),
+    maxFailuresBeforeBreaker: integer('max_failures_before_breaker').default(3),
+    circuitBreakerResetMinutes: integer('circuit_breaker_reset_minutes').default(30),
+    killSwitchEnabled: boolean('kill_switch_enabled').notNull().default(true),
+    killSwitchTriggered: boolean('kill_switch_triggered').notNull().default(false),
+    killSwitchTriggeredAt: timestamp('kill_switch_triggered_at', { withTimezone: true }),
+    killSwitchTriggeredBy: text('kill_switch_triggered_by'),
+    killSwitchReason: text('kill_switch_reason'),
+    partialFillAction: text('partial_fill_action').notNull().default('continue'),
+    minFillPctRequired: text('min_fill_pct_required').notNull().default('95.0'),
+    maxExecutionTimeSeconds: integer('max_execution_time_seconds').default(300),
+    legTimeoutSeconds: integer('leg_timeout_seconds').default(60),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by').notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    scopeIdx: index('execution_guardrails_scope_idx').on(t.scopeType, t.scopeId),
+    killSwitchIdx: index('execution_guardrails_kill_switch_idx').on(t.killSwitchTriggered),
+  }),
+);
+
+export const executionGuardrailViolations = pgTable(
+  'execution_guardrail_violations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    guardrailConfigId: uuid('guardrail_config_id')
+      .notNull()
+      .references(() => executionGuardrailsConfig.id),
+    violationType: text('violation_type').notNull(),
+    carryActionId: uuid('carry_action_id').references(() => carryActions.id),
+    planId: uuid('plan_id').references(() => carryMultiLegPlans.id),
+    legId: uuid('leg_id').references(() => carryLegExecutions.id),
+    attemptedNotionalUsd: text('attempted_notional_usd'),
+    limitNotionalUsd: text('limit_notional_usd'),
+    violationMessage: text('violation_message').notNull(),
+    violationDetails: jsonb('violation_details').notNull().default({}),
+    blocked: boolean('blocked').notNull().default(true),
+    overridden: boolean('overridden').notNull().default(false),
+    overriddenBy: text('overridden_by'),
+    overriddenAt: timestamp('overridden_at', { withTimezone: true }),
+    overrideReason: text('override_reason'),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    guardrailConfigIdIdx: index('guardrail_violations_config_id_idx').on(t.guardrailConfigId),
+    violationTypeIdx: index('guardrail_violations_type_idx').on(t.violationType),
+    carryActionIdIdx: index('guardrail_violations_action_id_idx').on(t.carryActionId),
+    createdAtIdx: index('guardrail_violations_created_at_idx').on(t.createdAt),
+  }),
+);

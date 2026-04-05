@@ -302,4 +302,106 @@ export async function cexVerificationRoutes(
       }
     },
   );
+
+  // =============================================================================
+  // CEX API Verification Routes (Phase R3 Part 6)
+  // =============================================================================
+
+  // Validate CEX API credentials (read-only check)
+  app.post<{
+    Body: {
+      platform: 'binance' | 'okx' | 'bybit' | 'coinbase';
+      apiKey: string;
+      apiSecret: string;
+      passphrase?: string;
+    };
+  }>(
+    '/api/v1/cex-verification/api-credentials/validate',
+    {
+      preHandler: [authenticate, requireOperatorRole('operator')],
+    },
+    async (request, reply) => {
+      const { platform, apiKey, apiSecret, passphrase } = request.body;
+
+      try {
+        const result = await controlPlane.validateCexApiCredentials({
+          platform,
+          apiKey,
+          apiSecret,
+          ...(passphrase !== undefined ? { passphrase } : {}),
+        });
+
+        return reply.status(200).send({
+          data: result,
+          meta: { correlationId: request.id },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'API credential validation failed.';
+        return reply.status(400).send({
+          error: {
+            code: 'BAD_REQUEST',
+            message,
+            correlationId: request.id,
+          },
+        });
+      }
+    },
+  );
+
+  // Fetch trades from CEX API
+  app.post<{
+    Body: {
+      sleeveId: string;
+      platform: 'binance' | 'okx' | 'bybit' | 'coinbase';
+      apiKey: string;
+      apiSecret: string;
+      passphrase?: string;
+      startTime?: string;
+      endTime?: string;
+    };
+  }>(
+    '/api/v1/cex-verification/api-trades/fetch',
+    {
+      preHandler: [authenticate, requireOperatorRole('operator')],
+    },
+    async (request, reply) => {
+      const operator = getRequiredOperator(request);
+      const { sleeveId, platform, apiKey, apiSecret, passphrase, startTime, endTime } = request.body;
+
+      try {
+        const fetchInput: {
+          sleeveId: string;
+          platform: 'binance' | 'okx' | 'bybit' | 'coinbase';
+          apiKey: string;
+          apiSecret: string;
+          passphrase?: string;
+          startTime?: string;
+          endTime?: string;
+        } = {
+          sleeveId,
+          platform,
+          apiKey,
+          apiSecret,
+        };
+        if (passphrase !== undefined) fetchInput.passphrase = passphrase;
+        if (startTime !== undefined) fetchInput.startTime = startTime;
+        if (endTime !== undefined) fetchInput.endTime = endTime;
+        const result = await controlPlane.fetchCexTradesFromApi(operator.operatorId, fetchInput);
+
+        return reply.status(200).send({
+          data: result,
+          meta: { correlationId: request.id },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'API trade fetch failed.';
+        return reply.status(400).send({
+          error: {
+            code: 'BAD_REQUEST',
+            message,
+            correlationId: request.id,
+          },
+        });
+      }
+    },
+  );
 }

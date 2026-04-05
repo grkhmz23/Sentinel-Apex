@@ -2061,6 +2061,7 @@ export type SubmissionEvidenceType =
   | 'performance_snapshot'
   | 'cex_trade_history'
   | 'cex_read_only_api'
+  | 'backtest_simulation'
   | 'document';
 export type SubmissionEvidenceStatus = 'recorded' | 'verified' | 'rejected';
 export type SubmissionEvidenceSource =
@@ -2560,4 +2561,279 @@ export interface RuntimeReadApi {
   getTreasuryExecutionDetail(executionId: string): Promise<TreasuryExecutionDetailView | null>;
   listTreasuryVenues(limit?: number): Promise<TreasuryVenueView[]>;
   getTreasuryVenue(venueId: string): Promise<TreasuryVenueDetailView | null>;
+
+  // Multi-leg orchestration (Phase R3)
+  getMultiLegPlan(planId: string): Promise<MultiLegPlanView | null>;
+  listMultiLegPlansForAction(actionId: string): Promise<MultiLegPlanSummaryView[]>;
+  getLegExecutionsForPlan(planId: string): Promise<LegExecutionView[]>;
+  getHedgeStateForPlan(planId: string): Promise<HedgeStateView[]>;
+
+  // Guardrails (Phase R3)
+  getGuardrailConfigSummary(): Promise<GuardrailConfigSummaryView>;
+  listGuardrailViolations(limit?: number): Promise<GuardrailViolationView[]>;
+}
+
+// ============================================================================
+// Multi-Leg Orchestration Types (Phase R3)
+// ============================================================================
+
+export interface MultiLegPlanView {
+  id: string;
+  carryActionId: string;
+  strategyRunId: string | null;
+  asset: string;
+  notionalUsd: string;
+  legCount: number;
+  status: 'pending' | 'executing' | 'completed' | 'failed' | 'partial';
+  executionOrder: number[];
+  coordinationConfig: {
+    allowPartialExecution: boolean;
+    requireAllLegsForCompletion: boolean;
+    maxHedgeDeviationPct: number;
+    autoRebalanceThresholdPct: number | null;
+  };
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  outcomeSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MultiLegPlanSummaryView {
+  id: string;
+  carryActionId: string;
+  asset: string;
+  notionalUsd: string;
+  legCount: number;
+  status: string;
+  legsCompleted: number;
+  legsFailed: number;
+  hedgeDeviationPct: string | null;
+  createdAt: string;
+}
+
+export interface LegExecutionView {
+  id: string;
+  planId: string;
+  carryActionId: string;
+  legSequence: number;
+  legType: 'spot' | 'perp' | 'hedge' | 'rebalance' | 'settlement';
+  side: 'long' | 'short';
+  venueId: string;
+  asset: string;
+  targetSize: string;
+  targetNotionalUsd: string;
+  executedSize: string | null;
+  executedNotionalUsd: string | null;
+  averageFillPrice: string | null;
+  status: string;
+  executionMode: string;
+  simulated: boolean;
+  venueExecutionReference: string | null;
+  clientOrderId: string | null;
+  venueOrderId: string | null;
+  fillCount: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  lastError: string | null;
+  retryCount: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HedgeStateView {
+  id: string;
+  planId: string;
+  carryActionId: string;
+  asset: string;
+  pairType: string;
+  spotLegId: string | null;
+  spotVenueId: string | null;
+  spotSide: string | null;
+  spotTargetSize: string | null;
+  spotExecutedSize: string | null;
+  spotAveragePrice: string | null;
+  perpLegId: string | null;
+  perpVenueId: string | null;
+  perpSide: string | null;
+  perpTargetSize: string | null;
+  perpExecutedSize: string | null;
+  perpAveragePrice: string | null;
+  notionalUsd: string;
+  hedgeDeviationPct: string | null;
+  maxAllowedDeviationPct: string;
+  status: string;
+  imbalanceDirection: 'spot_heavy' | 'perp_heavy' | 'balanced' | null;
+  imbalanceThresholdBreached: boolean;
+  rebalanceTriggeredAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================================================
+// Guardrail Types (Phase R3)
+// ============================================================================
+
+export interface GuardrailConfigSummaryView {
+  global: {
+    id: string;
+    scopeType: string;
+    scopeId: string;
+    killSwitchEnabled: boolean;
+    killSwitchTriggered: boolean;
+    killSwitchTriggeredAt: string | null;
+    killSwitchReason: string | null;
+    maxSingleActionNotionalUsd: string | null;
+    maxConcurrentExecutions: number | null;
+    circuitBreakerEnabled: boolean;
+    maxFailuresBeforeBreaker: number | null;
+  };
+  totalViolations24h: number;
+  lastViolationAt: string | null;
+}
+
+export interface GuardrailViolationView {
+  id: string;
+  guardrailConfigId: string;
+  violationType: string;
+  violationMessage: string;
+  carryActionId: string | null;
+  planId: string | null;
+  legId: string | null;
+  attemptedNotionalUsd: string | null;
+  limitNotionalUsd: string | null;
+  violationDetails: Record<string, unknown>;
+  blocked: boolean;
+  overridden: boolean;
+  overriddenBy: string | null;
+  overriddenAt: string | null;
+  overrideReason: string | null;
+  createdAt: string;
+}
+
+// =============================================================================
+// Phase R3 Part 5 - Performance Reports and Multi-Leg Evidence
+// =============================================================================
+
+export type PerformanceReportStatus = 'pending' | 'complete' | 'failed';
+export type PerformanceReportFormat = 'json' | 'markdown' | 'csv';
+
+export interface PerformanceReportMetadata {
+  label: string;
+  description: string;
+  executionTypes: Array<'real' | 'devnet' | 'simulated' | 'backtest'>;
+  dataCompleteness: 'complete' | 'partial' | 'minimal';
+  missingData: string[];
+}
+
+export interface PerformanceReportView {
+  reportId: string;
+  reportName: string;
+  status: PerformanceReportStatus;
+  format: PerformanceReportFormat;
+  dateRangeStart: string;
+  dateRangeEnd: string;
+  generatedAt: string;
+  generatedBy: string | null;
+  metadata: PerformanceReportMetadata;
+  summary: {
+    totalExecutions: number;
+    realExecutions: number;
+    simulatedExecutions: number;
+    totalNotionalUsd: string;
+    realizedPnlUsd: string | null;
+    realizedApyPct: string | null;
+    averageHedgeDeviationPct: string | null;
+  };
+  multiLegSummary: {
+    totalPlans: number;
+    completedPlans: number;
+    partialPlans: number;
+    failedPlans: number;
+    totalLegs: number;
+    completedLegs: number;
+    averageLegCompletionPct: string;
+  } | null;
+  content: Record<string, unknown> | string; // JSON object or Markdown string
+  downloadUrl: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export interface GeneratePerformanceReportInput {
+  reportName: string;
+  format: PerformanceReportFormat;
+  dateRangeStart: string;
+  dateRangeEnd: string;
+  includeMultiLegDetail?: boolean;
+  includeHedgeState?: boolean;
+  includeVaultActivity?: boolean;
+  notes?: string | null;
+}
+
+export interface MultiLegExecutionEvidenceView {
+  evidenceType: 'multi_leg_execution';
+  planId: string;
+  carryActionId: string;
+  asset: string;
+  notionalUsd: string;
+  legCount: number;
+  status: string;
+  legs: Array<{
+    legSequence: number;
+    legType: string;
+    side: string;
+    venueId: string;
+    targetSize: string;
+    executedSize: string | null;
+    averageFillPrice: string | null;
+    status: string;
+  }>;
+  hedgeState: {
+    spotNotionalUsd: string;
+    perpNotionalUsd: string;
+    deviationPct: string;
+    isWithinTolerance: boolean;
+  } | null;
+  executedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface SubmissionCompletenessView {
+  submissionId: string;
+  overallCompletenessPct: number;
+  isReadyForSubmission: boolean;
+  blockers: string[];
+  warnings: string[];
+  categories: Array<{
+    category: string;
+    required: boolean;
+    status: 'complete' | 'partial' | 'missing';
+    completenessPct: number;
+    items: Array<{
+      item: string;
+      status: 'complete' | 'partial' | 'missing';
+      required: boolean;
+      evidenceCount: number;
+      missingReason: string | null;
+    }>;
+  }>;
+  missingEvidence: Array<{
+    type: string;
+    description: string;
+    required: boolean;
+    blocker: boolean;
+  }>;
+  generatedAt: string;
+}
+
+export interface RecordMultiLegEvidenceInput {
+  planId: string;
+  evidenceLabel: string;
+  includeHedgeState: boolean;
+  notes?: string | null;
 }

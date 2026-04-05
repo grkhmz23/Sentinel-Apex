@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@sentinel-apex/allocator": "workspace:*",
+    "@sentinel-apex/backtest": "workspace:*",
     "@sentinel-apex/carry": "workspace:*",
     "@sentinel-apex/cex-verification": "workspace:*",
     "@sentinel-apex/config": "workspace:*",

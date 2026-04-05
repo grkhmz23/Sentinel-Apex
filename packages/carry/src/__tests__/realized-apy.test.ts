@@ -6,19 +6,17 @@ import { describe, expect, it } from 'vitest';
 
 import {
   annualizeReturn,
-  calculateApy30d,
   calculateApy7d,
   calculateApyCurrent,
-  calculateApyLifetime,
   calculateDailySnapshot,
   calculatePerformancePeriod,
-  calculateRollingApy,
   calculateSimpleApy,
   calculateStrategyPerformance,
   calculateTimeWeightedReturn,
   computeTradePnl,
+  type DailySnapshot,
+  type RealizedTradePnl,
 } from '../realized-apy.js';
-import type { DailySnapshot, RealizedTradePnl } from '../realized-apy.js';
 
 describe('computeTradePnl', () => {
   it('calculates long trade PnL correctly', () => {

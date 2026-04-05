@@ -29,7 +29,9 @@ export { portfolioCurrent, portfolioSnapshots, riskBreaches } from './portfolio.
 export {
   apyCurrent,
   apyDailySnapshots,
+  multiLegEvidenceSummary,
   openPositionPnl,
+  performanceReports,
   realizedTradePnl,
   strategyPerformanceSummary,
   vaultCurrent,
@@ -45,7 +47,12 @@ export {
   carryActionOrderIntents,
   carryExecutionSteps,
   carryActions,
+  carryHedgeState,
+  carryLegExecutions,
+  carryMultiLegPlans,
   carryVenueSnapshots,
+  executionGuardrailsConfig,
+  executionGuardrailViolations,
   opsOperators,
   opsOperatorSessions,
   executionEvents,
@@ -89,3 +96,11 @@ export type {
   CexImportStatus,
   CexApiKeyStatus,
 } from './cex-imports.js';
+
+export {
+  rangerVaultState,
+  vaultOnChainAddresses,
+  vaultOnChainDeposits,
+  vaultOnChainWithdrawals,
+  vaultSubmissionVerification,
+} from './ranger.js';

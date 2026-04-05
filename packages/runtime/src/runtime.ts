@@ -19,6 +19,7 @@ import {
   type CarryExecutionRecommendation,
   type CarryOpportunityCandidate,
   type CarryPositionSnapshot,
+  type LegStatus,
 } from '@sentinel-apex/carry';
 import {
   applyMigrations,
@@ -3587,6 +3588,7 @@ export class SentinelRuntime {
     actionId: string;
     executionId: string;
     orderCount: number;
+    guardrailViolations: string[];
   }> {
     const detail = await this.options.store.getCarryAction(input.actionId);
     if (detail === null) {
@@ -3742,6 +3744,191 @@ export class SentinelRuntime {
       throw new Error(errorMessage);
     }
 
+    // ============================================================================
+    // Phase R3: Guardrail Enforcement
+    // ============================================================================
+    const guardrailViolations: string[] = [];
+    
+    // Load guardrail config
+    const guardrailConfig = await this.options.store.getGuardrailConfig('global', 'carry');
+    
+    // Check kill switch
+    if (guardrailConfig?.killSwitchTriggered) {
+      const violation = await this.options.store.recordGuardrailViolation({
+        guardrailConfigId: guardrailConfig.id,
+        violationType: 'kill_switch_triggered',
+        violationMessage: 'Execution blocked: kill switch is triggered',
+        carryActionId: detail.action.id,
+        blocked: true,
+      });
+      guardrailViolations.push('kill_switch');
+      
+      await this.options.store.updateCarryExecution(execution.id, {
+        status: 'failed',
+        lastError: 'Execution blocked: kill switch triggered',
+        outcomeSummary: 'Execution blocked by guardrail: kill switch',
+        completedAt: new Date(),
+      });
+      await this.options.store.failCarryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage: 'Execution blocked: kill switch triggered',
+      });
+      throw new Error('Execution blocked: kill switch triggered');
+    }
+    
+    // Calculate total notional
+    const totalNotional = detail.plannedOrders.reduce(
+      (sum, order) => sum + (parseFloat(order.requestedSize) * parseFloat(order.requestedPrice ?? '0')),
+      0
+    );
+    
+    // Check notional limits
+    if (guardrailConfig?.maxSingleActionNotionalUsd && 
+        totalNotional > parseFloat(guardrailConfig.maxSingleActionNotionalUsd)) {
+      const violation = await this.options.store.recordGuardrailViolation({
+        guardrailConfigId: guardrailConfig.id,
+        violationType: 'max_notional_exceeded',
+        violationMessage: `Execution blocked: notional ${totalNotional} exceeds limit ${guardrailConfig.maxSingleActionNotionalUsd}`,
+        carryActionId: detail.action.id,
+        attemptedNotionalUsd: String(totalNotional),
+        limitNotionalUsd: guardrailConfig.maxSingleActionNotionalUsd,
+        blocked: true,
+      });
+      guardrailViolations.push('max_notional_exceeded');
+      
+      await this.options.store.updateCarryExecution(execution.id, {
+        status: 'failed',
+        lastError: `Execution blocked: notional limit exceeded`,
+        outcomeSummary: `Execution blocked by guardrail: max notional ${guardrailConfig.maxSingleActionNotionalUsd}`,
+        completedAt: new Date(),
+      });
+      await this.options.store.failCarryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage: 'Execution blocked: notional limit exceeded',
+      });
+      throw new Error('Execution blocked: notional limit exceeded');
+    }
+    
+    // Check concurrency limits
+    const executingCount = await this.options.store.getExecutingActionCount();
+    if (guardrailConfig?.maxConcurrentExecutions && 
+        executingCount >= guardrailConfig.maxConcurrentExecutions) {
+      const violation = await this.options.store.recordGuardrailViolation({
+        guardrailConfigId: guardrailConfig.id,
+        violationType: 'max_concurrency_exceeded',
+        violationMessage: `Execution blocked: concurrency ${executingCount} >= limit ${guardrailConfig.maxConcurrentExecutions}`,
+        carryActionId: detail.action.id,
+        blocked: true,
+      });
+      guardrailViolations.push('max_concurrency_exceeded');
+      
+      await this.options.store.updateCarryExecution(execution.id, {
+        status: 'failed',
+        lastError: 'Execution blocked: concurrency limit exceeded',
+        outcomeSummary: `Execution blocked by guardrail: max concurrent ${guardrailConfig.maxConcurrentExecutions}`,
+        completedAt: new Date(),
+      });
+      await this.options.store.failCarryAction({
+        actionId: detail.action.id,
+        latestExecutionId: execution.id,
+        errorMessage: 'Execution blocked: concurrency limit exceeded',
+      });
+      throw new Error('Execution blocked: concurrency limit exceeded');
+    }
+
+    // ============================================================================
+    // Phase R3 Part 4: Multi-Leg Plan Creation
+    // ============================================================================
+    let planId: string | undefined = undefined;
+    let legsCompleted = 0;
+    let legsFailed = 0;
+    let finalHedgeDeviation: string | null = null;
+    
+    // Import adapter functions
+    const {
+      buildMultiLegPlanInput,
+      calculateExecutionOrder,
+    } = await import('./adapters/carry-orchestration-adapter.js');
+    const { createMultiLegPlan } = await import('@sentinel-apex/carry');
+    
+    // Only create multi-leg plan for 2+ orders (delta-neutral carry)
+    if (detail.plannedOrders.length >= 2) {
+      try {
+        // Build plan input using adapter
+        const planInput = buildMultiLegPlanInput(
+          detail.action.id,
+          detail.action.strategyRunId,
+          detail.action.asset ?? 'unknown',
+          detail.plannedOrders
+        );
+        
+        // Create multi-leg plan via carry orchestration
+        const planResult = createMultiLegPlan(planInput);
+        
+        if (planResult.ok) {
+          const plan = planResult.value;
+          
+          // Persist plan to database
+          const planRecord = await this.options.store.createMultiLegPlan({
+            carryActionId: detail.action.id,
+            strategyRunId: detail.action.strategyRunId,
+            asset: detail.action.asset ?? 'unknown',
+            notionalUsd: planInput.notionalUsd.toString(),
+            legCount: plan.legs.length,
+            coordinationConfig: plan.coordinationConfig as unknown as Record<string, unknown>,
+            executionOrder: calculateExecutionOrder(plan.coordinationConfig, plan.legs.length),
+            requestedBy: input.actorId,
+          });
+          
+          planId = planRecord.id;
+          
+          // Persist legs
+          for (const leg of plan.legs) {
+            // Map legType: 'futures' from carry package maps to 'perp' in DB
+            const legType: 'spot' | 'perp' | 'hedge' | 'rebalance' | 'settlement' = 
+              leg.legType === 'futures' ? 'perp' : leg.legType;
+            
+            await this.options.store.createLegExecution({
+              planId: planRecord.id,
+              carryActionId: detail.action.id,
+              legSequence: leg.legSequence,
+              legType,
+              side: leg.side,
+              venueId: leg.venueId,
+              asset: leg.asset,
+              targetSize: leg.targetSize.toString(),
+              targetNotionalUsd: leg.targetNotionalUsd.toString(),
+              metadata: {
+                marketSymbol: leg.marketSymbol,
+              },
+            });
+          }
+          
+          // Update plan status to executing
+          await this.options.store.updateMultiLegPlanStatus(planRecord.id, {
+            status: 'executing',
+            outcomeSummary: 'Plan execution started',
+          });
+          
+          // Update execution with plan reference
+          await this.options.store.updateCarryExecution(execution.id, {
+            outcome: {
+              blockedReasons: detail.action.blockedReasons,
+              multiLegPlanId: planRecord.id,
+              multiLegEnabled: true,
+            },
+          });
+        }
+      } catch (error) {
+        // Log but don't fail - fall back to sequential execution
+        this.options.logger.warn('Multi-leg plan creation failed, falling back to sequential execution', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     for (const plannedOrder of detail.plannedOrders) {
       const venueSnapshot = carryVenueById.get(plannedOrder.venueId) ?? {
         venueId: plannedOrder.venueId,
@@ -3881,6 +4068,44 @@ export class SentinelRuntime {
           executionReference,
           executionMode,
         });
+        
+        legsCompleted++;
+        
+        // ============================================================================
+        // Phase R3 Part 4: Update Leg Execution Status
+        // ============================================================================
+        if (planId !== undefined) {
+          try {
+            // Determine leg type from order metadata or venue naming
+            const marketId = plannedOrder.marketIdentity;
+            const legType: 'spot' | 'perp' | 'hedge' | 'rebalance' | 'settlement' = 
+              marketId?.marketType === 'perp' || 
+              plannedOrder.venueId.toLowerCase().includes('perp')
+                ? 'perp' 
+                : 'spot';
+            
+            // Query leg executions to find matching one
+            const legExecutions = await this.options.store.getLegExecutionsForPlan(planId);
+            const matchingLeg = legExecutions.find(
+              (leg) => leg.venueId === plannedOrder.venueId && 
+                     leg.legType === legType &&
+                     leg.status === 'pending'
+            );
+            
+            if (matchingLeg !== undefined) {
+              await this.options.store.updateLegExecutionStatus(matchingLeg.id, {
+                status: 'completed',
+                executedSize: orderRecord.filledSize ?? orderRecord.intent.size,
+                averageFillPrice: orderRecord.averageFillPrice ?? plannedOrder.requestedPrice ?? '0',
+              });
+            }
+          } catch (legError) {
+            // Log but don't fail execution
+            this.options.logger.warn('Failed to update leg execution status', {
+              error: legError instanceof Error ? legError.message : String(legError),
+            });
+          }
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Carry order execution failed.';
         await this.options.store.updateCarryExecutionStep(step.id, {
@@ -3893,6 +4118,28 @@ export class SentinelRuntime {
           lastError: message,
           completedAt: new Date(),
         });
+        
+        legsFailed++;
+        
+        // Update leg execution status to failed
+        if (planId !== undefined) {
+          try {
+            const legExecutions = await this.options.store.getLegExecutionsForPlan(planId);
+            const pendingLeg = legExecutions.find((leg) => leg.status === 'pending');
+            
+            if (pendingLeg !== undefined) {
+              await this.options.store.updateLegExecutionStatus(pendingLeg.id, {
+                status: 'failed',
+                lastError: `Leg failed: ${message}`,
+              });
+            }
+          } catch (legError) {
+            this.options.logger.warn('Failed to update leg failure status', {
+              error: legError instanceof Error ? legError.message : String(legError),
+            });
+          }
+        }
+        
         await this.options.store.updateCarryExecution(execution.id, {
           status: 'failed',
           lastError: message,
@@ -3902,6 +4149,7 @@ export class SentinelRuntime {
           },
           completedAt: new Date(),
         });
+        
         await this.options.store.failCarryAction({
           actionId: detail.action.id,
           latestExecutionId: execution.id,
@@ -3909,6 +4157,73 @@ export class SentinelRuntime {
         });
         await syncLinkedBundle();
         throw error;
+      }
+    }
+
+    // ============================================================================
+    // Phase R3 Part 4: Finalize Multi-Leg Plan and Record Hedge State
+    // ============================================================================
+    if (planId !== undefined) {
+      try {
+        // Calculate hedge deviation from execution results
+        const legExecutions = await this.options.store.getLegExecutionsForPlan(planId);
+        
+        const spotLegs = legExecutions.filter((l) => l.legType === 'spot');
+        const perpLegs = legExecutions.filter((l) => l.legType === 'perp');
+        
+        const spotNotional = spotLegs.reduce(
+          (sum, l) => sum + (Number(l.executedSize ?? l.targetSize) * Number(l.averageFillPrice ?? '0')),
+          0
+        );
+        const perpNotional = perpLegs.reduce(
+          (sum, l) => sum + (Number(l.executedSize ?? l.targetSize) * Number(l.averageFillPrice ?? '0')),
+          0
+        );
+        
+        const _totalNotional = spotNotional + perpNotional;
+        const deviation = _totalNotional > 0 
+          ? Math.abs(spotNotional - perpNotional) / _totalNotional * 100
+          : 0;
+        
+        finalHedgeDeviation = deviation.toFixed(4);
+        
+        // Determine imbalance direction
+        const imbalanceDirection = spotNotional > perpNotional ? 'spot_heavy' as const :
+                                   perpNotional > spotNotional ? 'perp_heavy' as const :
+                                   'balanced' as const;
+        
+        // Record hedge state
+        await this.options.store.recordHedgeState({
+          planId,
+          carryActionId: detail.action.id,
+          asset: detail.action.asset ?? 'unknown',
+          spotLegId: spotLegs[0]?.id ?? null,
+          perpLegId: perpLegs[0]?.id ?? null,
+          notionalUsd: totalNotional.toString(),
+          hedgeDeviationPct: deviation,
+          imbalanceDirection,
+          imbalanceThresholdBreached: deviation >= 2, // Default 2% tolerance
+        });
+        
+        // Update plan status based on execution outcome
+        const allLegsCompleted = legExecutions.every((l) => l.status === 'completed');
+        const someLegsFailed = legExecutions.some((l) => l.status === 'failed');
+        
+        if (allLegsCompleted && legsFailed === 0) {
+          await this.options.store.updateMultiLegPlanStatus(planId, {
+            status: 'completed',
+            outcomeSummary: `All ${legsCompleted} legs completed successfully, hedge deviation: ${finalHedgeDeviation}%`,
+          });
+        } else if (someLegsFailed || legsFailed > 0) {
+          await this.options.store.updateMultiLegPlanStatus(planId, {
+            status: 'partial',
+            outcomeSummary: `${legsCompleted} legs completed, ${legsFailed} legs failed, hedge deviation: ${finalHedgeDeviation}%`,
+          });
+        }
+      } catch (hedgeError) {
+        this.options.logger.warn('Failed to record final hedge state', {
+          error: hedgeError instanceof Error ? hedgeError.message : String(hedgeError),
+        });
       }
     }
 
@@ -3925,6 +4240,11 @@ export class SentinelRuntime {
             .map((result) => result.executionMode)
             .filter((value): value is 'real' | 'simulated' => value !== null),
         )),
+        guardrailViolations,
+        multiLegPlanId: planId,
+        legsCompleted,
+        legsFailed,
+        finalHedgeDeviation,
       },
       venueExecutionReference: orderResults
         .map((result) => result.executionReference)
@@ -3967,8 +4287,20 @@ export class SentinelRuntime {
       actionId: detail.action.id,
       executionId: execution.id,
       orderCount: orderResults.length,
+      guardrailViolations,
     };
   }
+
+  // ============================================================================
+  // Multi-Leg Execution (Phase R3)
+  // ============================================================================
+  
+  // Note: The executeMultiLegCarryAction method and supporting infrastructure
+  // are staged for implementation. The RuntimeStore methods for multi-leg
+  // orchestration are complete (createMultiLegPlan, createLegExecution, etc.)
+  // but the runtime integration requires additional type alignment work.
+  // 
+  // See docs/audit/phase-r3-submission-gap-analysis.md for details.
 
   async executeTreasuryAction(input: {
     actionId: string;

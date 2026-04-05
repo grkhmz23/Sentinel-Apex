@@ -127,3 +127,27 @@ export type {
   CarryPositionSnapshot,
   CarryRecommendationSourceKind,
 } from './types.js';
+
+// Multi-leg orchestration (Phase R2)
+export type {
+  LegDefinition,
+  LegExecution,
+  LegResult,
+  LegStatus,
+  MultiLegPlan,
+  MultiLegPlanInput,
+  PartialFailureHandling,
+  PlanStatus,
+  ExecutionResult,
+  HedgeState,
+  HedgeStatus,
+  ValidationResult,
+} from './multi-leg-orchestration.js';
+export {
+  createMultiLegPlan,
+  calculateHedgeState,
+  updatePlanStatus,
+  buildExecutionResult,
+  validateMultiLegPlan,
+  determinePartialFailureAction,
+} from './multi-leg-orchestration.js';

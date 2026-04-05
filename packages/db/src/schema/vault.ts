@@ -335,3 +335,65 @@ export const openPositionPnl = pgTable(
     assetIdx: index('open_position_pnl_asset_idx').on(t.asset),
   }),
 );
+
+// =============================================================================
+// Phase R3 Part 5 - Performance Reports and Multi-Leg Evidence
+// =============================================================================
+
+export const performanceReports = pgTable(
+  'performance_reports',
+  {
+    id: text('id').primaryKey(),
+    reportName: text('report_name').notNull(),
+    status: text('status').notNull().default('pending'),
+    format: text('format').notNull().default('json'),
+    dateRangeStart: timestamp('date_range_start', { withTimezone: true }).notNull(),
+    dateRangeEnd: timestamp('date_range_end', { withTimezone: true }).notNull(),
+    generatedAt: timestamp('generated_at', { withTimezone: true }).notNull().defaultNow(),
+    generatedBy: text('generated_by'),
+    metadata: jsonb('metadata').notNull().default({}),
+    summary: jsonb('summary').notNull().default({}),
+    multiLegSummary: jsonb('multi_leg_summary'),
+    content: jsonb('content').notNull().default({}),
+    contentMarkdown: text('content_markdown'),
+    downloadUrl: text('download_url'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    statusIdx: index('performance_reports_status_idx').on(t.status),
+    generatedAtIdx: index('performance_reports_generated_at_idx').on(t.generatedAt),
+    dateRangeIdx: index('performance_reports_date_range_idx').on(t.dateRangeStart, t.dateRangeEnd),
+  }),
+);
+
+export const multiLegEvidenceSummary = pgTable(
+  'multi_leg_evidence_summary',
+  {
+    id: text('id').primaryKey(),
+    planId: text('plan_id').notNull(),
+    carryActionId: text('carry_action_id').notNull(),
+    submissionDossierId: text('submission_dossier_id'),
+    asset: text('asset').notNull(),
+    notionalUsd: text('notional_usd').notNull(),
+    legCount: integer('leg_count').notNull(),
+    status: text('status').notNull(),
+    hedgeDeviationPct: text('hedge_deviation_pct'),
+    isWithinTolerance: boolean('is_within_tolerance'),
+    executedAt: timestamp('executed_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    evidenceLabel: text('evidence_label'),
+    evidenceStatus: text('evidence_status').notNull().default('pending'),
+    notes: text('notes'),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    planIdIdx: index('multi_leg_evidence_summary_plan_id_idx').on(t.planId),
+    actionIdIdx: index('multi_leg_evidence_summary_action_id_idx').on(t.carryActionId),
+    dossierIdIdx: index('multi_leg_evidence_summary_dossier_id_idx').on(t.submissionDossierId),
+    statusIdx: index('multi_leg_evidence_summary_status_idx').on(t.evidenceStatus),
+  }),
+);

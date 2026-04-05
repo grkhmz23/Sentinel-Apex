@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@sentinel-apex/domain": "workspace:*",
+    "@sentinel-apex/observability": "workspace:*",
     "@sentinel-apex/shared": "workspace:*",
     "decimal.js": "^10.4.3"
   },

@@ -15,6 +15,7 @@ import { runtimeRoutes } from './runtime.js';
 import { submissionRoutes } from './submission.js';
 import { treasuryRoutes } from './treasury.js';
 import { vaultRoutes } from './vault.js';
+import { backtestRoutes } from './backtest.js';
 import { venueRoutes } from './venues.js';
 
 import type { FastifyInstance } from 'fastify';
@@ -121,5 +122,6 @@ export async function registerRoutes(
   await carryRoutes(app, controlPlane);
   await venueRoutes(app, controlPlane);
   await cexVerificationRoutes(app, controlPlane);
+  await backtestRoutes(app, { controlPlane });
   await controlRoutes(app, controlPlane);
 }

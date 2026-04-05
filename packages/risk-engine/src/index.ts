@@ -26,3 +26,21 @@ export type {
   RiskSummary,
 } from './engine.js';
 export { RiskEngine } from './engine.js';
+
+// Execution Guardrails (Phase R2)
+export type {
+  GuardrailConfig,
+  GuardrailCheckInput,
+  GuardrailCheckResult,
+  GuardrailViolation,
+  GuardrailViolationInput,
+  GuardrailScope,
+  ViolationType,
+  PartialFillAction,
+} from './execution-guardrails.js';
+export {
+  ExecutionGuardrailEngine,
+  DEFAULT_GLOBAL_GUARDRAIL_CONFIG,
+  getExecutionGuardrailEngine,
+  resetExecutionGuardrailEngine,
+} from './execution-guardrails.js';

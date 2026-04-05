@@ -576,6 +576,7 @@ export class RuntimeWorker {
           carryActionId: outcome.actionId,
           carryExecutionId: outcome.executionId,
           orderCount: outcome.orderCount,
+          guardrailViolations: outcome.guardrailViolations,
         });
         await this.store.updateWorkerStatus({
           schedulerState: 'waiting',
@@ -592,11 +593,14 @@ export class RuntimeWorker {
           status: 'completed',
           sourceComponent: 'runtime-worker',
           actorId: this.workerId,
-          message: 'Carry action execution completed.',
+          message: outcome.guardrailViolations?.length 
+            ? `Carry action execution completed with ${outcome.guardrailViolations.length} guardrail violations.`
+            : 'Carry action execution completed.',
           details: {
             carryActionId: outcome.actionId,
             carryExecutionId: outcome.executionId,
             orderCount: outcome.orderCount,
+            guardrailViolations: outcome.guardrailViolations,
           },
         });
         if (bundleRecoveryActionId !== null) {

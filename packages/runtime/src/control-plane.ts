@@ -109,8 +109,19 @@ import type {
   SubmissionDossierView,
   SubmissionEvidenceRecordView,
   SubmissionExportBundleView,
+  SubmissionCompletenessView,
   UpsertSubmissionDossierInput,
+  GeneratePerformanceReportInput,
+  PerformanceReportView,
+  RecordMultiLegEvidenceInput,
+  MultiLegExecutionEvidenceView,
   WorkerStatusView,
+  MultiLegPlanView,
+  MultiLegPlanSummaryView,
+  LegExecutionView,
+  HedgeStateView,
+  GuardrailConfigSummaryView,
+  GuardrailViolationView,
 } from './types.js';
 
 function canSatisfyApprovalRequirement(
@@ -316,6 +327,72 @@ export class RuntimeControlPlane implements RuntimeReadApi {
         label: evidence.label,
         capturedAt: evidence.capturedAt,
         withinBuildWindow: evidence.withinBuildWindow,
+      },
+    });
+    return evidence;
+  }
+
+  // ============================================================================
+  // Phase R3 Part 5 - Performance Reports and Submission Completeness
+  // ============================================================================
+
+  async getSubmissionCompleteness(): Promise<SubmissionCompletenessView> {
+    return this.store.getSubmissionCompleteness();
+  }
+
+  async generatePerformanceReport(
+    actorId: string,
+    input: GeneratePerformanceReportInput,
+  ): Promise<PerformanceReportView> {
+    const report = await this.store.generatePerformanceReport({
+      ...input,
+      generatedBy: actorId,
+    });
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.performance_report_generated',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        reportId: report.reportId,
+        reportName: report.reportName,
+        format: report.format,
+        dateRangeStart: report.dateRangeStart,
+        dateRangeEnd: report.dateRangeEnd,
+        status: report.status,
+      },
+    });
+    return report;
+  }
+
+  async getPerformanceReport(reportId: string): Promise<PerformanceReportView | null> {
+    return this.store.getPerformanceReport(reportId);
+  }
+
+  async listPerformanceReports(limit = 50): Promise<PerformanceReportView[]> {
+    return this.store.listPerformanceReports(limit);
+  }
+
+  async recordMultiLegEvidence(
+    actorId: string,
+    input: RecordMultiLegEvidenceInput,
+  ): Promise<MultiLegExecutionEvidenceView> {
+    const evidence = await this.store.recordMultiLegEvidence(input, actorId);
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.multi_leg_evidence_recorded',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        planId: evidence.planId,
+        carryActionId: evidence.carryActionId,
+        asset: evidence.asset,
+        legCount: evidence.legCount,
+        status: evidence.status,
       },
     });
     return evidence;
@@ -2470,7 +2547,40 @@ export class RuntimeControlPlane implements RuntimeReadApi {
   async calculateCexPnl(sessionId: string, input: {
     method: 'fifo' | 'lifo' | 'avg';
     includeFees: boolean;
-  }): Promise<PortfolioPnlResult> {
+  }): Promise<{
+    summary: {
+      totalTrades: number;
+      totalPnl: string;
+      totalFees: string;
+      netPnl: string;
+      profitableTrades: number;
+      losingTrades: number;
+      winRate: string;
+      largestWin: string;
+      largestLoss: string;
+      averageWin: string;
+      averageLoss: string;
+      profitFactor: string;
+      tradingDays: number;
+      firstTradeAt: string | null;
+      lastTradeAt: string | null;
+    };
+    assets: Array<{
+      asset: string;
+      trades: Array<{
+        tradeId: string;
+        side: 'buy' | 'sell';
+        quantity: string;
+        price: string;
+        realizedPnl: string;
+      }>;
+      summary: {
+        totalTrades: number;
+        realizedPnl: string;
+        totalFees: string;
+      };
+    }>;
+  }> {
     return this.store.calculateCexPnl(sessionId, input);
   }
 
@@ -2513,5 +2623,375 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async deleteCexVerificationSession(sessionId: string): Promise<void> {
     return this.store.deleteCexVerificationSession(sessionId);
+  }
+
+  // ============================================================================
+  // Multi-Leg Orchestration (Phase R3)
+  // ============================================================================
+
+  async getMultiLegPlan(planId: string): Promise<MultiLegPlanView | null> {
+    const plan = await this.store.getMultiLegPlan(planId);
+    if (!plan) return null;
+
+    // Get leg counts
+    const legs = await this.store.getLegExecutionsForPlan(planId);
+    const completed = legs.filter((l) => l.status === 'completed').length;
+    const failed = legs.filter((l) => l.status === 'failed').length;
+
+    return {
+      id: plan.id,
+      carryActionId: plan.carryActionId,
+      strategyRunId: plan.strategyRunId,
+      asset: plan.asset,
+      notionalUsd: plan.notionalUsd,
+      legCount: plan.legCount,
+      status: plan.status as 'pending' | 'executing' | 'completed' | 'failed' | 'partial',
+      executionOrder: plan.executionOrder as number[],
+      coordinationConfig: plan.coordinationConfig as {
+        allowPartialExecution: boolean;
+        requireAllLegsForCompletion: boolean;
+        maxHedgeDeviationPct: number;
+        autoRebalanceThresholdPct: number | null;
+      },
+      startedAt: plan.startedAt?.toISOString() ?? null,
+      completedAt: plan.completedAt?.toISOString() ?? null,
+      failedAt: plan.failedAt?.toISOString() ?? null,
+      outcomeSummary: plan.outcomeSummary,
+      createdAt: plan.createdAt.toISOString(),
+      updatedAt: plan.updatedAt.toISOString(),
+    };
+  }
+
+  async listMultiLegPlansForAction(actionId: string): Promise<MultiLegPlanSummaryView[]> {
+    const plans = await this.store.listMultiLegPlansForAction(actionId);
+    return plans.map((plan) => ({
+      id: plan.id,
+      carryActionId: plan.carryActionId,
+      asset: plan.asset,
+      notionalUsd: plan.notionalUsd,
+      legCount: plan.legCount,
+      status: plan.status,
+      legsCompleted: plan.legsCompleted,
+      legsFailed: plan.legsFailed,
+      hedgeDeviationPct: plan.hedgeDeviationPct,
+      createdAt: plan.createdAt.toISOString(),
+    }));
+  }
+
+  async getLegExecutionsForPlan(planId: string): Promise<LegExecutionView[]> {
+    const rows = await this.store.getLegExecutionsForPlan(planId);
+    return rows.map((leg) => ({
+      id: leg.id,
+      planId: leg.planId,
+      carryActionId: leg.carryActionId,
+      legSequence: leg.legSequence,
+      legType: leg.legType as 'spot' | 'perp' | 'hedge' | 'rebalance' | 'settlement',
+      side: leg.side as 'long' | 'short',
+      venueId: leg.venueId,
+      asset: leg.asset,
+      targetSize: leg.targetSize,
+      targetNotionalUsd: leg.targetNotionalUsd,
+      executedSize: leg.executedSize,
+      executedNotionalUsd: leg.executedNotionalUsd,
+      averageFillPrice: leg.averageFillPrice,
+      status: leg.status,
+      executionMode: leg.executionMode,
+      simulated: leg.simulated,
+      venueExecutionReference: leg.venueExecutionReference,
+      clientOrderId: leg.clientOrderId,
+      venueOrderId: leg.venueOrderId,
+      fillCount: leg.fillCount,
+      startedAt: leg.startedAt?.toISOString() ?? null,
+      completedAt: leg.completedAt?.toISOString() ?? null,
+      failedAt: leg.failedAt?.toISOString() ?? null,
+      lastError: leg.lastError,
+      retryCount: leg.retryCount,
+      metadata: leg.metadata as Record<string, unknown>,
+      createdAt: leg.createdAt.toISOString(),
+      updatedAt: leg.updatedAt.toISOString(),
+    }));
+  }
+
+  async getHedgeStateForPlan(planId: string): Promise<HedgeStateView[]> {
+    const rows = await this.store.getHedgeStateForPlan(planId);
+    return rows.map((state) => ({
+      id: state.id,
+      planId: state.planId,
+      carryActionId: state.carryActionId,
+      asset: state.asset,
+      pairType: state.pairType,
+      spotLegId: state.spotLegId,
+      spotVenueId: state.spotVenueId,
+      spotSide: state.spotSide,
+      spotTargetSize: state.spotTargetSize,
+      spotExecutedSize: state.spotExecutedSize,
+      spotAveragePrice: state.spotAveragePrice,
+      perpLegId: state.perpLegId,
+      perpVenueId: state.perpVenueId,
+      perpSide: state.perpSide,
+      perpTargetSize: state.perpTargetSize,
+      perpExecutedSize: state.perpExecutedSize,
+      perpAveragePrice: state.perpAveragePrice,
+      notionalUsd: state.notionalUsd,
+      hedgeDeviationPct: state.hedgeDeviationPct,
+      maxAllowedDeviationPct: state.maxAllowedDeviationPct,
+      status: state.status,
+      imbalanceDirection: state.imbalanceDirection as 'spot_heavy' | 'perp_heavy' | 'balanced' | null,
+      imbalanceThresholdBreached: state.imbalanceThresholdBreached,
+      rebalanceTriggeredAt: state.rebalanceTriggeredAt?.toISOString() ?? null,
+      metadata: state.metadata as Record<string, unknown>,
+      createdAt: state.createdAt.toISOString(),
+      updatedAt: state.updatedAt.toISOString(),
+    }));
+  }
+
+  // ============================================================================
+  // Guardrails (Phase R3)
+  // ============================================================================
+
+  async getGuardrailConfigSummary(): Promise<GuardrailConfigSummaryView> {
+    const global = await this.store.getGuardrailConfig('global', 'carry');
+    const violations = await this.store.listGuardrailViolations(1);
+    const lastViolation = violations[0];
+
+    return {
+      global: {
+        id: global?.id ?? 'default',
+        scopeType: global?.scopeType ?? 'global',
+        scopeId: global?.scopeId ?? 'carry',
+        killSwitchEnabled: global?.killSwitchEnabled ?? false,
+        killSwitchTriggered: global?.killSwitchTriggered ?? false,
+        killSwitchTriggeredAt: global?.killSwitchTriggeredAt?.toISOString() ?? null,
+        killSwitchReason: global?.killSwitchReason ?? null,
+        maxSingleActionNotionalUsd: global?.maxSingleActionNotionalUsd ?? null,
+        maxConcurrentExecutions: global?.maxConcurrentExecutions ?? null,
+        circuitBreakerEnabled: global?.circuitBreakerEnabled ?? true,
+        maxFailuresBeforeBreaker: global?.maxFailuresBeforeBreaker ?? 3,
+      },
+      totalViolations24h: violations.length,
+      lastViolationAt: lastViolation?.createdAt.toISOString() ?? null,
+    };
+  }
+
+  async listGuardrailViolations(limit = 50): Promise<GuardrailViolationView[]> {
+    const rows = await this.store.listGuardrailViolations(limit);
+    return rows.map((v) => ({
+      id: v.id,
+      guardrailConfigId: v.guardrailConfigId,
+      violationType: v.violationType,
+      violationMessage: v.violationMessage,
+      carryActionId: v.carryActionId,
+      planId: v.planId,
+      legId: v.legId,
+      attemptedNotionalUsd: v.attemptedNotionalUsd,
+      limitNotionalUsd: v.limitNotionalUsd,
+      violationDetails: v.violationDetails as Record<string, unknown>,
+      blocked: v.blocked,
+      overridden: v.overridden,
+      overriddenBy: v.overriddenBy,
+      overriddenAt: v.overriddenAt?.toISOString() ?? null,
+      overrideReason: v.overrideReason,
+      createdAt: v.createdAt.toISOString(),
+    }));
+  }
+
+  // =============================================================================
+  // CEX API Verification Methods (Phase R3 Part 6)
+  // =============================================================================
+
+  async validateCexApiCredentials(input: {
+    platform: 'binance' | 'okx' | 'bybit' | 'coinbase';
+    apiKey: string;
+    apiSecret: string;
+    passphrase?: string;
+  }): Promise<{
+    valid: boolean;
+    canReadTrades: boolean;
+    canReadBalances: boolean;
+    isReadOnly: boolean;
+    accountId: string | null;
+    error: string | null;
+  }> {
+    return this.store.validateCexApiCredentials(input);
+  }
+
+  async fetchCexTradesFromApi(
+    actorId: string,
+    input: {
+      sleeveId: string;
+      platform: 'binance' | 'okx' | 'bybit' | 'coinbase';
+      apiKey: string;
+      apiSecret: string;
+      passphrase?: string;
+      startTime?: string;
+      endTime?: string;
+    }
+  ): Promise<{
+    sessionId: string;
+    totalTrades: number;
+    fetchedAt: string;
+    errors: string[];
+  }> {
+    const result = await this.store.fetchCexTradesFromApi({
+      operatorId: actorId,
+      sleeveId: input.sleeveId,
+      platform: input.platform,
+      apiKey: input.apiKey,
+      apiSecret: input.apiSecret,
+      ...(input.passphrase !== undefined ? { passphrase: input.passphrase } : {}),
+      ...(input.startTime ? { startTime: new Date(input.startTime) } : {}),
+      ...(input.endTime ? { endTime: new Date(input.endTime) } : {}),
+    });
+
+    // Audit the fetch
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'cex.api_trade_fetch',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: input.sleeveId,
+      data: {
+        sessionId: result.sessionId,
+        platform: input.platform,
+        totalTrades: result.totalTrades,
+        startTime: input.startTime,
+        endTime: input.endTime,
+      },
+    });
+
+    return result;
+  }
+
+  // =============================================================================
+  // Backtesting Methods (Phase R4)
+  // =============================================================================
+
+  /**
+   * Run a backtest and optionally save results as submission evidence.
+   * 
+   * IMPORTANT: Backtests are simulations using historical or synthesized data.
+   * Results are clearly labeled as 'backtest_simulation' - never as live performance.
+   */
+  async runBacktest(
+    operatorId: string,
+    config: {
+      backtestId: string;
+      name?: string;
+      description?: string;
+      period: { startDate: Date; endDate: Date };
+      assets: string[];
+      initialCapitalUsd: string;
+      saveAsEvidence?: boolean;
+    }
+  ): Promise<{
+    runId: string;
+    status: string;
+    results?: {
+      performance: {
+        totalReturnPct: string;
+        annualizedReturnPct: string;
+        maxDrawdownPct: string;
+      };
+      trades: {
+        totalTrades: number;
+        winRatePct: string;
+      };
+      funding: {
+        netFunding: string;
+      };
+      caveats: string[];
+    };
+  }> {
+    // Dynamically import backtest package to avoid circular dependencies
+    const { createBacktestEngine, createDefaultConfig, generateReport } = await import('@sentinel-apex/backtest');
+    
+    const backtestConfig = createDefaultConfig({
+      backtestId: config.backtestId,
+      ...(config.name !== undefined ? { name: config.name } : {}),
+      period: config.period,
+      assets: config.assets,
+      initialCapitalUsd: config.initialCapitalUsd,
+      createdBy: operatorId,
+    });
+
+    const engine = createBacktestEngine();
+    const run = await engine.startBacktest(backtestConfig);
+
+    // Wait for completion (with timeout)
+    const maxWaitMs = 60000; // 1 minute timeout
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitMs) {
+      const updatedRun = engine.getRun(run.runId);
+      if (updatedRun?.status === 'completed' || updatedRun?.status === 'failed') {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    const finalRun = engine.getRun(run.runId);
+    
+    if (finalRun?.status === 'completed' && finalRun.results) {
+      // Generate reports
+      const markdownReport = generateReport(finalRun.results, 'markdown');
+      
+      // Save as evidence if requested
+      if (config.saveAsEvidence) {
+        await this.store.recordSubmissionEvidence({
+          evidenceType: 'backtest_simulation',
+          status: 'recorded',
+          source: 'runtime',
+          label: `Backtest: ${config.name || config.backtestId}`,
+          summary: `Historical simulation for ${config.assets.join(', ')} from ${config.period.startDate.toISOString()} to ${config.period.endDate.toISOString()}. Return: ${finalRun.results.performance.totalReturnPct}%`,
+          reference: run.runId,
+          url: null,
+          capturedAt: new Date().toISOString(),
+          withinBuildWindow: false, // Backtests are outside build window
+          notes: markdownReport.content,
+          metadata: {
+            backtestId: config.backtestId,
+            assets: config.assets,
+            period: config.period,
+            performance: finalRun.results.performance,
+            caveats: finalRun.results.caveats,
+          },
+        });
+      }
+
+      // Audit the backtest
+      await this.store.auditWriter.write({
+        eventId: createId(),
+        eventType: 'backtest.completed',
+        occurredAt: new Date().toISOString(),
+        actorType: 'operator',
+        actorId: operatorId,
+        data: {
+          backtestId: config.backtestId,
+          runId: run.runId,
+          assets: config.assets,
+          performance: finalRun.results.performance,
+        },
+      });
+
+      return {
+        runId: run.runId,
+        status: 'completed',
+        results: {
+          performance: finalRun.results.performance,
+          trades: {
+            totalTrades: finalRun.results.trades.totalTrades,
+            winRatePct: finalRun.results.trades.winRatePct,
+          },
+          funding: finalRun.results.funding,
+          caveats: finalRun.results.caveats,
+        },
+      };
+    }
+
+    return {
+      runId: run.runId,
+      status: finalRun?.status || 'unknown',
+    };
   }
 }

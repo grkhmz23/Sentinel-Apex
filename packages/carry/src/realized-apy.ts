@@ -573,8 +573,12 @@ export function calculatePerformancePeriod(
   );
 
   // Calculate period return from first and last snapshot
-  const firstSnapshot = periodSnapshots[0]!;
-  const lastSnapshot = periodSnapshots[periodSnapshots.length - 1]!;
+  const firstSnapshot = periodSnapshots[0];
+  const lastSnapshot = periodSnapshots[periodSnapshots.length - 1];
+  
+  if (!firstSnapshot || !lastSnapshot) {
+    throw new Error('Insufficient snapshots for APY calculation');
+  }
   
   const startValue = new Decimal(firstSnapshot.totalCapitalUsd).minus(
     new Decimal(firstSnapshot.cumulativePnlUsd)
