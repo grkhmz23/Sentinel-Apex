@@ -1,0 +1,32 @@
+{
+  "name": "@sentinel-apex/cex-verification",
+  "version": "0.1.0",
+  "description": "CEX trade import, verification, and PnL calculation for hackathon submission",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@sentinel-apex/db": "workspace:*",
+    "@sentinel-apex/domain": "workspace:*",
+    "decimal.js": "^10.4.3",
+    "drizzle-orm": "^0.30.0",
+    "csv-parse": "^5.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.5.0"
+  }
+}

@@ -39,6 +39,9 @@ import type {
   RuntimeReconciliationRunView,
   RuntimeReconciliationSummaryView,
   RuntimeRecoveryEventView,
+  SubmissionDossierView,
+  SubmissionEvidenceRecordView,
+  SubmissionExportBundleView,
   TreasuryActionView,
   TreasuryAllocationView,
   TreasuryExecutionDetailView,
@@ -1959,6 +1962,149 @@ export function createCarryStrategyProfile(
         },
       ],
     },
+    ...overrides,
+  };
+}
+
+export function createSubmissionDossier(
+  overrides: Partial<SubmissionDossierView> = {},
+): SubmissionDossierView {
+  return {
+    submissionId: 'build-a-bear-main-track',
+    submissionName: 'Build-A-Bear Main Track',
+    track: 'build_a_bear_main_track',
+    strategyId: 'apex-usdc-delta-neutral-carry',
+    strategyName: 'Apex USDC Delta-Neutral Carry',
+    vaultId: 'apex-usdc-carry-vault',
+    vaultName: 'Apex USDC Delta-Neutral Carry Vault',
+    baseAsset: 'USDC',
+    buildWindowStart: '2026-03-09T00:00:00.000Z',
+    buildWindowEnd: '2026-04-06T23:59:59.999Z',
+    cluster: 'mainnet-beta',
+    addressScope: 'both',
+    walletAddress: 'submission-wallet-1',
+    walletVerificationUrl: 'https://solscan.io/account/submission-wallet-1',
+    vaultAddress: 'submission-vault-1',
+    vaultVerificationUrl: 'https://solscan.io/account/submission-vault-1',
+    managerWalletAddress: null,
+    latestExecutionReference: 'signature-1',
+    latestExecutionReferenceUrl: 'https://solscan.io/tx/signature-1',
+    latestExecutionAt: '2026-03-20T12:01:05.000Z',
+    realExecutionCountInWindow: 2,
+    simulatedExecutionCountInWindow: 4,
+    realizedApyPct: null,
+    cexExecutionUsed: false,
+    cexVenues: [],
+    cexTradeHistoryProvided: false,
+    cexReadOnlyApiKeyProvided: false,
+    supportedScope: [
+      'USDC-denominated carry strategy metadata and policy enforcement.',
+      'Drift devnet carry execution evidence for BTC-PERP reduce-only market orders only.',
+    ],
+    blockedScope: [
+      'Mainnet deployment remains blocked.',
+      'Generic Ranger vault integration remains blocked.',
+    ],
+    notes: 'Canonical submission dossier still blocked on real realized performance evidence.',
+    metadata: {},
+    readiness: {
+      status: 'blocked',
+      summary: 'Submission dossier is still blocked because one or more eligibility or verification requirements are unmet.',
+      blockedReasons: ['realized_apy_evidence_missing'],
+      warnings: [],
+      checks: [
+        {
+          key: 'submission_address_present',
+          status: 'pass',
+          summary: 'Submission includes a wallet or vault address for on-chain verification.',
+          blockedReason: null,
+          details: {},
+        },
+        {
+          key: 'realized_performance_evidence',
+          status: 'fail',
+          summary: 'Realized APY evidence is not currently persisted.',
+          blockedReason: 'realized_apy_evidence_missing',
+          details: {},
+        },
+      ],
+    },
+    createdAt: '2026-04-04T09:00:00.000Z',
+    updatedAt: '2026-04-04T09:10:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createSubmissionEvidence(
+  overrides: Partial<SubmissionEvidenceRecordView> = {},
+): SubmissionEvidenceRecordView {
+  return {
+    evidenceId: 'submission-evidence-1',
+    submissionId: 'build-a-bear-main-track',
+    evidenceType: 'on_chain_transaction',
+    status: 'verified',
+    source: 'solscan',
+    label: 'Primary submission trade',
+    summary: 'Canonical on-chain trade captured inside the build window.',
+    reference: 'signature-1',
+    url: 'https://solscan.io/tx/signature-1',
+    capturedAt: '2026-03-20T12:01:05.000Z',
+    withinBuildWindow: true,
+    notes: null,
+    metadata: {},
+    createdAt: '2026-04-04T09:05:00.000Z',
+    updatedAt: '2026-04-04T09:05:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createSubmissionExportBundle(
+  overrides: Partial<SubmissionExportBundleView> = {},
+): SubmissionExportBundleView {
+  return {
+    generatedAt: '2026-04-04T09:15:00.000Z',
+    dossier: createSubmissionDossier(),
+    evidence: [createSubmissionEvidence()],
+    artifactChecklist: [
+      {
+        key: 'addresses',
+        label: 'Canonical wallet or vault address',
+        required: true,
+        status: 'pass',
+        summary: 'Submission exposes 2 canonical on-chain verification address(es).',
+        blockedReason: null,
+        evidenceCount: 2,
+        evidenceTypes: [],
+      },
+      {
+        key: 'on_chain_trade_activity',
+        label: 'On-chain trade activity in the build window',
+        required: true,
+        status: 'pass',
+        summary: '1 explicit on-chain transaction evidence item is attached to the build window.',
+        blockedReason: null,
+        evidenceCount: 1,
+        evidenceTypes: ['on_chain_transaction'],
+      },
+      {
+        key: 'realized_performance',
+        label: 'Realized performance evidence',
+        required: true,
+        status: 'fail',
+        summary: 'No realized APY evidence is attached or persisted yet.',
+        blockedReason: 'realized_apy_evidence_missing',
+        evidenceCount: 0,
+        evidenceTypes: ['performance_snapshot'],
+      },
+    ],
+    judgeSummary:
+      'Submission bundle remains blocked by 1 requirement(s): realized_apy_evidence_missing.',
+    blockedReasons: ['realized_apy_evidence_missing'],
+    verificationLinks: [
+      'https://solscan.io/account/submission-wallet-1',
+      'https://solscan.io/account/submission-vault-1',
+      'https://solscan.io/tx/signature-1',
+    ],
     ...overrides,
   };
 }

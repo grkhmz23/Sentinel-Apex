@@ -15,8 +15,8 @@ Supported path:
 - vault base asset: `USDC`
 - tenor: 3-month rolling lock with reassessment every 3 months
 - target APY floor: `10%`
-- action: operator-approved `reduce_carry_exposure`
-- order scope: BTC-PERP reduce-only market orders
+- action: operator-approved `increase_carry_exposure` or `reduce_carry_exposure`
+- order scope: BTC-PERP market orders that can open, add to, or reduce a single live perp position
 - confirmation contract:
   - persisted Solana transaction signature
   - strongly correlated Drift `OrderActionRecord` fill evidence
@@ -56,8 +56,8 @@ Before requesting promotion or execution:
 
 Important:
 
-- Phase 6.0 does not support opening new exposure through Sentinel Apex
-- the repo only supports reducing an already-existing BTC-PERP position
+- Phase 6.0 now supports opening or adding a single BTC-PERP perp leg through Sentinel Apex
+- the repo still does not support multi-leg carry orchestration or spot-leg execution
 
 ## Promotion Workflow
 
@@ -79,7 +79,7 @@ This phase reuses the existing carry command rail. It does not add a generic ord
 
 Supported operator flow:
 
-1. Produce or select a `reduce_carry_exposure` carry action.
+1. Produce or select an `increase_carry_exposure` or `reduce_carry_exposure` carry action.
 2. Approve that carry action through the existing carry workflow.
 3. Let the runtime worker execute the queued `execute_carry_action` command.
 4. Inspect `/carry/executions/:executionId` for:
@@ -98,7 +98,7 @@ Expected full confirmation:
 
 - `confirmed_full`
 - strong Drift fill correlation
-- valid full reduce-only position delta
+- valid full position delta in the expected direction
 
 Expected strategy-profile truth:
 
@@ -112,10 +112,10 @@ Expected strategy-profile truth:
 
 The following remain unsupported and must not be used in demos:
 
-- increase-carry-exposure through the real connector
 - treasury-native real execution
 - mainnet execution
 - generic live Ranger vault deployment
+- multi-leg carry orchestration
 - spot orders
 - non-BTC perp orders
 - limit/post-only orders
@@ -126,10 +126,10 @@ The following remain unsupported and must not be used in demos:
 Use this sequence for hackathon demos:
 
 1. Configure only devnet env values.
-2. Seed a small BTC-PERP position on Drift devnet outside Sentinel Apex.
+2. Optionally seed a small BTC-PERP position on Drift devnet outside Sentinel Apex if you want to demo reduction first.
 3. Verify venue truth and promotion evidence on `/venues/drift-solana-devnet-carry`.
 4. Request and approve promotion through the existing workflow.
-5. Approve a carry reduction action through the existing action flow.
+5. Approve a carry increase or reduction action through the existing action flow.
 6. Show the resulting carry execution detail with the persisted Solana signature.
 7. Show that the same flow blocks again if promotion is suspended or evidence degrades.
 

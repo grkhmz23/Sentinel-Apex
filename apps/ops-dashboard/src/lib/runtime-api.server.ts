@@ -23,6 +23,9 @@ import type {
   RuntimeReconciliationRunView,
   RuntimeReconciliationSummaryView,
   RuntimeRecoveryEventView,
+  SubmissionDossierView,
+  SubmissionEvidenceRecordView,
+  SubmissionExportBundleView,
   TreasuryActionDetailView,
   TreasuryExecutionView,
   TreasuryExecutionDetailView,
@@ -54,6 +57,7 @@ import type {
   MismatchListFilters,
   OperationsPageData,
   OverviewPageData,
+  SubmissionPageData,
   ReconciliationFilters,
   ReconciliationPageData,
   TreasuryActionDetailPageData,
@@ -71,6 +75,7 @@ import type {
 const ALLOCATOR_API_PREFIX = '/api/v1/allocator';
 const CARRY_API_PREFIX = '/api/v1/carry';
 const API_PREFIX = '/api/v1/runtime';
+const SUBMISSION_API_PREFIX = '/api/v1/submission';
 const TREASURY_API_PREFIX = '/api/v1/treasury';
 const VENUES_API_PREFIX = '/api/v1/venues';
 
@@ -169,6 +174,31 @@ async function fetchCarryApi<T>(
 
   if (!response.ok) {
     throw new Error(payload.error?.message ?? `Carry API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+async function fetchSubmissionApi<T>(
+  path = '',
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${SUBMISSION_API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Submission API request failed: ${response.status}`);
   }
 
   return payload.data;
@@ -319,6 +349,18 @@ export async function listCarryRecommendations(limit = 20): Promise<CarryActionV
 
 export async function getCarryStrategyProfile(): Promise<CarryStrategyProfileView> {
   return fetchCarryApi<CarryStrategyProfileView>('/strategy-profile');
+}
+
+export async function getSubmissionDossier(): Promise<SubmissionDossierView> {
+  return fetchSubmissionApi<SubmissionDossierView>();
+}
+
+export async function listSubmissionEvidence(): Promise<SubmissionEvidenceRecordView[]> {
+  return fetchSubmissionApi<SubmissionEvidenceRecordView[]>('/evidence');
+}
+
+export async function getSubmissionExportBundle(): Promise<SubmissionExportBundleView> {
+  return fetchSubmissionApi<SubmissionExportBundleView>('/export');
 }
 
 export async function listCarryActions(limit = 20): Promise<CarryActionView[]> {
@@ -488,6 +530,29 @@ export async function loadAllocatorPageData(): Promise<DashboardPageState<Alloca
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load allocator data.',
+    };
+  }
+}
+
+export async function loadSubmissionPageData(): Promise<DashboardPageState<SubmissionPageData>> {
+  try {
+    const [dossier, evidence, exportBundle] = await Promise.all([
+      getSubmissionDossier(),
+      listSubmissionEvidence(),
+      getSubmissionExportBundle(),
+    ]);
+    return {
+      data: {
+        dossier,
+        evidence,
+        exportBundle,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load submission dossier.',
     };
   }
 }

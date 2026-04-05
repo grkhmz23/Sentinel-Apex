@@ -39,6 +39,8 @@ import type {
   PortfolioSnapshotView,
   PortfolioSummaryView,
   PositionView,
+  RecordSubmissionEvidenceInput,
+  RecordVaultDepositInput,
   RebalanceBundleRecoveryActionType,
   RebalanceBundleRecoveryActionView,
   RebalanceBundleRecoveryCandidateView,
@@ -87,6 +89,7 @@ import type {
   TreasuryExecutionView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  RequestVaultRedemptionInput,
   VenueDetailView,
   VenueDerivativeComparisonDetailView,
   VenueDerivativeComparisonSummaryView,
@@ -94,10 +97,19 @@ import type {
   VenueInventorySummaryView,
   VenueSnapshotView,
   VenueTruthSummaryView,
+  VaultDepositLotView,
+  VaultDepositorView,
+  VaultRedemptionRequestView,
+  VaultSummaryView,
   TreasuryVenueDetailView,
   TreasuryVenueView,
   InternalDerivativeSnapshotView,
+  PortfolioPnlResult,
   RuntimeVerificationOutcome,
+  SubmissionDossierView,
+  SubmissionEvidenceRecordView,
+  SubmissionExportBundleView,
+  UpsertSubmissionDossierInput,
   WorkerStatusView,
 } from './types.js';
 
@@ -138,6 +150,34 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.listPortfolioSnapshots(limit);
   }
 
+  async getVaultSummary(): Promise<VaultSummaryView> {
+    return this.store.getVaultSummary();
+  }
+
+  async getSubmissionDossier(): Promise<SubmissionDossierView> {
+    return this.store.getSubmissionDossier();
+  }
+
+  async listSubmissionEvidence(): Promise<SubmissionEvidenceRecordView[]> {
+    return this.store.listSubmissionEvidence();
+  }
+
+  async getSubmissionExportBundle(): Promise<SubmissionExportBundleView> {
+    return this.store.getSubmissionExportBundle();
+  }
+
+  async listVaultDepositors(limit = 100): Promise<VaultDepositorView[]> {
+    return this.store.listVaultDepositors(limit);
+  }
+
+  async listVaultDepositLots(limit = 100): Promise<VaultDepositLotView[]> {
+    return this.store.listVaultDepositLots(limit);
+  }
+
+  async listVaultRedemptionRequests(limit = 100): Promise<VaultRedemptionRequestView[]> {
+    return this.store.listVaultRedemptionRequests(limit);
+  }
+
   async getPnlSummary(): Promise<PnlSummaryView> {
     return this.store.getPnlSummary();
   }
@@ -176,6 +216,109 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async getRuntimeStatus(): Promise<RuntimeStatusView> {
     return this.store.getRuntimeStatus();
+  }
+
+  async recordVaultDeposit(
+    actorId: string,
+    input: RecordVaultDepositInput,
+  ): Promise<VaultDepositLotView> {
+    const deposit = await this.store.recordVaultDeposit(input);
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.deposit_recorded',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: deposit.vaultId,
+        depositLotId: deposit.depositLotId,
+        depositorId: deposit.depositorId,
+        depositedAmount: deposit.depositedAmount,
+        mintedShares: deposit.mintedShares,
+        lockExpiresAt: deposit.lockExpiresAt,
+      },
+    });
+    return deposit;
+  }
+
+  async requestVaultRedemption(
+    actorId: string,
+    input: RequestVaultRedemptionInput,
+  ): Promise<VaultRedemptionRequestView> {
+    const request = await this.store.requestVaultRedemption(input);
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.redemption_requested',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: request.vaultId,
+        requestId: request.requestId,
+        depositorId: request.depositorId,
+        requestedShares: request.requestedShares,
+        estimatedAssets: request.estimatedAssets,
+        eligibleAt: request.eligibleAt,
+        status: request.status,
+      },
+    });
+    return request;
+  }
+
+  async upsertSubmissionDossier(
+    actorId: string,
+    input: UpsertSubmissionDossierInput,
+  ): Promise<SubmissionDossierView> {
+    const dossier = await this.store.upsertSubmissionDossier(input);
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.submission_dossier_updated',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        submissionId: dossier.submissionId,
+        track: dossier.track,
+        cluster: dossier.cluster,
+        addressScope: dossier.addressScope,
+        walletAddress: dossier.walletAddress,
+        vaultAddress: dossier.vaultAddress,
+        cexExecutionUsed: dossier.cexExecutionUsed,
+        cexVenues: dossier.cexVenues,
+        readinessStatus: dossier.readiness.status,
+        blockedReasons: dossier.readiness.blockedReasons,
+      },
+    });
+    return dossier;
+  }
+
+  async recordSubmissionEvidence(
+    actorId: string,
+    input: RecordSubmissionEvidenceInput,
+  ): Promise<SubmissionEvidenceRecordView> {
+    const evidence = await this.store.recordSubmissionEvidence(input);
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.submission_evidence_recorded',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        submissionId: evidence.submissionId,
+        evidenceId: evidence.evidenceId,
+        evidenceType: evidence.evidenceType,
+        status: evidence.status,
+        source: evidence.source,
+        label: evidence.label,
+        capturedAt: evidence.capturedAt,
+        withinBuildWindow: evidence.withinBuildWindow,
+      },
+    });
+    return evidence;
   }
 
   async listCarryRecommendations(limit = 50): Promise<CarryActionView[]> {
@@ -462,7 +605,17 @@ export class RuntimeControlPlane implements RuntimeReadApi {
   }
 
   async getRuntimeOverview(): Promise<RuntimeOverviewView> {
-    const [runtime, worker, openMismatchCount, mismatchSummary, lastRecoveryEvent, latestReconciliationRun, reconciliationSummary, treasurySummary, allocatorSummary] = await Promise.all([
+    const [
+      runtime,
+      worker,
+      openMismatchCount,
+      mismatchSummary,
+      lastRecoveryEvent,
+      latestReconciliationRun,
+      reconciliationSummary,
+      treasurySummary,
+      allocatorSummary,
+    ] = await Promise.all([
       this.store.getRuntimeStatus(),
       this.store.getWorkerStatus(),
       this.store.countOpenMismatches(),
@@ -478,7 +631,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       runtime.lastError,
       runtime.reason,
       worker.lastFailureReason,
-      mismatchSummary.activeMismatchCount > 0 ? `${mismatchSummary.activeMismatchCount} active mismatches` : null,
+      mismatchSummary.activeMismatchCount > 0
+        ? `${mismatchSummary.activeMismatchCount} active mismatches`
+        : null,
     ].filter((value): value is string => value !== null && value.length > 0);
 
     return {
@@ -520,7 +675,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
     const command = await this.store.getRuntimeCommand(commandId);
     if (command === null) {
-      throw new Error(`RuntimeControlPlane.createCommandRecord: command "${commandId}" was not persisted`);
+      throw new Error(
+        `RuntimeControlPlane.createCommandRecord: command "${commandId}" was not persisted`,
+      );
     }
 
     return command;
@@ -614,9 +771,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.listAllocatorRuns(limit);
   }
 
-  async getAllocatorDecision(
-    allocatorRunId: string,
-  ): Promise<AllocatorDecisionDetailView | null> {
+  async getAllocatorDecision(allocatorRunId: string): Promise<AllocatorDecisionDetailView | null> {
     return this.store.getAllocatorDecision(allocatorRunId);
   }
 
@@ -638,7 +793,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.getRebalanceBundle(bundleId);
   }
 
-  async getRebalanceBundleForProposal(proposalId: string): Promise<RebalanceBundleDetailView | null> {
+  async getRebalanceBundleForProposal(
+    proposalId: string,
+  ): Promise<RebalanceBundleDetailView | null> {
     return this.store.getRebalanceBundleForProposal(proposalId);
   }
 
@@ -692,7 +849,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.listRebalanceEscalations(filters);
   }
 
-  async getRebalanceEscalationSummary(actorId?: string | null): Promise<RebalanceEscalationQueueSummaryView> {
+  async getRebalanceEscalationSummary(
+    actorId?: string | null,
+  ): Promise<RebalanceEscalationQueueSummaryView> {
     return this.store.getRebalanceEscalationSummary(actorId);
   }
 
@@ -724,10 +883,11 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       return null;
     }
 
-    const candidate = bundle.recoveryCandidates.find((item) =>
-      item.recoveryActionType === input.recoveryActionType
-      && item.targetChildType === input.targetChildType
-      && item.targetChildId === input.targetChildId,
+    const candidate = bundle.recoveryCandidates.find(
+      (item) =>
+        item.recoveryActionType === input.recoveryActionType &&
+        item.targetChildType === input.targetChildType &&
+        item.targetChildId === input.targetChildId,
     );
     if (candidate === undefined) {
       throw new Error('Bundle recovery target was not found.');
@@ -753,17 +913,21 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       requestedBy: actorId,
       note: input.note ?? null,
       targetCommandType: candidate.targetCommandType,
-      linkedCarryActionId: candidate.targetChildType === 'carry_action' ? candidate.targetChildId : null,
-      linkedTreasuryActionId: candidate.targetChildType === 'treasury_action' ? candidate.targetChildId : null,
-      outcomeSummary: candidate.eligibilityState === 'eligible'
-        ? null
-        : candidate.blockedReasons[0]?.message ?? 'Bundle recovery request remained blocked.',
+      linkedCarryActionId:
+        candidate.targetChildType === 'carry_action' ? candidate.targetChildId : null,
+      linkedTreasuryActionId:
+        candidate.targetChildType === 'treasury_action' ? candidate.targetChildId : null,
+      outcomeSummary:
+        candidate.eligibilityState === 'eligible'
+          ? null
+          : (candidate.blockedReasons[0]?.message ?? 'Bundle recovery request remained blocked.'),
       outcome: {
         blockedReasons: candidate.blockedReasons,
       },
-      lastError: candidate.eligibilityState === 'eligible'
-        ? null
-        : candidate.blockedReasons[0]?.message ?? 'Bundle recovery request remained blocked.',
+      lastError:
+        candidate.eligibilityState === 'eligible'
+          ? null
+          : (candidate.blockedReasons[0]?.message ?? 'Bundle recovery request remained blocked.'),
       executionMode: candidate.executionMode,
       simulated: candidate.simulated,
       requestedAt,
@@ -903,7 +1067,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       return null;
     }
 
-    const option = bundle.resolutionOptions.find((item) => item.resolutionActionType === input.resolutionActionType);
+    const option = bundle.resolutionOptions.find(
+      (item) => item.resolutionActionType === input.resolutionActionType,
+    );
     if (option === undefined) {
       throw new Error('Bundle manual resolution option was not found.');
     }
@@ -936,18 +1102,20 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       proposalId: bundle.bundle.proposalId,
       resolutionActionType: option.resolutionActionType,
       status: option.eligibilityState === 'eligible' ? 'completed' : 'blocked',
-      resolutionState: option.eligibilityState === 'eligible'
-        ? option.targetResolutionState
-        : bundle.bundle.resolutionState,
+      resolutionState:
+        option.eligibilityState === 'eligible'
+          ? option.targetResolutionState
+          : bundle.bundle.resolutionState,
       note,
       acknowledgedPartialApplication: option.resolutionActionType === 'accept_partial_application',
       escalated: option.resolutionActionType === 'escalate_bundle_for_review',
       affectedChildSummary,
       linkedRecoveryActionIds: latestLinkedRecoveryIds,
       blockedReasons: option.blockedReasons,
-      outcomeSummary: option.eligibilityState === 'eligible'
-        ? option.summary
-        : option.blockedReasons[0]?.message ?? 'Bundle manual resolution remained blocked.',
+      outcomeSummary:
+        option.eligibilityState === 'eligible'
+          ? option.summary
+          : (option.blockedReasons[0]?.message ?? 'Bundle manual resolution remained blocked.'),
       requestedBy: actorId,
       completedBy: option.eligibilityState === 'eligible' ? actorId : null,
       requestedAt,
@@ -1024,9 +1192,15 @@ export class RuntimeControlPlane implements RuntimeReadApi {
           latestEscalationId: existingEscalation.id,
           escalationStatus: existingEscalation.status,
           escalationOwnerId: existingEscalation.ownerId,
-          escalationAssignedAt: existingEscalation.assignedAt === null ? null : new Date(existingEscalation.assignedAt),
-          escalationDueAt: existingEscalation.dueAt === null ? null : new Date(existingEscalation.dueAt),
-          escalationSummary: existingEscalation.handoffNote ?? existingEscalation.reviewNote ?? existingEscalation.resolutionNote ?? note,
+          escalationAssignedAt:
+            existingEscalation.assignedAt === null ? null : new Date(existingEscalation.assignedAt),
+          escalationDueAt:
+            existingEscalation.dueAt === null ? null : new Date(existingEscalation.dueAt),
+          escalationSummary:
+            existingEscalation.handoffNote ??
+            existingEscalation.reviewNote ??
+            existingEscalation.resolutionNote ??
+            note,
         });
       }
     }
@@ -1065,12 +1239,16 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     if (bundle === null) {
       return null;
     }
-    const transition = bundle.escalationTransitions.find((item) => item.transitionType === 'assign');
+    const transition = bundle.escalationTransitions.find(
+      (item) => item.transitionType === 'assign',
+    );
     if (transition === undefined) {
       throw new Error('Bundle escalation assignment option was not found.');
     }
     if (!canSatisfyApprovalRequirement(actorRole, transition.approvalRequirement)) {
-      throw new Error(`Bundle escalation assignment requires ${transition.approvalRequirement} approval.`);
+      throw new Error(
+        `Bundle escalation assignment requires ${transition.approvalRequirement} approval.`,
+      );
     }
     const escalation = bundle.escalation;
     if (escalation === null) {
@@ -1085,15 +1263,18 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       throw new Error('Bundle escalation handoff note is required.');
     }
     if (transition.eligibilityState !== 'eligible') {
-      throw new Error(transition.blockedReasons[0]?.message ?? 'Bundle escalation assignment is blocked.');
+      throw new Error(
+        transition.blockedReasons[0]?.message ?? 'Bundle escalation assignment is blocked.',
+      );
     }
     if (escalation.ownerId === ownerId) {
       throw new Error('Bundle escalation is already assigned to that owner.');
     }
 
-    const dueAt = input.dueAt === undefined || input.dueAt === null || input.dueAt.length === 0
-      ? null
-      : new Date(input.dueAt);
+    const dueAt =
+      input.dueAt === undefined || input.dueAt === null || input.dueAt.length === 0
+        ? null
+        : new Date(input.dueAt);
     if (dueAt !== null && Number.isNaN(dueAt.getTime())) {
       throw new Error('Bundle escalation due date is invalid.');
     }
@@ -1158,22 +1339,30 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     if (bundle === null) {
       return null;
     }
-    const transition = bundle.escalationTransitions.find((item) => item.transitionType === 'acknowledge');
+    const transition = bundle.escalationTransitions.find(
+      (item) => item.transitionType === 'acknowledge',
+    );
     if (transition === undefined) {
       throw new Error('Bundle escalation acknowledgement option was not found.');
     }
     if (!canSatisfyApprovalRequirement(actorRole, transition.approvalRequirement)) {
-      throw new Error(`Bundle escalation acknowledgement requires ${transition.approvalRequirement} approval.`);
+      throw new Error(
+        `Bundle escalation acknowledgement requires ${transition.approvalRequirement} approval.`,
+      );
     }
     const escalation = bundle.escalation;
     if (escalation === null) {
       throw new Error('Bundle escalation record was not found.');
     }
     if (transition.eligibilityState !== 'eligible') {
-      throw new Error(transition.blockedReasons[0]?.message ?? 'Bundle escalation acknowledgement is blocked.');
+      throw new Error(
+        transition.blockedReasons[0]?.message ?? 'Bundle escalation acknowledgement is blocked.',
+      );
     }
     if (actorRole !== 'admin' && escalation.ownerId !== actorId) {
-      throw new Error('Only the current escalation owner or an admin may acknowledge this escalation.');
+      throw new Error(
+        'Only the current escalation owner or an admin may acknowledge this escalation.',
+      );
     }
 
     const updatedAt = new Date();
@@ -1233,19 +1422,25 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     if (bundle === null) {
       return null;
     }
-    const transition = bundle.escalationTransitions.find((item) => item.transitionType === 'start_review');
+    const transition = bundle.escalationTransitions.find(
+      (item) => item.transitionType === 'start_review',
+    );
     if (transition === undefined) {
       throw new Error('Bundle escalation review option was not found.');
     }
     if (!canSatisfyApprovalRequirement(actorRole, transition.approvalRequirement)) {
-      throw new Error(`Bundle escalation review requires ${transition.approvalRequirement} approval.`);
+      throw new Error(
+        `Bundle escalation review requires ${transition.approvalRequirement} approval.`,
+      );
     }
     const escalation = bundle.escalation;
     if (escalation === null) {
       throw new Error('Bundle escalation record was not found.');
     }
     if (transition.eligibilityState !== 'eligible') {
-      throw new Error(transition.blockedReasons[0]?.message ?? 'Bundle escalation review is blocked.');
+      throw new Error(
+        transition.blockedReasons[0]?.message ?? 'Bundle escalation review is blocked.',
+      );
     }
     if (actorRole !== 'admin' && escalation.ownerId !== actorId) {
       throw new Error('Only the current escalation owner or an admin may start review.');
@@ -1312,14 +1507,18 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       throw new Error('Bundle escalation close option was not found.');
     }
     if (!canSatisfyApprovalRequirement(actorRole, transition.approvalRequirement)) {
-      throw new Error(`Bundle escalation close requires ${transition.approvalRequirement} approval.`);
+      throw new Error(
+        `Bundle escalation close requires ${transition.approvalRequirement} approval.`,
+      );
     }
     const escalation = bundle.escalation;
     if (escalation === null) {
       throw new Error('Bundle escalation record was not found.');
     }
     if (transition.eligibilityState !== 'eligible') {
-      throw new Error(transition.blockedReasons[0]?.message ?? 'Bundle escalation close is blocked.');
+      throw new Error(
+        transition.blockedReasons[0]?.message ?? 'Bundle escalation close is blocked.',
+      );
     }
     if (actorRole !== 'admin' && escalation.ownerId !== actorId) {
       throw new Error('Only the current escalation owner or an admin may close this escalation.');
@@ -1381,7 +1580,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.getRebalanceProposal(proposalId);
   }
 
-  async getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null> {
+  async getRebalanceExecutionGraph(
+    proposalId: string,
+  ): Promise<RebalanceExecutionGraphView | null> {
     return this.store.getRebalanceExecutionGraph(proposalId);
   }
 
@@ -1425,7 +1626,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.getTreasuryExecution(executionId);
   }
 
-  async getTreasuryExecutionDetail(executionId: string): Promise<TreasuryExecutionDetailView | null> {
+  async getTreasuryExecutionDetail(
+    executionId: string,
+  ): Promise<TreasuryExecutionDetailView | null> {
     return this.store.getTreasuryExecutionDetail(executionId);
   }
 
@@ -1452,9 +1655,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     }
 
     if (!canSatisfyApprovalRequirement(actorRole, detail.action.approvalRequirement)) {
-      throw new Error(
-        `Treasury action requires ${detail.action.approvalRequirement} approval.`,
-      );
+      throw new Error(`Treasury action requires ${detail.action.approvalRequirement} approval.`);
     }
 
     const approved = await this.store.approveTreasuryAction(actionId, actorId);
@@ -1496,9 +1697,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     }
 
     if (!canSatisfyApprovalRequirement(actorRole, detail.action.approvalRequirement)) {
-      throw new Error(
-        `Treasury action requires ${detail.action.approvalRequirement} approval.`,
-      );
+      throw new Error(`Treasury action requires ${detail.action.approvalRequirement} approval.`);
     }
 
     const command = await this.enqueueCommand('execute_treasury_action', actorId, {
@@ -1550,7 +1749,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     }
 
     if (detail.proposal.status !== 'proposed') {
-      throw new Error(`Rebalance proposal cannot be approved from status "${detail.proposal.status}".`);
+      throw new Error(
+        `Rebalance proposal cannot be approved from status "${detail.proposal.status}".`,
+      );
     }
 
     await this.store.approveRebalanceProposal(proposalId, actorId);
@@ -1648,7 +1849,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     }
 
     if (detail.proposal.status !== 'proposed') {
-      throw new Error(`Rebalance proposal cannot be rejected from status "${detail.proposal.status}".`);
+      throw new Error(
+        `Rebalance proposal cannot be rejected from status "${detail.proposal.status}".`,
+      );
     }
 
     const rejected = await this.store.rejectRebalanceProposal(proposalId, actorId, reason);
@@ -1679,14 +1882,16 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.getReconciliationRun(reconciliationRunId);
   }
 
-  async listReconciliationFindings(input: {
-    limit?: number;
-    findingType?: RuntimeReconciliationFindingType;
-    severity?: RuntimeReconciliationFindingSeverity;
-    status?: RuntimeReconciliationFindingStatus;
-    mismatchId?: string;
-    reconciliationRunId?: string;
-  } = {}): Promise<RuntimeReconciliationFindingView[]> {
+  async listReconciliationFindings(
+    input: {
+      limit?: number;
+      findingType?: RuntimeReconciliationFindingType;
+      severity?: RuntimeReconciliationFindingSeverity;
+      status?: RuntimeReconciliationFindingStatus;
+      mismatchId?: string;
+      reconciliationRunId?: string;
+    } = {},
+  ): Promise<RuntimeReconciliationFindingView[]> {
     return this.store.listReconciliationFindings({
       limit: input.limit ?? 100,
       ...(input.findingType !== undefined ? { findingType: input.findingType } : {}),
@@ -1746,8 +1951,10 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
     const runtimeStatus = await this.store.getRuntimeStatus();
     if (
-      input.remediationType === 'run_cycle'
-      && (runtimeStatus.halted || runtimeStatus.lifecycleState === 'paused' || runtimeStatus.lifecycleState === 'stopped')
+      input.remediationType === 'run_cycle' &&
+      (runtimeStatus.halted ||
+        runtimeStatus.lifecycleState === 'paused' ||
+        runtimeStatus.lifecycleState === 'stopped')
     ) {
       throw new RuntimeMismatchLifecycleError(
         `Cannot start run_cycle remediation while runtime is ${runtimeStatus.lifecycleState}.`,
@@ -1804,7 +2011,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
     return this.store.getMismatchRemediationById(remediation.id).then((result) => {
       if (result === null) {
-        throw new Error(`RuntimeControlPlane.remediateMismatch: remediation "${remediation.id}" was not persisted`);
+        throw new Error(
+          `RuntimeControlPlane.remediateMismatch: remediation "${remediation.id}" was not persisted`,
+        );
       }
       return result;
     });
@@ -1854,9 +2063,9 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     linkedRecoveryEventId?: string | null;
   }): Promise<RuntimeMismatchView | null> {
     if (
-      (input.summary === null || input.summary.trim().length === 0)
-      && (input.commandId === undefined || input.commandId === null)
-      && (input.linkedRecoveryEventId === undefined || input.linkedRecoveryEventId === null)
+      (input.summary === null || input.summary.trim().length === 0) &&
+      (input.commandId === undefined || input.commandId === null) &&
+      (input.linkedRecoveryEventId === undefined || input.linkedRecoveryEventId === null)
     ) {
       throw new RuntimeMismatchLifecycleError(
         'Recovery start requires a summary, linked commandId, or linked recoveryEventId.',
@@ -1974,10 +2183,10 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       verificationOutcome: outcome,
       ...(outcome === 'failed'
         ? {
-          reopenedAt: now,
-          reopenedBy: input.actorId,
-          reopenSummary: input.summary,
-        }
+            reopenedAt: now,
+            reopenedBy: input.actorId,
+            reopenSummary: input.summary,
+          }
         : {}),
       lastStatusChangeAt: now,
     });
@@ -2174,5 +2383,135 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       throw new RuntimeMismatchNotFoundError(`Mismatch "${mismatchId}" was not found.`);
     }
     return mismatch;
+  }
+
+  // =============================================================================
+  // CEX Verification Methods
+  // =============================================================================
+
+  async listCexVerificationSessions(sleeveId?: string): Promise<Array<{
+    id: string;
+    sleeveId: string;
+    platform: string;
+    status: string;
+    totalTrades: number;
+    totalVolumeUsd: string | null;
+    realizedPnl: string | null;
+    calculatedApy: string | null;
+    createdAt: string;
+    validatedAt: string | null;
+  }>> {
+    return this.store.listCexVerificationSessions(sleeveId);
+  }
+
+  async getCexVerificationSession(sessionId: string): Promise<{
+    id: string;
+    sleeveId: string;
+    platform: string;
+    status: string;
+    totalTrades: number;
+    totalVolumeUsd: string | null;
+    realizedPnl: string | null;
+    calculatedApy: string | null;
+    fileHash: string | null;
+    createdAt: string;
+    validatedAt: string | null;
+    trades: Array<{
+      id: string;
+      tradeId: string;
+      asset: string;
+      side: string;
+      quantity: string;
+      price: string;
+      fee: string | null;
+      realizedPnl: string | null;
+      tradeTime: string;
+    }>;
+  } | null> {
+    return this.store.getCexVerificationSession(sessionId);
+  }
+
+  async createCexVerificationSession(input: {
+    operatorId: string;
+    sleeveId: string;
+    platform: 'binance' | 'okx' | 'bybit' | 'coinbase' | undefined;
+    csvContent: string;
+    fileName: string;
+  }): Promise<{
+    id: string;
+    sleeveId: string;
+    platform: string;
+    status: string;
+    totalTrades: number;
+    errors: Array<{ row: number; message: string }>;
+  }> {
+    return this.store.createCexVerificationSession(input);
+  }
+
+  async validateCexCsv(input: {
+    csvContent: string;
+    platform: 'binance' | 'okx' | 'bybit' | 'coinbase' | undefined;
+  }): Promise<{
+    valid: boolean;
+    detectedPlatform: string | undefined;
+    errors: Array<{ row: number; message: string }>;
+    preview: Array<{
+      tradeId: string;
+      symbol: string;
+      side: string;
+      quantity: string;
+      price: string;
+      tradeTime: string;
+    }> | undefined;
+  }> {
+    return this.store.validateCexCsv(input);
+  }
+
+  async calculateCexPnl(sessionId: string, input: {
+    method: 'fifo' | 'lifo' | 'avg';
+    includeFees: boolean;
+  }): Promise<PortfolioPnlResult> {
+    return this.store.calculateCexPnl(sessionId, input);
+  }
+
+  async generateCexSubmissionReport(sessionId: string, input: {
+    method: 'fifo' | 'lifo' | 'avg';
+    includeFees: boolean;
+  }): Promise<{
+    sessionId: string;
+    generatedAt: string;
+    portfolioSummary: {
+      totalTrades: number;
+      totalPnl: string;
+      totalFees: string;
+      winRate: string;
+      profitableAssets: number;
+      losingAssets: number;
+    };
+    assetReports: Array<{
+      asset: string;
+      totalTrades: number;
+      realizedPnl: string;
+      winRate: string;
+    }>;
+    hackathonEligibility: {
+      hasSufficientTrades: boolean;
+      hasPositivePnl: boolean;
+      meetsMinimumPeriod: boolean;
+    };
+  }> {
+    return this.store.generateCexSubmissionReport(sessionId, input);
+  }
+
+  async updateCexVerificationStatus(sessionId: string, input: {
+    operatorId: string;
+    status: 'validated' | 'rejected';
+    notes: string | undefined;
+  }): Promise<{ id: string; status: string; validatedAt: string | null }> {
+    return this.store.updateCexVerificationStatus(sessionId, input);
+  }
+
+  async deleteCexVerificationSession(sessionId: string): Promise<void> {
+    return this.store.deleteCexVerificationSession(sessionId);
   }
 }

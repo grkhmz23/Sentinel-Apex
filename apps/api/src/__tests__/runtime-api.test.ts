@@ -9,10 +9,7 @@ import {
   treasuryActionExecutions,
   treasuryActions,
 } from '@sentinel-apex/db';
-import {
-  DatabaseAuditWriter,
-  RuntimeStore,
-} from '@sentinel-apex/runtime';
+import { DatabaseAuditWriter, RuntimeStore } from '@sentinel-apex/runtime';
 import type {
   InternalDerivativeSnapshotView,
   RuntimeControlPlane,
@@ -88,7 +85,8 @@ function createStubVenueTruthSnapshot(
       },
       balanceState: {
         status: 'unsupported',
-        reason: 'Drift-native read-only decode exposes collateral inventory via derivative positions rather than generic wallet balances.',
+        reason:
+          'Drift-native read-only decode exposes collateral inventory via derivative positions rather than generic wallet balances.',
         limitations: [],
       },
       capacityState: {
@@ -99,7 +97,9 @@ function createStubVenueTruthSnapshot(
       exposureState: {
         status: 'available',
         reason: null,
-        limitations: ['Exposure rows are operator-facing derived views over decoded Drift positions.'],
+        limitations: [
+          'Exposure rows are operator-facing derived views over decoded Drift positions.',
+        ],
       },
       derivativeAccountState: {
         status: 'available',
@@ -109,22 +109,30 @@ function createStubVenueTruthSnapshot(
       derivativePositionState: {
         status: 'available',
         reason: null,
-        limitations: ['Inventory is venue-native; valuation fields are Drift SDK calculations over current market and oracle state.'],
+        limitations: [
+          'Inventory is venue-native; valuation fields are Drift SDK calculations over current market and oracle state.',
+        ],
       },
       derivativeHealthState: {
         status: 'available',
         reason: null,
-        limitations: ['Health and margin metrics are Drift SDK calculations over venue-native state.'],
+        limitations: [
+          'Health and margin metrics are Drift SDK calculations over venue-native state.',
+        ],
       },
       orderState: {
         status: 'available',
         reason: null,
-        limitations: ['placedAt is intentionally null because the read-only path does not backfill per-order timestamps.'],
+        limitations: [
+          'placedAt is intentionally null because the read-only path does not backfill per-order timestamps.',
+        ],
       },
       executionReferences: {
         status: 'available',
         reason: null,
-        limitations: ['Execution references are recent Solana signatures for the tracked Drift user account.'],
+        limitations: [
+          'Execution references are recent Solana signatures for the tracked Drift user account.',
+        ],
       },
     },
     sourceMetadata: {
@@ -161,14 +169,16 @@ function createStubVenueTruthSnapshot(
     balanceState: null,
     capacityState: null,
     exposureState: {
-      exposures: [{
-        exposureKey: `perp:0:${venueId}-account`,
-        exposureType: 'position',
-        assetKey: 'BTC-PERP',
-        quantity: '0.75',
-        quantityDisplay: '0.75',
-        accountAddress: `${venueId}-account`,
-      }],
+      exposures: [
+        {
+          exposureKey: `perp:0:${venueId}-account`,
+          exposureType: 'position',
+          assetKey: 'BTC-PERP',
+          quantity: '0.75',
+          quantityDisplay: '0.75',
+          accountAddress: `${venueId}-account`,
+        },
+      ],
       methodology: 'drift_position_inventory_exposure',
       provenance: {
         classification: 'derived',
@@ -254,7 +264,9 @@ function createStubVenueTruthSnapshot(
           provenance: {
             classification: 'mixed',
             source: 'drift_user_account_with_market_context',
-            notes: ['Spot balance identity is exact while valuation uses Drift spot-market context.'],
+            notes: [
+              'Spot balance identity is exact while valuation uses Drift spot-market context.',
+            ],
           },
         },
       ],
@@ -355,16 +367,18 @@ function createStubVenueTruthSnapshot(
     },
     executionReferenceState: {
       referenceLookbackLimit: 10,
-      references: [{
-        referenceType: 'solana_signature',
-        reference: `${venueId}-sig-1`,
-        accountAddress: `${venueId}-account`,
-        slot: '123',
-        blockTime: '2026-03-31T11:59:00.000Z',
-        confirmationStatus: 'confirmed',
-        errored: false,
-        memo: null,
-      }],
+      references: [
+        {
+          referenceType: 'solana_signature',
+          reference: `${venueId}-sig-1`,
+          accountAddress: `${venueId}-account`,
+          slot: '123',
+          blockTime: '2026-03-31T11:59:00.000Z',
+          confirmationStatus: 'confirmed',
+          errored: false,
+          memo: null,
+        },
+      ],
       oldestReferenceAt: '2026-03-31T11:59:00.000Z',
     },
     payload: {
@@ -413,7 +427,9 @@ function createInternalDerivativeSnapshot(
       orderState: {
         status: 'partial',
         reason: 'One internal open order does not yet have a venue order id for direct comparison.',
-        limitations: ['Orders without a venue order id remain canonical internally but only partially comparable externally.'],
+        limitations: [
+          'Orders without a venue order id remain canonical internally but only partially comparable externally.',
+        ],
       },
     },
     accountState: {
@@ -457,7 +473,9 @@ function createInternalDerivativeSnapshot(
             normalizedKey: 'perp:0',
             normalizedKeyType: 'market_index',
             confidence: 'exact',
-            notes: ['Internal position identity inherited exact market metadata from a source order.'],
+            notes: [
+              'Internal position identity inherited exact market metadata from a source order.',
+            ],
             provenance: {
               classification: 'canonical',
               source: 'runtime_fill_ledger',
@@ -473,7 +491,9 @@ function createInternalDerivativeSnapshot(
           provenance: {
             classification: 'derived',
             source: 'runtime_fills_joined_to_orders',
-            notes: ['Internal positions are reconstructed from persisted fills joined to internal order metadata.'],
+            notes: [
+              'Internal positions are reconstructed from persisted fills joined to internal order metadata.',
+            ],
           },
         },
       ],
@@ -502,7 +522,9 @@ function createInternalDerivativeSnapshot(
       openPositionCount: 1,
       openOrderCount: 2,
       openCircuitBreakers: [],
-      unsupportedReasons: ['Exact Drift collateral, free collateral, margin ratio, and requirement fields remain external-only.'],
+      unsupportedReasons: [
+        'Exact Drift collateral, free collateral, margin ratio, and requirement fields remain external-only.',
+      ],
       methodology: 'portfolio_current_plus_risk_current',
       notes: [
         'Internal health posture is derived from persisted portfolio and risk read models.',
@@ -511,7 +533,9 @@ function createInternalDerivativeSnapshot(
       provenance: {
         classification: 'derived',
         source: 'portfolio_current_plus_risk_current',
-        notes: ['Internal health posture is derived from internal runtime projections rather than external venue truth.'],
+        notes: [
+          'Internal health posture is derived from internal runtime projections rather than external venue truth.',
+        ],
       },
     },
     orderState: {
@@ -592,11 +616,15 @@ function createInternalDerivativeSnapshot(
             normalizedKey: 'spot:SOL',
             normalizedKeyType: 'market_symbol',
             confidence: 'derived',
-            notes: ['Internal order market identity is derived from order asset plus instrument type.'],
+            notes: [
+              'Internal order market identity is derived from order asset plus instrument type.',
+            ],
             provenance: {
               classification: 'derived',
               source: 'runtime_orders_table',
-              notes: ['Internal market symbol is derived from asset plus market type, not from venue-native order metadata.'],
+              notes: [
+                'Internal market symbol is derived from asset plus market type, not from venue-native order metadata.',
+              ],
             },
           },
           metadata: {
@@ -635,9 +663,7 @@ async function persistInternalDerivativeSnapshot(
   return connection;
 }
 
-function promotionCandidateSnapshot(
-  overrides: Partial<VenueSnapshotView> = {},
-): VenueSnapshotView {
+function promotionCandidateSnapshot(overrides: Partial<VenueSnapshotView> = {}): VenueSnapshotView {
   const snapshot: VenueSnapshotView = {
     id: 'promotion-candidate-snapshot',
     venueId: 'live-carry-venue',
@@ -667,19 +693,55 @@ function promotionCandidateSnapshot(
     truthCoverage: {
       accountState: { status: 'available', reason: null, limitations: [] },
       balanceState: { status: 'available', reason: null, limitations: [] },
-      capacityState: { status: 'unsupported', reason: 'Not a treasury connector.', limitations: [] },
+      capacityState: {
+        status: 'unsupported',
+        reason: 'Not a treasury connector.',
+        limitations: [],
+      },
       exposureState: { status: 'available', reason: null, limitations: [] },
-      derivativeAccountState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
-      derivativePositionState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
-      derivativeHealthState: { status: 'unsupported', reason: 'Not a derivative-aware connector.', limitations: [] },
-      orderState: { status: 'unsupported', reason: 'Order inventory is not exposed in this test fixture.', limitations: [] },
-      executionReferences: { status: 'unsupported', reason: 'Execution references are not exposed in this test fixture.', limitations: [] },
+      derivativeAccountState: {
+        status: 'unsupported',
+        reason: 'Not a derivative-aware connector.',
+        limitations: [],
+      },
+      derivativePositionState: {
+        status: 'unsupported',
+        reason: 'Not a derivative-aware connector.',
+        limitations: [],
+      },
+      derivativeHealthState: {
+        status: 'unsupported',
+        reason: 'Not a derivative-aware connector.',
+        limitations: [],
+      },
+      orderState: {
+        status: 'unsupported',
+        reason: 'Order inventory is not exposed in this test fixture.',
+        limitations: [],
+      },
+      executionReferences: {
+        status: 'unsupported',
+        reason: 'Execution references are not exposed in this test fixture.',
+        limitations: [],
+      },
     },
     comparisonCoverage: {
-      executionReferences: { status: 'unsupported', reason: 'No execution-reference comparison coverage is modeled in this fixture.' },
-      positionInventory: { status: 'unsupported', reason: 'No direct comparison inventory is modeled in this fixture.' },
-      healthState: { status: 'unsupported', reason: 'No direct health comparison is modeled in this fixture.' },
-      orderInventory: { status: 'unsupported', reason: 'No direct order comparison is modeled in this fixture.' },
+      executionReferences: {
+        status: 'unsupported',
+        reason: 'No execution-reference comparison coverage is modeled in this fixture.',
+      },
+      positionInventory: {
+        status: 'unsupported',
+        reason: 'No direct comparison inventory is modeled in this fixture.',
+      },
+      healthState: {
+        status: 'unsupported',
+        reason: 'No direct health comparison is modeled in this fixture.',
+      },
+      orderInventory: {
+        status: 'unsupported',
+        reason: 'No direct order comparison is modeled in this fixture.',
+      },
       notes: [],
     },
     sourceMetadata: {
@@ -727,7 +789,8 @@ function promotionCandidateSnapshot(
 
   return {
     ...snapshot,
-    executionConfirmationState: overrides.executionConfirmationState ?? snapshot.executionConfirmationState,
+    executionConfirmationState:
+      overrides.executionConfirmationState ?? snapshot.executionConfirmationState,
   };
 }
 
@@ -861,7 +924,13 @@ describe('runtime-backed API routes', () => {
     expect(command.result['runId']).toBeTruthy();
     expect(command.requestedBy).toBe('operator-user');
 
-    const [portfolioResponse, ordersResponse, eventsResponse, runtimeStatusResponse, workerResponse] = await Promise.all([
+    const [
+      portfolioResponse,
+      ordersResponse,
+      eventsResponse,
+      runtimeStatusResponse,
+      workerResponse,
+    ] = await Promise.all([
       app.inject({
         method: 'GET',
         url: '/api/v1/portfolio',
@@ -895,8 +964,12 @@ describe('runtime-backed API routes', () => {
     expect(runtimeStatusResponse.statusCode).toBe(200);
     expect(workerResponse.statusCode).toBe(200);
 
-    const portfolioBody = portfolioResponse.json<{ data: { totalNav: string; sleeves: unknown[] } }>();
-    const ordersBody = ordersResponse.json<{ data: Array<{ clientOrderId: string; status: string }> }>();
+    const portfolioBody = portfolioResponse.json<{
+      data: { totalNav: string; sleeves: unknown[] };
+    }>();
+    const ordersBody = ordersResponse.json<{
+      data: Array<{ clientOrderId: string; status: string }>;
+    }>();
     const eventsBody = eventsResponse.json<{ data: Array<{ eventType: string }> }>();
     const runtimeStatusBody = runtimeStatusResponse.json<{
       data: {
@@ -910,11 +983,283 @@ describe('runtime-backed API routes', () => {
     expect(portfolioBody.data.totalNav).not.toBe('0');
     expect(portfolioBody.data.sleeves.length).toBeGreaterThan(0);
     expect(ordersBody.data.length).toBeGreaterThan(0);
-    expect(eventsBody.data.some((event) => event.eventType === 'runtime.cycle_completed')).toBe(true);
+    expect(eventsBody.data.some((event) => event.eventType === 'runtime.cycle_completed')).toBe(
+      true,
+    );
     expect(runtimeStatusBody.data.runtime.lastRunStatus).toBe('completed');
     expect(runtimeStatusBody.data.worker.lifecycleState).toMatch(/ready|degraded/);
     expect(runtimeStatusBody.data.openMismatchCount).toBeGreaterThanOrEqual(0);
     expect(workerBody.data.schedulerState).toMatch(/waiting|running|paused/);
+  });
+
+  it('exposes protocol vault state and persists deposit lots plus lock-aware redemption requests through the API', async () => {
+    const initialVaultResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/vault',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+
+    expect(initialVaultResponse.statusCode).toBe(200);
+    const initialVaultBody = initialVaultResponse.json<{
+      data: {
+        baseAsset: string;
+        lockPeriodMonths: number;
+        rolling: boolean;
+        targetApyFloorPct: string;
+        totalSharesOutstanding: string;
+      };
+    }>();
+    expect(initialVaultBody.data.baseAsset).toBe('USDC');
+    expect(initialVaultBody.data.lockPeriodMonths).toBe(3);
+    expect(initialVaultBody.data.rolling).toBe(true);
+    expect(initialVaultBody.data.targetApyFloorPct).toBe('10.00');
+    expect(initialVaultBody.data.totalSharesOutstanding).toBe('0.00000000');
+
+    const depositResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/vault/deposits',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/vault/deposits'),
+      payload: {
+        investorId: 'lp-001',
+        displayName: 'Presto Labs',
+        walletAddress: 'presto-wallet-1',
+        amountUsdc: '100000.00',
+        depositedAt: '2026-04-04T00:00:00.000Z',
+        note: 'Hackathon seeded capital',
+      },
+    });
+
+    expect(depositResponse.statusCode).toBe(201);
+    const depositBody = depositResponse.json<{
+      data: {
+        depositedAmount: string;
+        mintedShares: string;
+        lockExpiresAt: string;
+      };
+    }>();
+    expect(depositBody.data.depositedAmount).toBe('100000.00');
+    expect(depositBody.data.mintedShares).toBe('100000.00000000');
+    expect(depositBody.data.lockExpiresAt).toBe('2026-07-04T00:00:00.000Z');
+
+    const redemptionResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/vault/redemptions',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/vault/redemptions'),
+      payload: {
+        walletAddress: 'presto-wallet-1',
+        requestedShares: '25000.00000000',
+        requestedAt: '2026-04-04T00:00:00.000Z',
+        note: 'Quarterly redemption request',
+      },
+    });
+
+    expect(redemptionResponse.statusCode).toBe(201);
+    const redemptionBody = redemptionResponse.json<{
+      data: {
+        status: string;
+        eligibleAt: string;
+        requestedShares: string;
+      };
+    }>();
+    expect(redemptionBody.data.status).toBe('pending_lock');
+    expect(redemptionBody.data.eligibleAt).toBe('2026-07-04T00:00:00.000Z');
+    expect(redemptionBody.data.requestedShares).toBe('25000.00000000');
+
+    const [vaultResponse, depositorResponse, depositsResponse, redemptionsResponse] =
+      await Promise.all([
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/vault',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/vault/depositors',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/vault/deposits',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/vault/redemptions',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+      ]);
+
+    expect(vaultResponse.statusCode).toBe(200);
+    expect(depositorResponse.statusCode).toBe(200);
+    expect(depositsResponse.statusCode).toBe(200);
+    expect(redemptionsResponse.statusCode).toBe(200);
+
+    const vaultBody = vaultResponse.json<{
+      data: {
+        totalDepositors: number;
+        totalSharesOutstanding: string;
+        lockedShares: string;
+        pendingRedemptionShares: string;
+      };
+    }>();
+    const depositorBody = depositorResponse.json<{
+      data: Array<{
+        investorId: string;
+        totalDepositedUsdc: string;
+        lockedShares: string;
+        pendingRedemptionShares: string;
+      }>;
+    }>();
+    const depositsBody = depositsResponse.json<{
+      data: Array<{ walletAddress: string; locked: boolean }>;
+    }>();
+    const redemptionsBody = redemptionsResponse.json<{
+      data: Array<{ status: string; walletAddress: string }>;
+    }>();
+
+    expect(vaultBody.data.totalDepositors).toBe(1);
+    expect(vaultBody.data.totalSharesOutstanding).toBe('100000.00000000');
+    expect(vaultBody.data.lockedShares).toBe('100000.00000000');
+    expect(vaultBody.data.pendingRedemptionShares).toBe('25000.00000000');
+    expect(depositorBody.data[0]?.investorId).toBe('lp-001');
+    expect(depositorBody.data[0]?.totalDepositedUsdc).toBe('100000.00');
+    expect(depositorBody.data[0]?.lockedShares).toBe('100000.00000000');
+    expect(depositorBody.data[0]?.pendingRedemptionShares).toBe('25000.00000000');
+    expect(depositsBody.data[0]?.walletAddress).toBe('presto-wallet-1');
+    expect(depositsBody.data[0]?.locked).toBe(true);
+    expect(redemptionsBody.data[0]?.status).toBe('pending_lock');
+    expect(redemptionsBody.data[0]?.walletAddress).toBe('presto-wallet-1');
+  });
+
+  it('persists a submission dossier with exact build-window metadata and derived readiness blockers', async () => {
+    const initialResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/submission',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+
+    expect(initialResponse.statusCode).toBe(200);
+    const initialBody = initialResponse.json<{
+      data: {
+        track: string;
+        buildWindowStart: string;
+        buildWindowEnd: string;
+        addressScope: string;
+        readiness: { status: string; blockedReasons: string[] };
+      };
+    }>();
+    expect(initialBody.data.track).toBe('build_a_bear_main_track');
+    expect(initialBody.data.buildWindowStart).toBe('2026-03-09T00:00:00.000Z');
+    expect(initialBody.data.buildWindowEnd).toBe('2026-04-06T23:59:59.999Z');
+    expect(initialBody.data.addressScope).toBe('unconfigured');
+    expect(initialBody.data.readiness.status).toBe('blocked');
+    expect(initialBody.data.readiness.blockedReasons).toContain('submission_address_required');
+
+    const updateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/submission',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/submission'),
+      payload: {
+        cluster: 'mainnet-beta',
+        walletAddress: 'submission-wallet-1',
+        vaultAddress: 'submission-vault-1',
+        notes: 'Canonical hackathon submission addresses.',
+        cexExecutionUsed: false,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updateBody = updateResponse.json<{
+      data: {
+        cluster: string;
+        addressScope: string;
+        walletAddress: string | null;
+        vaultAddress: string | null;
+        notes: string | null;
+        readiness: { status: string; blockedReasons: string[] };
+      };
+    }>();
+    expect(updateBody.data.cluster).toBe('mainnet-beta');
+    expect(updateBody.data.addressScope).toBe('both');
+    expect(updateBody.data.walletAddress).toBe('submission-wallet-1');
+    expect(updateBody.data.vaultAddress).toBe('submission-vault-1');
+    expect(updateBody.data.notes).toBe('Canonical hackathon submission addresses.');
+    expect(updateBody.data.readiness.status).toBe('blocked');
+    expect(updateBody.data.readiness.blockedReasons).toContain('realized_apy_evidence_missing');
+    expect(updateBody.data.readiness.blockedReasons).toContain('on_chain_trade_evidence_missing');
+
+    const evidenceResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/submission/evidence',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/submission/evidence'),
+      payload: {
+        evidenceType: 'on_chain_transaction',
+        source: 'solscan',
+        status: 'verified',
+        label: 'Main track verification trade',
+        reference: 'submission-signature-1',
+        capturedAt: '2026-03-20T12:01:05.000Z',
+        summary: 'Trade executed inside the verified build window.',
+      },
+    });
+
+    expect(evidenceResponse.statusCode).toBe(200);
+    const evidenceBody = evidenceResponse.json<{
+      data: {
+        evidenceType: string;
+        status: string;
+        url: string | null;
+        withinBuildWindow: boolean;
+      };
+    }>();
+    expect(evidenceBody.data.evidenceType).toBe('on_chain_transaction');
+    expect(evidenceBody.data.status).toBe('verified');
+    expect(evidenceBody.data.url).toBe('https://solscan.io/tx/submission-signature-1');
+    expect(evidenceBody.data.withinBuildWindow).toBe(true);
+
+    const exportResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/submission/export',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+
+    expect(exportResponse.statusCode).toBe(200);
+    const exportBody = exportResponse.json<{
+      data: {
+        evidence: Array<{ label: string }>;
+        artifactChecklist: Array<{ key: string; status: string }>;
+        judgeSummary: string;
+      };
+    }>();
+    expect(exportBody.data.evidence[0]?.label).toBe('Main track verification trade');
+    expect(exportBody.data.artifactChecklist.find((item) => item.key === 'on_chain_trade_activity')?.status).toBe('pass');
+    expect(exportBody.data.judgeSummary).toMatch(/blocked by/i);
+
+    const persistedResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/submission',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+
+    expect(persistedResponse.statusCode).toBe(200);
+    const persistedBody = persistedResponse.json<{
+      data: {
+        cluster: string;
+        walletVerificationUrl: string | null;
+        vaultVerificationUrl: string | null;
+        walletAddress: string | null;
+        vaultAddress: string | null;
+        latestExecutionReference: string | null;
+        latestExecutionReferenceUrl: string | null;
+      };
+    }>();
+    expect(persistedBody.data.cluster).toBe('mainnet-beta');
+    expect(persistedBody.data.walletAddress).toBe('submission-wallet-1');
+    expect(persistedBody.data.vaultAddress).toBe('submission-vault-1');
+    expect(persistedBody.data.walletVerificationUrl).toBe('https://solscan.io/account/submission-wallet-1');
+    expect(persistedBody.data.vaultVerificationUrl).toBe('https://solscan.io/account/submission-vault-1');
+    expect(persistedBody.data.latestExecutionReference).toBe('submission-signature-1');
+    expect(persistedBody.data.latestExecutionReferenceUrl).toBe('https://solscan.io/tx/submission-signature-1');
   });
 
   it('exposes treasury summary, recommendations, execution history, and controlled execution through the API', async () => {
@@ -930,7 +1275,13 @@ describe('runtime-backed API routes', () => {
     expect(command.status).toBe('completed');
     expect(command.result['treasuryRunId']).toBeTruthy();
 
-    const [summaryResponse, allocationsResponse, policyResponse, actionsResponse, recommendationsResponse] = await Promise.all([
+    const [
+      summaryResponse,
+      allocationsResponse,
+      policyResponse,
+      actionsResponse,
+      recommendationsResponse,
+    ] = await Promise.all([
       app.inject({
         method: 'GET',
         url: '/api/v1/treasury/summary',
@@ -978,7 +1329,13 @@ describe('runtime-backed API routes', () => {
       data: null | { policy: { reserveFloorPct: number; eligibleVenues: string[] } };
     }>();
     const actionsBody = actionsResponse.json<{
-      data: Array<{ id: string; actionType: string; reasonCode: string; status: string; executable: boolean }>;
+      data: Array<{
+        id: string;
+        actionType: string;
+        reasonCode: string;
+        status: string;
+        executable: boolean;
+      }>;
     }>();
     const recommendationsBody = recommendationsResponse.json<{
       data: Array<{ id: string; readiness: string }>;
@@ -1001,14 +1358,22 @@ describe('runtime-backed API routes', () => {
     const approveResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/treasury/actions/${actionable?.id}/approve`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/treasury/actions/${actionable?.id}/approve`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/treasury/actions/${actionable?.id}/approve`,
+      ),
     });
     expect(approveResponse.statusCode).toBe(200);
 
     const executeResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/treasury/actions/${actionable?.id}/execute`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/treasury/actions/${actionable?.id}/execute`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/treasury/actions/${actionable?.id}/execute`,
+      ),
     });
     expect(executeResponse.statusCode).toBe(202);
 
@@ -1016,7 +1381,14 @@ describe('runtime-backed API routes', () => {
     const executionCommand = await waitForCommand(controlPlane, executeBody.data.commandId);
     expect(executionCommand.status).toBe('completed');
 
-    const [actionDetailResponse, actionExecutionsResponse, executionsResponse, executionDetailResponse, venuesResponse, venueDetailResponse] = await Promise.all([
+    const [
+      actionDetailResponse,
+      actionExecutionsResponse,
+      executionsResponse,
+      executionDetailResponse,
+      venuesResponse,
+      venueDetailResponse,
+    ] = await Promise.all([
       app.inject({
         method: 'GET',
         url: `/api/v1/treasury/actions/${actionable?.id}`,
@@ -1105,7 +1477,9 @@ describe('runtime-backed API routes', () => {
     expect(venueDetailBody.data.venue.missingPrerequisites.length).toBeGreaterThan(0);
     expect(venueDetailBody.data.recentActions.length).toBeGreaterThan(0);
 
-    const completedExecutionId = executionsBody.data.find((execution) => execution.status === 'completed')?.id;
+    const completedExecutionId = executionsBody.data.find(
+      (execution) => execution.status === 'completed',
+    )?.id;
     expect(completedExecutionId).toBeTruthy();
 
     const completedExecutionResponse = await app.inject({
@@ -1216,7 +1590,9 @@ describe('runtime-backed API routes', () => {
         };
       }>;
     }>();
-    const summaryBody = summaryResponse.json<{ data: { realReadOnly: number; derivativeAware: number } }>();
+    const summaryBody = summaryResponse.json<{
+      data: { realReadOnly: number; derivativeAware: number };
+    }>();
     const truthSummaryBody = truthSummaryResponse.json<{
       data: {
         connectorDepth: { drift_native_readonly: number };
@@ -1247,10 +1623,17 @@ describe('runtime-backed API routes', () => {
           snapshotType: string;
           truthProfile: string;
           accountState: { accountAddress: string | null } | null;
-          derivativeAccountState: { accountModel: string; rawDiscriminatorHex: string | null; decoded: boolean } | null;
+          derivativeAccountState: {
+            accountModel: string;
+            rawDiscriminatorHex: string | null;
+            decoded: boolean;
+          } | null;
           derivativePositionState: { positions: Array<{ marketSymbol: string | null }> } | null;
           derivativeHealthState: { healthScore: number | null } | null;
-          orderState: { referenceMode: string; openOrders: Array<{ reference: string | null }> } | null;
+          orderState: {
+            referenceMode: string;
+            openOrders: Array<{ reference: string | null }>;
+          } | null;
           executionReferenceState: { references: Array<{ reference: string }> } | null;
         }>;
       };
@@ -1264,13 +1647,31 @@ describe('runtime-backed API routes', () => {
     }>();
 
     expect(venuesBody.data.some((venue) => venue.venueId === 'drift-solana-readonly')).toBe(true);
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthMode).toBe('real');
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthProfile).toBe('derivative_aware');
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.readOnlySupport).toBe(true);
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.snapshotCompleteness).toBe('complete');
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.accountState.status).toBe('available');
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.derivativeAccountState.status).toBe('available');
-    expect(venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage.orderState.status).toBe('available');
+    expect(
+      venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthMode,
+    ).toBe('real');
+    expect(
+      venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthProfile,
+    ).toBe('derivative_aware');
+    expect(
+      venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.readOnlySupport,
+    ).toBe(true);
+    expect(
+      venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')
+        ?.snapshotCompleteness,
+    ).toBe('complete');
+    expect(
+      venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage
+        .accountState.status,
+    ).toBe('available');
+    expect(
+      venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage
+        .derivativeAccountState.status,
+    ).toBe('available');
+    expect(
+      venuesBody.data.find((venue) => venue.venueId === 'drift-solana-readonly')?.truthCoverage
+        .orderState.status,
+    ).toBe('available');
     expect(summaryBody.data.realReadOnly).toBeGreaterThan(0);
     expect(summaryBody.data.derivativeAware).toBeGreaterThan(0);
     expect(truthSummaryBody.data.connectorDepth.drift_native_readonly).toBeGreaterThan(0);
@@ -1290,15 +1691,25 @@ describe('runtime-backed API routes', () => {
     expect(detailBody.data.venue.truthCoverage.executionReferences.status).toBe('available');
     expect(detailBody.data.snapshots[0]?.snapshotType).toBe('drift_native_user_account');
     expect(detailBody.data.snapshots[0]?.truthProfile).toBe('derivative_aware');
-    expect(detailBody.data.snapshots[0]?.accountState?.accountAddress).toContain('drift-solana-readonly-account');
-    expect(detailBody.data.snapshots[0]?.derivativeAccountState?.accountModel).toBe('program_account');
+    expect(detailBody.data.snapshots[0]?.accountState?.accountAddress).toContain(
+      'drift-solana-readonly-account',
+    );
+    expect(detailBody.data.snapshots[0]?.derivativeAccountState?.accountModel).toBe(
+      'program_account',
+    );
     expect(detailBody.data.snapshots[0]?.derivativeAccountState?.decoded).toBe(true);
-    expect(detailBody.data.snapshots[0]?.derivativeAccountState?.rawDiscriminatorHex).toBe('0102030405060708');
-    expect(detailBody.data.snapshots[0]?.derivativePositionState?.positions.length).toBeGreaterThan(0);
+    expect(detailBody.data.snapshots[0]?.derivativeAccountState?.rawDiscriminatorHex).toBe(
+      '0102030405060708',
+    );
+    expect(detailBody.data.snapshots[0]?.derivativePositionState?.positions.length).toBeGreaterThan(
+      0,
+    );
     expect(detailBody.data.snapshots[0]?.derivativeHealthState?.healthScore).toBe(84);
     expect(detailBody.data.snapshots[0]?.orderState?.referenceMode).toBe('venue_open_orders');
     expect(detailBody.data.snapshots[0]?.orderState?.openOrders.length).toBeGreaterThan(0);
-    expect(detailBody.data.snapshots[0]?.executionReferenceState?.references.length).toBeGreaterThan(0);
+    expect(
+      detailBody.data.snapshots[0]?.executionReferenceState?.references.length,
+    ).toBeGreaterThan(0);
     expect(snapshotsBody.data[0]?.snapshotType).toBe('drift_native_user_account');
     expect(snapshotsBody.data[0]?.snapshotCompleteness).toBe('complete');
     expect(snapshotsBody.data[0]?.truthCoverage.balanceState.status).toBe('unsupported');
@@ -1372,10 +1783,23 @@ describe('runtime-backed API routes', () => {
           };
           positionState: {
             openPositionCount: number;
-            positions: Array<{ positionKey: string; netQuantity: string; marketIdentity?: { normalizedKey: string | null } | null }>;
+            positions: Array<{
+              positionKey: string;
+              netQuantity: string;
+              marketIdentity?: { normalizedKey: string | null } | null;
+            }>;
           } | null;
-          orderState: { openOrderCount: number; comparableOpenOrderCount: number; nonComparableOpenOrderCount: number } | null;
-          healthState: { healthStatus: string; methodology: string; comparisonMode: string; riskPosture: string | null } | null;
+          orderState: {
+            openOrderCount: number;
+            comparableOpenOrderCount: number;
+            nonComparableOpenOrderCount: number;
+          } | null;
+          healthState: {
+            healthStatus: string;
+            methodology: string;
+            comparisonMode: string;
+            riskPosture: string | null;
+          } | null;
         };
       }>();
       const comparisonSummaryBody = comparisonSummaryResponse.json<{
@@ -1434,12 +1858,16 @@ describe('runtime-backed API routes', () => {
       expect(internalStateBody.data.positionState?.openPositionCount).toBe(1);
       expect(internalStateBody.data.positionState?.positions[0]?.positionKey).toBe('perp:0');
       expect(internalStateBody.data.positionState?.positions[0]?.netQuantity).toBe('0.75');
-      expect(internalStateBody.data.positionState?.positions[0]?.marketIdentity?.normalizedKey).toBe('perp:0');
+      expect(
+        internalStateBody.data.positionState?.positions[0]?.marketIdentity?.normalizedKey,
+      ).toBe('perp:0');
       expect(internalStateBody.data.orderState?.openOrderCount).toBe(2);
       expect(internalStateBody.data.orderState?.comparableOpenOrderCount).toBe(1);
       expect(internalStateBody.data.orderState?.nonComparableOpenOrderCount).toBe(1);
       expect(internalStateBody.data.healthState?.healthStatus).toBe('healthy');
-      expect(internalStateBody.data.healthState?.methodology).toBe('portfolio_current_plus_risk_current');
+      expect(internalStateBody.data.healthState?.methodology).toBe(
+        'portfolio_current_plus_risk_current',
+      );
       expect(internalStateBody.data.healthState?.comparisonMode).toBe('status_band_only');
       expect(internalStateBody.data.healthState?.riskPosture).toBe('normal');
 
@@ -1462,11 +1890,15 @@ describe('runtime-backed API routes', () => {
       expect(comparisonDetailBody.data.positionComparisons[0]?.comparisonKey).toBe('perp:0');
       expect(comparisonDetailBody.data.positionComparisons[0]?.status).toBe('matched');
       expect(comparisonDetailBody.data.positionComparisons[0]?.quantityDelta).toBe('0');
-      expect(comparisonDetailBody.data.positionComparisons[0]?.marketIdentityComparison.comparisonMode).toBe('exact');
+      expect(
+        comparisonDetailBody.data.positionComparisons[0]?.marketIdentityComparison.comparisonMode,
+      ).toBe('exact');
       expect(comparisonDetailBody.data.orderComparisons[0]?.comparisonKey).toBe('901');
       expect(comparisonDetailBody.data.orderComparisons[0]?.status).toBe('matched');
       expect(comparisonDetailBody.data.orderComparisons[0]?.remainingSizeDelta).toBe('0');
-      expect(comparisonDetailBody.data.orderComparisons[0]?.marketIdentityComparison.comparisonMode).toBe('exact');
+      expect(
+        comparisonDetailBody.data.orderComparisons[0]?.marketIdentityComparison.comparisonMode,
+      ).toBe('exact');
 
       expect(venueDetailBody.data.internalState?.coverage.orderState.status).toBe('partial');
       expect(venueDetailBody.data.comparisonSummary.healthState.status).toBe('partial');
@@ -1484,27 +1916,24 @@ describe('runtime-backed API routes', () => {
     );
 
     try {
-      const [
-        promotionSummaryResponse,
-        promotionDetailResponse,
-        eligibilityResponse,
-      ] = await Promise.all([
-        app.inject({
-          method: 'GET',
-          url: '/api/v1/venues/promotion-summary',
-          headers: { 'x-api-key': TEST_API_KEY },
-        }),
-        app.inject({
-          method: 'GET',
-          url: '/api/v1/venues/live-carry-venue/promotion',
-          headers: { 'x-api-key': TEST_API_KEY },
-        }),
-        app.inject({
-          method: 'GET',
-          url: '/api/v1/venues/live-carry-venue/promotion/eligibility',
-          headers: { 'x-api-key': TEST_API_KEY },
-        }),
-      ]);
+      const [promotionSummaryResponse, promotionDetailResponse, eligibilityResponse] =
+        await Promise.all([
+          app.inject({
+            method: 'GET',
+            url: '/api/v1/venues/promotion-summary',
+            headers: { 'x-api-key': TEST_API_KEY },
+          }),
+          app.inject({
+            method: 'GET',
+            url: '/api/v1/venues/live-carry-venue/promotion',
+            headers: { 'x-api-key': TEST_API_KEY },
+          }),
+          app.inject({
+            method: 'GET',
+            url: '/api/v1/venues/live-carry-venue/promotion/eligibility',
+            headers: { 'x-api-key': TEST_API_KEY },
+          }),
+        ]);
 
       expect(promotionSummaryResponse.statusCode).toBe(200);
       expect(promotionDetailResponse.statusCode).toBe(200);
@@ -1544,7 +1973,11 @@ describe('runtime-backed API routes', () => {
       const requestResponse = await app.inject({
         method: 'POST',
         url: '/api/v1/venues/live-carry-venue/promotion/request',
-        headers: operatorHeaders('operator', 'POST', '/api/v1/venues/live-carry-venue/promotion/request'),
+        headers: operatorHeaders(
+          'operator',
+          'POST',
+          '/api/v1/venues/live-carry-venue/promotion/request',
+        ),
         payload: {},
       });
 
@@ -1553,7 +1986,11 @@ describe('runtime-backed API routes', () => {
       const approveAsOperatorResponse = await app.inject({
         method: 'POST',
         url: '/api/v1/venues/live-carry-venue/promotion/approve',
-        headers: operatorHeaders('operator', 'POST', '/api/v1/venues/live-carry-venue/promotion/approve'),
+        headers: operatorHeaders(
+          'operator',
+          'POST',
+          '/api/v1/venues/live-carry-venue/promotion/approve',
+        ),
         payload: {},
       });
 
@@ -1562,7 +1999,11 @@ describe('runtime-backed API routes', () => {
       const approveAsAdminResponse = await app.inject({
         method: 'POST',
         url: '/api/v1/venues/live-carry-venue/promotion/approve',
-        headers: operatorHeaders('admin', 'POST', '/api/v1/venues/live-carry-venue/promotion/approve'),
+        headers: operatorHeaders(
+          'admin',
+          'POST',
+          '/api/v1/venues/live-carry-venue/promotion/approve',
+        ),
         payload: {
           note: 'Validated truth freshness and execution readiness.',
         },
@@ -1573,7 +2014,11 @@ describe('runtime-backed API routes', () => {
       const suspendMissingNoteResponse = await app.inject({
         method: 'POST',
         url: '/api/v1/venues/live-carry-venue/promotion/suspend',
-        headers: operatorHeaders('admin', 'POST', '/api/v1/venues/live-carry-venue/promotion/suspend'),
+        headers: operatorHeaders(
+          'admin',
+          'POST',
+          '/api/v1/venues/live-carry-venue/promotion/suspend',
+        ),
         payload: {},
       });
 
@@ -1582,7 +2027,11 @@ describe('runtime-backed API routes', () => {
       const suspendResponse = await app.inject({
         method: 'POST',
         url: '/api/v1/venues/live-carry-venue/promotion/suspend',
-        headers: operatorHeaders('admin', 'POST', '/api/v1/venues/live-carry-venue/promotion/suspend'),
+        headers: operatorHeaders(
+          'admin',
+          'POST',
+          '/api/v1/venues/live-carry-venue/promotion/suspend',
+        ),
         payload: {
           note: 'Suspending after temporary venue maintenance.',
         },
@@ -1634,7 +2083,9 @@ describe('runtime-backed API routes', () => {
           sourceName: 'drift_native_devnet_execution',
           connectorDepth: 'execution_capable',
           observedScope: ['cluster_version', 'drift_user_account_decode', 'recent_signatures'],
-          provenanceNotes: ['Phase 6.0 test fixture for the first real devnet execution-capable connector.'],
+          provenanceNotes: [
+            'Phase 6.0 test fixture for the first real devnet execution-capable connector.',
+          ],
         },
         metadata: {
           driftEnv: 'devnet',
@@ -1677,56 +2128,59 @@ describe('runtime-backed API routes', () => {
           insufficientContextCount: 0,
           latestConfirmedAt: freshCapturedAt(),
           blockingReasons: [],
-          entries: [{
-            stepId: 'carry-step-1',
-            carryExecutionId: 'carry-execution-1',
-            carryActionId: 'carry-action-1',
-            intentId: 'intent-1',
-            clientOrderId: 'intent-1',
-            executionReference: 'drift-devnet-sig-1',
-            venueId: 'drift-solana-devnet-carry',
-            status: 'confirmed_full',
-            evidenceBasis: 'event_and_position',
-            summary: 'Execution reference drift-devnet-sig-1 has a strong Drift fill match and confirms the full requested 0.010000000 position reduction.',
-            evaluatedAt: freshCapturedAt(),
-            referenceObserved: true,
-            referenceObservedAt: freshCapturedAt(),
-            marketKey: 'perp:1',
-            marketSymbol: 'BTC-PERP',
-            requestedSize: '0.010000000',
-            confirmedSize: '0.010000000',
-            remainingSize: '0',
-            preTradePositionSide: 'long',
-            preTradePositionSize: '0.020000000',
-            observedPositionSide: 'long',
-            observedPositionSize: '0.010000000',
-            eventEvidence: {
-              executionReference: 'drift-devnet-sig-1',
+          entries: [
+            {
+              stepId: 'carry-step-1',
+              carryExecutionId: 'carry-execution-1',
+              carryActionId: 'carry-action-1',
+              intentId: 'intent-1',
               clientOrderId: 'intent-1',
-              correlationStatus: 'event_matched_strong',
-              deduplicationStatus: 'unique',
-              correlationConfidence: 'strong',
-              evidenceOrigin: 'raw_and_derived',
-              summary: 'Strong Drift fill evidence was attributed to drift-devnet-sig-1.',
+              executionReference: 'drift-devnet-sig-1',
+              venueId: 'drift-solana-devnet-carry',
+              status: 'confirmed_full',
+              evidenceBasis: 'event_and_position',
+              summary:
+                'Execution reference drift-devnet-sig-1 has a strong Drift fill match and confirms the full requested 0.010000000 position reduction.',
+              evaluatedAt: freshCapturedAt(),
+              referenceObserved: true,
+              referenceObservedAt: freshCapturedAt(),
+              marketKey: 'perp:1',
+              marketSymbol: 'BTC-PERP',
+              requestedSize: '0.010000000',
+              confirmedSize: '0.010000000',
+              remainingSize: '0',
+              preTradePositionSide: 'long',
+              preTradePositionSize: '0.020000000',
+              observedPositionSide: 'long',
+              observedPositionSize: '0.010000000',
+              eventEvidence: {
+                executionReference: 'drift-devnet-sig-1',
+                clientOrderId: 'intent-1',
+                correlationStatus: 'event_matched_strong',
+                deduplicationStatus: 'unique',
+                correlationConfidence: 'strong',
+                evidenceOrigin: 'raw_and_derived',
+                summary: 'Strong Drift fill evidence was attributed to drift-devnet-sig-1.',
+                blockedReason: null,
+                observedAt: freshCapturedAt(),
+                eventType: 'OrderActionRecord',
+                actionType: 'fill',
+                txSignature: 'drift-devnet-sig-1',
+                accountAddress: 'devnet-user-account',
+                subaccountId: 0,
+                marketIndex: 1,
+                orderId: '101',
+                userOrderId: 11,
+                fillBaseAssetAmount: '0.010000000',
+                fillQuoteAssetAmount: '500.000000',
+                fillRole: 'taker',
+                rawEventCount: 2,
+                duplicateEventCount: 0,
+                rawEvents: [],
+              },
               blockedReason: null,
-              observedAt: freshCapturedAt(),
-              eventType: 'OrderActionRecord',
-              actionType: 'fill',
-              txSignature: 'drift-devnet-sig-1',
-              accountAddress: 'devnet-user-account',
-              subaccountId: 0,
-              marketIndex: 1,
-              orderId: '101',
-              userOrderId: 11,
-              fillBaseAssetAmount: '0.010000000',
-              fillQuoteAssetAmount: '500.000000',
-              fillRole: 'taker',
-              rawEventCount: 2,
-              duplicateEventCount: 0,
-              rawEvents: [],
             },
-            blockedReason: null,
-          }],
+          ],
         },
       }),
     );
@@ -1800,8 +2254,12 @@ describe('runtime-backed API routes', () => {
       expect(detailBody.data.venue.metadata['executionPosture']).toBe('devnet_execution_capable');
       expect(detailBody.data.venue.metadata['connectorMode']).toBe('execution_capable_devnet');
       expect(detailBody.data.venue.metadata['executionReferenceKind']).toBe('solana_signature');
-      expect(detailBody.data.venue.metadata['supportedExecutionScope']).toContain('reduce-only BTC-PERP market orders');
-      expect(detailBody.data.venue.metadata['unsupportedExecutionScope']).toContain('carry increase-exposure execution');
+      expect(detailBody.data.venue.metadata['supportedExecutionScope']).toContain(
+        'reduce-only BTC-PERP market orders',
+      );
+      expect(detailBody.data.venue.metadata['unsupportedExecutionScope']).toContain(
+        'carry increase-exposure execution',
+      );
       expect(detailBody.data.promotion.current.capabilityClass).toBe('execution_capable');
       expect(detailBody.data.promotion.current.promotionStatus).toBe('not_requested');
       expect(detailBody.data.promotion.current.approvedForLiveUse).toBe(false);
@@ -1811,8 +2269,12 @@ describe('runtime-backed API routes', () => {
       expect(eligibilityBody.data.blockingReasons).toHaveLength(0);
       expect(eligibilityBody.data.postTradeConfirmation.status).toBe('confirmed');
       expect(eligibilityBody.data.postTradeConfirmation.confirmedFullCount).toBe(1);
-      expect(eligibilityBody.data.postTradeConfirmation.entries[0]?.eventEvidence?.correlationStatus).toBe('event_matched_strong');
-      expect(eligibilityBody.data.postTradeConfirmation.entries[0]?.eventEvidence?.correlationConfidence).toBe('strong');
+      expect(
+        eligibilityBody.data.postTradeConfirmation.entries[0]?.eventEvidence?.correlationStatus,
+      ).toBe('event_matched_strong');
+      expect(
+        eligibilityBody.data.postTradeConfirmation.entries[0]?.eventEvidence?.correlationConfidence,
+      ).toBe('strong');
     } finally {
       await seededConnection.close();
     }
@@ -1842,64 +2304,68 @@ describe('runtime-backed API routes', () => {
       },
     );
 
-    const harness = await createApiHarness({
-      truthAdapters: [
-        missingAdapter,
-        new StubReadonlyVenueTruthAdapter(
-          'drift-solana-stale',
-          'Drift Solana Stale',
-          {
+    const harness = await createApiHarness(
+      {
+        truthAdapters: [
+          missingAdapter,
+          new StubReadonlyVenueTruthAdapter('drift-solana-stale', 'Drift Solana Stale', {
             capturedAt: '2020-01-01T00:00:00.000Z',
             payload: { healthScore: 84 },
-          },
-        ),
-        new StubReadonlyVenueTruthAdapter(
-          'drift-solana-unavailable',
-          'Drift Solana Unavailable',
-          {
-            snapshotType: 'drift_native_error',
-            snapshotSuccessful: false,
-            healthy: false,
-            healthState: 'unavailable',
-            summary: 'Drift-native read-only snapshot failed.',
-            errorMessage: 'RPC getVersion failed with status 503.',
-            capturedAt: freshCapturedAt(),
-            payload: {},
-          },
-          {
-            healthy: false,
-            healthState: 'unavailable',
-            degradedReason: 'RPC getVersion failed with status 503.',
-          },
-        ),
-      ],
-    }, {
-      cycleIntervalMs: 60_000,
-      pollIntervalMs: 25,
-    });
+          }),
+          new StubReadonlyVenueTruthAdapter(
+            'drift-solana-unavailable',
+            'Drift Solana Unavailable',
+            {
+              snapshotType: 'drift_native_error',
+              snapshotSuccessful: false,
+              healthy: false,
+              healthState: 'unavailable',
+              summary: 'Drift-native read-only snapshot failed.',
+              errorMessage: 'RPC getVersion failed with status 503.',
+              capturedAt: freshCapturedAt(),
+              payload: {},
+            },
+            {
+              healthy: false,
+              healthState: 'unavailable',
+              degradedReason: 'RPC getVersion failed with status 503.',
+            },
+          ),
+        ],
+      },
+      {
+        cycleIntervalMs: 60_000,
+        pollIntervalMs: 25,
+      },
+    );
     connectionString = harness.connectionString;
     controlPlane = harness.controlPlane;
     worker = harness.worker;
     app = await createApp({ controlPlane });
     await app.ready();
 
-    const firstReconciliationCommandRecord = await controlPlane.enqueueReconciliationRun('operator-user', {
-      trigger: 'api-phase-5-2-missing-venue-truth',
-      triggeredBy: 'operator-user',
-    });
+    const firstReconciliationCommandRecord = await controlPlane.enqueueReconciliationRun(
+      'operator-user',
+      {
+        trigger: 'api-phase-5-2-missing-venue-truth',
+        triggeredBy: 'operator-user',
+      },
+    );
     const firstReconciliationCommand = await waitForCommand(
       controlPlane,
       firstReconciliationCommandRecord.commandId,
     );
     expect(firstReconciliationCommand.status).toBe('completed');
     await waitFor(
-      async () => controlPlane.listReconciliationFindings({
-        findingType: 'missing_venue_truth_snapshot',
-        limit: 20,
-      }),
-      (findings) => findings.some(
-        (finding) => finding.venueId === 'drift-solana-missing' && finding.status === 'active',
-      ),
+      async () =>
+        controlPlane.listReconciliationFindings({
+          findingType: 'missing_venue_truth_snapshot',
+          limit: 20,
+        }),
+      (findings) =>
+        findings.some(
+          (finding) => finding.venueId === 'drift-solana-missing' && finding.status === 'active',
+        ),
     );
 
     const missingFindingsResponse = await app.inject({
@@ -1922,7 +2388,8 @@ describe('runtime-backed API routes', () => {
       snapshotSuccessful: true,
       healthy: true,
       healthState: 'healthy',
-      summary: 'Drift-native read-only snapshot captured for Drift Solana Missing with 2 positions, 2 open orders, and health score 84.',
+      summary:
+        'Drift-native read-only snapshot captured for Drift Solana Missing with 2 positions, 2 open orders, and health score 84.',
       errorMessage: null,
       capturedAt: freshCapturedAt(),
       payload: { healthScore: 84 },
@@ -1934,10 +2401,13 @@ describe('runtime-backed API routes', () => {
     const cycleCommand = await waitForCommand(controlPlane, cycleCommandRecord.commandId, 20_000);
     expect(cycleCommand.status).toBe('completed');
 
-    const secondReconciliationCommandRecord = await controlPlane.enqueueReconciliationRun('operator-user', {
-      trigger: 'api-phase-5-2-venue-truth-after-ingest',
-      triggeredBy: 'operator-user',
-    });
+    const secondReconciliationCommandRecord = await controlPlane.enqueueReconciliationRun(
+      'operator-user',
+      {
+        trigger: 'api-phase-5-2-venue-truth-after-ingest',
+        triggeredBy: 'operator-user',
+      },
+    );
     const secondReconciliationCommand = await waitForCommand(
       controlPlane,
       secondReconciliationCommandRecord.commandId,
@@ -1945,23 +2415,28 @@ describe('runtime-backed API routes', () => {
     );
     expect(secondReconciliationCommand.status).toBe('completed');
     await waitFor(
-      async () => controlPlane.listReconciliationFindings({
-        findingType: 'stale_venue_truth_snapshot',
-        limit: 20,
-      }),
-      (findings) => findings.some(
-        (finding) => finding.venueId === 'drift-solana-stale' && finding.status === 'active',
-      ),
+      async () =>
+        controlPlane.listReconciliationFindings({
+          findingType: 'stale_venue_truth_snapshot',
+          limit: 20,
+        }),
+      (findings) =>
+        findings.some(
+          (finding) => finding.venueId === 'drift-solana-stale' && finding.status === 'active',
+        ),
       20_000,
     );
     await waitFor(
-      async () => controlPlane.listReconciliationFindings({
-        findingType: 'venue_truth_unavailable',
-        limit: 20,
-      }),
-      (findings) => findings.some(
-        (finding) => finding.venueId === 'drift-solana-unavailable' && finding.status === 'active',
-      ),
+      async () =>
+        controlPlane.listReconciliationFindings({
+          findingType: 'venue_truth_unavailable',
+          limit: 20,
+        }),
+      (findings) =>
+        findings.some(
+          (finding) =>
+            finding.venueId === 'drift-solana-unavailable' && finding.status === 'active',
+        ),
       20_000,
     );
 
@@ -1987,7 +2462,12 @@ describe('runtime-backed API routes', () => {
     });
     expect(unavailableFindingsResponse.statusCode).toBe(200);
     const unavailableFindingsBody = unavailableFindingsResponse.json<{
-      data: Array<{ mismatchId: string | null; venueId: string | null; findingType: string; status: string }>;
+      data: Array<{
+        mismatchId: string | null;
+        venueId: string | null;
+        findingType: string;
+        status: string;
+      }>;
     }>();
     const unavailableFinding = unavailableFindingsBody.data.find(
       (finding) => finding.venueId === 'drift-solana-unavailable' && finding.status === 'active',
@@ -2005,7 +2485,9 @@ describe('runtime-backed API routes', () => {
         latestReconciliationFinding: { findingType: string } | null;
       };
     }>();
-    expect(mismatchDetailBody.data.latestReconciliationFinding?.findingType).toBe('venue_truth_unavailable');
+    expect(mismatchDetailBody.data.latestReconciliationFinding?.findingType).toBe(
+      'venue_truth_unavailable',
+    );
 
     const summaryResponse = await app.inject({
       method: 'GET',
@@ -2045,7 +2527,13 @@ describe('runtime-backed API routes', () => {
     const command = await waitForCommand(controlPlane, evaluateBody.data.commandId);
     expect(command.status).toBe('completed');
 
-    const [strategyProfileResponse, recommendationsResponse, actionsResponse, executionsResponse, venuesResponse] = await Promise.all([
+    const [
+      strategyProfileResponse,
+      recommendationsResponse,
+      actionsResponse,
+      executionsResponse,
+      venuesResponse,
+    ] = await Promise.all([
       app.inject({
         method: 'GET',
         url: '/api/v1/carry/strategy-profile',
@@ -2107,9 +2595,11 @@ describe('runtime-backed API routes', () => {
     expect(strategyProfileBody.data.apy.realizedApyPct).toBeNull();
     expect(strategyProfileBody.data.eligibility.status).toBe('eligible');
     expect(strategyProfileBody.data.eligibility.blockedReasons).toHaveLength(0);
-    expect(strategyProfileBody.data.eligibility.ruleResults.some((rule) =>
-      rule.ruleKey === 'allowed_yield_source' && rule.status === 'pass',
-    )).toBe(true);
+    expect(
+      strategyProfileBody.data.eligibility.ruleResults.some(
+        (rule) => rule.ruleKey === 'allowed_yield_source' && rule.status === 'pass',
+      ),
+    ).toBe(true);
     expect(strategyProfileBody.data.evidence.environment).toBe('devnet');
 
     expect(actionsBody.data.length).toBeGreaterThan(0);
@@ -2122,7 +2612,11 @@ describe('runtime-backed API routes', () => {
     const approveResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/carry/actions/${actionable?.id}/approve`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/carry/actions/${actionable?.id}/approve`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/carry/actions/${actionable?.id}/approve`,
+      ),
     });
     expect(approveResponse.statusCode).toBe(202);
 
@@ -2144,10 +2638,15 @@ describe('runtime-backed API routes', () => {
           linkedCommandId: string | null;
           strategyProfile: {
             vaultBaseAsset: string;
-            eligibility: { status: string; ruleResults: Array<{ ruleKey: string; status: string }> };
+            eligibility: {
+              status: string;
+              ruleResults: Array<{ ruleKey: string; status: string }>;
+            };
           };
         };
-        plannedOrders: Array<{ marketIdentity: null | { capturedAtStage: string; confidence: string } }>;
+        plannedOrders: Array<{
+          marketIdentity: null | { capturedAtStage: string; confidence: string };
+        }>;
         executions: Array<{ id: string; status: string; requestedBy: string }>;
         linkedRebalanceProposal: null | { id: string };
       };
@@ -2155,10 +2654,14 @@ describe('runtime-backed API routes', () => {
     expect(actionDetailBody.data.action.status).toBe('completed');
     expect(actionDetailBody.data.action.strategyProfile.vaultBaseAsset).toBe('USDC');
     expect(actionDetailBody.data.action.strategyProfile.eligibility.status).toBe('eligible');
-    expect(actionDetailBody.data.action.strategyProfile.eligibility.ruleResults.some((rule) =>
-      rule.ruleKey === 'tenor_three_month_rolling' && rule.status === 'pass',
-    )).toBe(true);
-    expect(actionDetailBody.data.plannedOrders[0]?.marketIdentity?.capturedAtStage).toBe('strategy_intent');
+    expect(
+      actionDetailBody.data.action.strategyProfile.eligibility.ruleResults.some(
+        (rule) => rule.ruleKey === 'tenor_three_month_rolling' && rule.status === 'pass',
+      ),
+    ).toBe(true);
+    expect(actionDetailBody.data.plannedOrders[0]?.marketIdentity?.capturedAtStage).toBe(
+      'strategy_intent',
+    );
     expect(actionDetailBody.data.executions[0]?.requestedBy).toBe('operator-user');
 
     const carryExecutionId = actionDetailBody.data.executions[0]?.id;
@@ -2211,7 +2714,11 @@ describe('runtime-backed API routes', () => {
     expect(carryExecutionBody.data.steps[0]?.venueId).toBeTruthy();
     expect(carryExecutionBody.data.steps[0]?.simulated).toBe(true);
     expect(carryExecutionBody.data.steps[0]?.marketIdentity?.capturedAtStage).toBeTruthy();
-    expect(carryExecutionBody.data.timeline.some((entry) => entry.linkedExecutionId === carryExecutionId)).toBe(true);
+    expect(
+      carryExecutionBody.data.timeline.some(
+        (entry) => entry.linkedExecutionId === carryExecutionId,
+      ),
+    ).toBe(true);
   });
 
   it('surfaces the full mismatch recovery lifecycle through the API', async () => {
@@ -2242,17 +2749,29 @@ describe('runtime-backed API routes', () => {
       headers: { 'x-api-key': TEST_API_KEY },
     });
     expect(mismatchesResponse.statusCode).toBe(200);
-    const mismatchesBody = mismatchesResponse.json<{ data: Array<{ id: string; category: string; status: string }> }>();
-    expect(awaitedMismatches.some((mismatch) => mismatch.category === 'recovery_action_failure')).toBe(true);
-    expect(mismatchesBody.data.some((mismatch) => mismatch.category === 'recovery_action_failure')).toBe(true);
+    const mismatchesBody = mismatchesResponse.json<{
+      data: Array<{ id: string; category: string; status: string }>;
+    }>();
+    expect(
+      awaitedMismatches.some((mismatch) => mismatch.category === 'recovery_action_failure'),
+    ).toBe(true);
+    expect(
+      mismatchesBody.data.some((mismatch) => mismatch.category === 'recovery_action_failure'),
+    ).toBe(true);
 
-    const mismatchId = mismatchesBody.data.find((mismatch) => mismatch.category === 'recovery_action_failure')?.id;
+    const mismatchId = mismatchesBody.data.find(
+      (mismatch) => mismatch.category === 'recovery_action_failure',
+    )?.id;
     expect(mismatchId).toBeTruthy();
 
     const acknowledgeResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/acknowledge`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/acknowledge`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/acknowledge`,
+      ),
       payload: { summary: 'reviewed by test' },
     });
     expect(acknowledgeResponse.statusCode).toBe(200);
@@ -2261,7 +2780,11 @@ describe('runtime-backed API routes', () => {
     const recoverResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/recover`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/recover`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/recover`,
+      ),
       payload: {
         summary: 'linking failed command to recovery workflow',
         commandId: blockedCommand.commandId,
@@ -2273,7 +2796,11 @@ describe('runtime-backed API routes', () => {
     const resolveResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/resolve`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/resolve`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/resolve`,
+      ),
       payload: {
         summary: 'operator applied a remediation path',
         commandId: blockedCommand.commandId,
@@ -2285,7 +2812,11 @@ describe('runtime-backed API routes', () => {
     const verifyResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/verify`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/verify`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/verify`,
+      ),
       payload: {
         summary: 'operator verified the incident closure',
       },
@@ -2296,7 +2827,11 @@ describe('runtime-backed API routes', () => {
     const reopenResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/reopen`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/reopen`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/reopen`,
+      ),
       payload: {
         summary: 'manual reopen after additional review',
       },
@@ -2321,7 +2856,11 @@ describe('runtime-backed API routes', () => {
     expect(mismatchDetailBody.data.mismatch.linkedCommandId).toBe(blockedCommand.commandId);
     expect(mismatchDetailBody.data.mismatch.reopenedBy).toBe('operator-user');
     expect(mismatchDetailBody.data.linkedCommand?.commandId).toBe(blockedCommand.commandId);
-    expect(mismatchDetailBody.data.recoveryEvents.some((event) => event.eventType === 'mismatch_verified')).toBe(true);
+    expect(
+      mismatchDetailBody.data.recoveryEvents.some(
+        (event) => event.eventType === 'mismatch_verified',
+      ),
+    ).toBe(true);
 
     const summaryResponse = await app.inject({
       method: 'GET',
@@ -2341,7 +2880,11 @@ describe('runtime-backed API routes', () => {
     const invalidVerifyResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/verify`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/verify`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/verify`,
+      ),
       payload: {
         summary: 'invalid verification from reopened state',
       },
@@ -2379,8 +2922,12 @@ describe('runtime-backed API routes', () => {
       headers: { 'x-api-key': TEST_API_KEY },
     });
     expect(recoveryEventsResponse.statusCode).toBe(200);
-    const recoveryEventsBody = recoveryEventsResponse.json<{ data: Array<{ eventType: string; status: string }> }>();
-    expect(recoveryEventsBody.data.some((event) => event.eventType === 'runtime_command_completed')).toBe(true);
+    const recoveryEventsBody = recoveryEventsResponse.json<{
+      data: Array<{ eventType: string; status: string }>;
+    }>();
+    expect(
+      recoveryEventsBody.data.some((event) => event.eventType === 'runtime_command_completed'),
+    ).toBe(true);
 
     const recoveryOutcomesResponse = await app.inject({
       method: 'GET',
@@ -2388,9 +2935,15 @@ describe('runtime-backed API routes', () => {
       headers: { 'x-api-key': TEST_API_KEY },
     });
     expect(recoveryOutcomesResponse.statusCode).toBe(200);
-    const recoveryOutcomesBody = recoveryOutcomesResponse.json<{ data: Array<{ eventType: string; status: string }> }>();
-    expect(recoveryOutcomesBody.data.some((event) => event.eventType === 'mismatch_resolved')).toBe(true);
-    expect(recoveryOutcomesBody.data.some((event) => event.eventType === 'mismatch_reopened')).toBe(true);
+    const recoveryOutcomesBody = recoveryOutcomesResponse.json<{
+      data: Array<{ eventType: string; status: string }>;
+    }>();
+    expect(recoveryOutcomesBody.data.some((event) => event.eventType === 'mismatch_resolved')).toBe(
+      true,
+    );
+    expect(recoveryOutcomesBody.data.some((event) => event.eventType === 'mismatch_reopened')).toBe(
+      true,
+    );
   });
 
   it('triggers and exposes mismatch-scoped remediation actions through the API', async () => {
@@ -2412,7 +2965,9 @@ describe('runtime-backed API routes', () => {
     expect(blockedCommand.status).toBe('failed');
 
     const awaitedMismatches = await waitForMismatch(controlPlane, 'recovery_action_failure');
-    const mismatchId = awaitedMismatches.find((mismatch) => mismatch.category === 'recovery_action_failure')?.id;
+    const mismatchId = awaitedMismatches.find(
+      (mismatch) => mismatch.category === 'recovery_action_failure',
+    )?.id;
     expect(mismatchId).toBeTruthy();
 
     const resumeResponse = await app.inject({
@@ -2426,7 +2981,11 @@ describe('runtime-backed API routes', () => {
     const remediateResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/remediate`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/remediate`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/remediate`,
+      ),
       payload: {
         actionType: 'rebuild_projections',
         summary: 'rebuild projections for the mismatched read model',
@@ -2495,7 +3054,11 @@ describe('runtime-backed API routes', () => {
     const resolveResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/resolve`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/resolve`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/resolve`,
+      ),
       payload: {
         summary: 'remediation completed and operator is closing the incident',
         commandId: completedRemediation.commandId,
@@ -2507,7 +3070,11 @@ describe('runtime-backed API routes', () => {
     const verifyResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/verify`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/verify`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/verify`,
+      ),
       payload: {
         summary: 'operator verified the remediation outcome',
       },
@@ -2518,7 +3085,11 @@ describe('runtime-backed API routes', () => {
     const invalidRemediateResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${mismatchId}/remediate`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${mismatchId}/remediate`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${mismatchId}/remediate`,
+      ),
       payload: {
         actionType: 'rebuild_projections',
         summary: 'verified incidents should not accept remediation',
@@ -2596,7 +3167,9 @@ describe('runtime-backed API routes', () => {
     const findingsBody = findingsResponse.json<{
       data: Array<{ id: string; mismatchId: string | null; status: string; findingType: string }>;
     }>();
-    const finding = findingsBody.data.find((item) => item.findingType === 'position_exposure_mismatch');
+    const finding = findingsBody.data.find(
+      (item) => item.findingType === 'position_exposure_mismatch',
+    );
     expect(finding).toBeTruthy();
     expect(finding?.status).toBe('active');
     expect(finding?.mismatchId).toBeTruthy();
@@ -2632,8 +3205,12 @@ describe('runtime-backed API routes', () => {
       };
     }>();
     expect(mismatchDetailBody.data.mismatch.sourceKind).toBe('reconciliation');
-    expect(mismatchDetailBody.data.reconciliationFindings.some((item) => item.id === finding?.id)).toBe(true);
-    expect(mismatchDetailBody.data.latestReconciliationFinding?.findingType).toBe('position_exposure_mismatch');
+    expect(
+      mismatchDetailBody.data.reconciliationFindings.some((item) => item.id === finding?.id),
+    ).toBe(true);
+    expect(mismatchDetailBody.data.latestReconciliationFinding?.findingType).toBe(
+      'position_exposure_mismatch',
+    );
     expect(mismatchDetailBody.data.recommendedRemediationTypes).toContain('rebuild_projections');
 
     const summaryResponse = await app.inject({
@@ -2650,13 +3227,20 @@ describe('runtime-backed API routes', () => {
       } | null;
     }>();
     expect(summaryBody.data?.latestRun?.id).toBe(reconciliationRun.id);
-    expect((summaryBody.data?.latestSeverityCounts['high'] ?? 0) + (summaryBody.data?.latestSeverityCounts['critical'] ?? 0)).toBeGreaterThan(0);
+    expect(
+      (summaryBody.data?.latestSeverityCounts['high'] ?? 0) +
+        (summaryBody.data?.latestSeverityCounts['critical'] ?? 0),
+    ).toBeGreaterThan(0);
     expect(summaryBody.data?.latestTypeCounts['position_exposure_mismatch']).toBeGreaterThan(0);
 
     const remediateResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/runtime/mismatches/${finding?.mismatchId}/remediate`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/runtime/mismatches/${finding?.mismatchId}/remediate`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/runtime/mismatches/${finding?.mismatchId}/remediate`,
+      ),
       payload: {
         actionType: 'rebuild_projections',
         summary: 'repair projected positions from persisted truth',
@@ -2730,7 +3314,14 @@ describe('runtime-backed API routes', () => {
     expect(command.status).toBe('completed');
     expect(command.result['allocatorRunId']).toBeTruthy();
 
-    const [summaryResponse, targetsResponse, decisionsResponse, detailResponse, runsResponse, proposalsResponse] = await Promise.all([
+    const [
+      summaryResponse,
+      targetsResponse,
+      decisionsResponse,
+      detailResponse,
+      runsResponse,
+      proposalsResponse,
+    ] = await Promise.all([
       app.inject({
         method: 'GET',
         url: '/api/v1/allocator/summary',
@@ -2838,7 +3429,11 @@ describe('runtime-backed API routes', () => {
     const approveResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}/approve`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-proposals/${actionable?.id}/approve`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/allocator/rebalance-proposals/${actionable?.id}/approve`,
+      ),
     });
     expect(approveResponse.statusCode).toBe(202);
 
@@ -2846,13 +3441,24 @@ describe('runtime-backed API routes', () => {
     const command = await waitForCommand(controlPlane, approveBody.data.commandId);
     expect(command.status).toBe('completed');
     const downstreamCarryActionIds = Array.isArray(command.result['downstreamCarryActionIds'])
-      ? command.result['downstreamCarryActionIds'].filter((value): value is string => typeof value === 'string')
+      ? command.result['downstreamCarryActionIds'].filter(
+          (value): value is string => typeof value === 'string',
+        )
       : [];
     const downstreamTreasuryActionIds = Array.isArray(command.result['downstreamTreasuryActionIds'])
-      ? command.result['downstreamTreasuryActionIds'].filter((value): value is string => typeof value === 'string')
+      ? command.result['downstreamTreasuryActionIds'].filter(
+          (value): value is string => typeof value === 'string',
+        )
       : [];
 
-    const [detailResponse, graphResponse, bundleResponse, bundlesResponse, timelineResponse, byDecisionResponse] = await Promise.all([
+    const [
+      detailResponse,
+      graphResponse,
+      bundleResponse,
+      bundlesResponse,
+      timelineResponse,
+      byDecisionResponse,
+    ] = await Promise.all([
       app.inject({
         method: 'GET',
         url: `/api/v1/allocator/rebalance-proposals/${actionable?.id}`,
@@ -2908,7 +3514,11 @@ describe('runtime-backed API routes', () => {
           carry: {
             actions: Array<{
               action: { id: string; linkedRebalanceProposalId: string | null };
-              executions: Array<{ id: string; status: string; venueExecutionReference: string | null }>;
+              executions: Array<{
+                id: string;
+                status: string;
+                venueExecutionReference: string | null;
+              }>;
             }>;
             rollup: { actionCount: number; executionCount: number; status: string };
           };
@@ -2955,13 +3565,17 @@ describe('runtime-backed API routes', () => {
       [...downstreamCarryActionIds].sort(),
     );
     if (downstreamCarryActionIds.length > 0) {
-      expect(graphBody.data.downstream.carry.actions[0]?.action.linkedRebalanceProposalId).toBe(actionable?.id);
+      expect(graphBody.data.downstream.carry.actions[0]?.action.linkedRebalanceProposalId).toBe(
+        actionable?.id,
+      );
     }
     expect(graphBody.data.downstream.treasury.actions.map((item) => item.action.id).sort()).toEqual(
       [...downstreamTreasuryActionIds].sort(),
     );
     if (downstreamTreasuryActionIds.length > 0) {
-      expect(graphBody.data.downstream.treasury.actions[0]?.action.linkedRebalanceProposalId).toBe(actionable?.id);
+      expect(graphBody.data.downstream.treasury.actions[0]?.action.linkedRebalanceProposalId).toBe(
+        actionable?.id,
+      );
       expect(graphBody.data.downstream.treasury.actions[0]?.executions.length).toBeGreaterThan(0);
       expect(graphBody.data.downstream.treasury.note).toBeNull();
     } else {
@@ -2971,7 +3585,9 @@ describe('runtime-backed API routes', () => {
     expect(timelineBody.data.some((entry) => entry.scope === 'downstream_execution')).toBe(true);
     expect(bundleBody.data.bundle.proposalId).toBe(actionable?.id);
     expect(bundleBody.data.graph.detail.proposal.id).toBe(actionable?.id);
-    expect(bundleBody.data.bundle.totalChildCount).toBeGreaterThanOrEqual(bundleBody.data.bundle.completedChildCount);
+    expect(bundleBody.data.bundle.totalChildCount).toBeGreaterThanOrEqual(
+      bundleBody.data.bundle.completedChildCount,
+    );
     expect(bundlesBody.data.some((bundle) => bundle.proposalId === actionable?.id)).toBe(true);
     expect(Array.isArray(command.result['downstreamCarryActionIds'])).toBe(true);
     expect(Array.isArray(command.result['downstreamTreasuryActionIds'])).toBe(true);
@@ -3050,29 +3666,26 @@ describe('runtime-backed API routes', () => {
       })
       .returning();
 
-    await connection.db
-      .update(allocatorRebalanceProposals)
-      .set({
-        status: 'completed',
-        latestExecutionId: rebalanceExecution.id,
-        linkedCommandId: 'api-bundle-recovery-setup',
-        updatedAt: new Date('2026-03-21T13:00:04.000Z'),
-      });
+    await connection.db.update(allocatorRebalanceProposals).set({
+      status: 'completed',
+      latestExecutionId: rebalanceExecution.id,
+      linkedCommandId: 'api-bundle-recovery-setup',
+      updatedAt: new Date('2026-03-21T13:00:04.000Z'),
+    });
 
-    await connection.db
-      .update(allocatorRebalanceExecutions)
-      .set({
-        outcome: {
-          applied: false,
-          downstreamCarryActionIds: [carryAction.id],
-          downstreamTreasuryActionIds: [],
-        },
-        updatedAt: new Date('2026-03-21T13:00:04.000Z'),
-      });
+    await connection.db.update(allocatorRebalanceExecutions).set({
+      outcome: {
+        applied: false,
+        downstreamCarryActionIds: [carryAction.id],
+        downstreamTreasuryActionIds: [],
+      },
+      updatedAt: new Date('2026-03-21T13:00:04.000Z'),
+    });
 
     const bundle = await waitFor(
       () => controlPlane.getRebalanceBundleForProposal(proposal.id),
-      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'failed',
+      (value): value is Exclude<typeof value, null> =>
+        value !== null && value.bundle.status === 'failed',
     );
     if (bundle === null) {
       throw new Error('Expected rebalance bundle.');
@@ -3091,15 +3704,19 @@ describe('runtime-backed API routes', () => {
         eligibilityState: string;
       }>;
     }>();
-    const carryCandidate = candidatesBody.data.find((item) =>
-      item.targetChildType === 'carry_action' && item.targetChildId === carryAction.id,
+    const carryCandidate = candidatesBody.data.find(
+      (item) => item.targetChildType === 'carry_action' && item.targetChildId === carryAction.id,
     );
     expect(carryCandidate?.eligibilityState).toBe('eligible');
 
     const requestResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-actions`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-actions`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/recovery-actions`,
+      ),
       payload: {
         recoveryActionType: 'requeue_child_execution',
         targetChildType: 'carry_action',
@@ -3108,11 +3725,16 @@ describe('runtime-backed API routes', () => {
       },
     });
     expect(requestResponse.statusCode).toBe(202);
-    const requestBody = requestResponse.json<{ data: { id: string; linkedCommandId: string | null; status: string } }>();
+    const requestBody = requestResponse.json<{
+      data: { id: string; linkedCommandId: string | null; status: string };
+    }>();
     expect(requestBody.data.status).toBe('queued');
     expect(requestBody.data.linkedCommandId).toBeTruthy();
 
-    const recoveryCommand = await waitForCommand(controlPlane, String(requestBody.data.linkedCommandId));
+    const recoveryCommand = await waitForCommand(
+      controlPlane,
+      String(requestBody.data.linkedCommandId),
+    );
     expect(recoveryCommand.status).toBe('completed');
 
     const [historyResponse, actionDetailResponse, bundleResponse] = await Promise.all([
@@ -3137,8 +3759,12 @@ describe('runtime-backed API routes', () => {
     expect(actionDetailResponse.statusCode).toBe(200);
     expect(bundleResponse.statusCode).toBe(200);
 
-    const historyBody = historyResponse.json<{ data: Array<{ id: string; status: string; linkedCommandId: string | null }> }>();
-    const actionDetailBody = actionDetailResponse.json<{ data: { id: string; status: string; targetChildId: string } }>();
+    const historyBody = historyResponse.json<{
+      data: Array<{ id: string; status: string; linkedCommandId: string | null }>;
+    }>();
+    const actionDetailBody = actionDetailResponse.json<{
+      data: { id: string; status: string; targetChildId: string };
+    }>();
     const bundleBody = bundleResponse.json<{
       data: {
         bundle: { status: string; failedChildCount: number };
@@ -3151,7 +3777,11 @@ describe('runtime-backed API routes', () => {
     expect(actionDetailBody.data.targetChildId).toBe(carryAction.id);
     expect(bundleBody.data.bundle.status).toBe('completed');
     expect(bundleBody.data.bundle.failedChildCount).toBe(0);
-    expect(bundleBody.data.recoveryActions.some((item) => item.id === requestBody.data.id && item.status === 'completed')).toBe(true);
+    expect(
+      bundleBody.data.recoveryActions.some(
+        (item) => item.id === requestBody.data.id && item.status === 'completed',
+      ),
+    ).toBe(true);
 
     await connection.close();
   });
@@ -3179,7 +3809,9 @@ describe('runtime-backed API routes', () => {
       url: '/api/v1/treasury/summary',
       headers: { 'x-api-key': TEST_API_KEY },
     });
-    const treasurySummaryBody = treasurySummaryResponse.json<{ data: { treasuryRunId: string } | null }>();
+    const treasurySummaryBody = treasurySummaryResponse.json<{
+      data: { treasuryRunId: string } | null;
+    }>();
     if (treasurySummaryBody.data === null) {
       throw new Error('Expected treasury summary.');
     }
@@ -3221,13 +3853,15 @@ describe('runtime-backed API routes', () => {
         details: {},
         readiness: 'blocked',
         executable: false,
-        blockedReasons: [{
-          code: 'venue_execution_unsupported',
-          category: 'venue_capability',
-          message: 'Carry venue remains unsupported for execution.',
-          operatorAction: 'Inspect venue readiness before retrying.',
-          details: {},
-        }],
+        blockedReasons: [
+          {
+            code: 'venue_execution_unsupported',
+            category: 'venue_capability',
+            message: 'Carry venue remains unsupported for execution.',
+            operatorAction: 'Inspect venue readiness before retrying.',
+            details: {},
+          },
+        ],
         approvalRequirement: 'operator',
         executionMode: proposal.executionMode,
         simulated: true,
@@ -3294,36 +3928,31 @@ describe('runtime-backed API routes', () => {
       })
       .returning();
 
-    await connection.db
-      .update(allocatorRebalanceProposals)
-      .set({
-        status: 'completed',
-        latestExecutionId: rebalanceExecution?.id ?? null,
-        linkedCommandId: 'api-manual-resolution-setup',
-        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
-      });
+    await connection.db.update(allocatorRebalanceProposals).set({
+      status: 'completed',
+      latestExecutionId: rebalanceExecution?.id ?? null,
+      linkedCommandId: 'api-manual-resolution-setup',
+      updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+    });
 
-    await connection.db
-      .update(treasuryActions)
-      .set({
-        latestExecutionId: treasuryExecution?.id ?? null,
-        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
-      });
+    await connection.db.update(treasuryActions).set({
+      latestExecutionId: treasuryExecution?.id ?? null,
+      updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+    });
 
-    await connection.db
-      .update(allocatorRebalanceExecutions)
-      .set({
-        outcome: {
-          applied: true,
-          downstreamCarryActionIds: [carryAction?.id],
-          downstreamTreasuryActionIds: [treasuryAction?.id],
-        },
-        updatedAt: new Date('2026-03-22T13:00:06.000Z'),
-      });
+    await connection.db.update(allocatorRebalanceExecutions).set({
+      outcome: {
+        applied: true,
+        downstreamCarryActionIds: [carryAction?.id],
+        downstreamTreasuryActionIds: [treasuryAction?.id],
+      },
+      updatedAt: new Date('2026-03-22T13:00:06.000Z'),
+    });
 
     const bundle = await waitFor(
       () => controlPlane.getRebalanceBundleForProposal(proposal.id),
-      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'requires_intervention',
+      (value): value is Exclude<typeof value, null> =>
+        value !== null && value.bundle.status === 'requires_intervention',
     );
     if (bundle === null || carryAction === undefined) {
       throw new Error('Expected requires_intervention bundle.');
@@ -3335,21 +3964,31 @@ describe('runtime-backed API routes', () => {
       headers: { 'x-api-key': TEST_API_KEY },
     });
     expect(optionsResponse.statusCode).toBe(200);
-    const optionsBody = optionsResponse.json<{ data: Array<{ resolutionActionType: string; eligibilityState: string }> }>();
-    const acceptPartial = optionsBody.data.find((item) => item.resolutionActionType === 'accept_partial_application');
+    const optionsBody = optionsResponse.json<{
+      data: Array<{ resolutionActionType: string; eligibilityState: string }>;
+    }>();
+    const acceptPartial = optionsBody.data.find(
+      (item) => item.resolutionActionType === 'accept_partial_application',
+    );
     expect(acceptPartial?.eligibilityState).toBe('eligible');
 
     const requestResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`,
+      ),
       payload: {
         resolutionActionType: 'accept_partial_application',
         note: 'Treasury budget-state application is acceptable; carry remains intentionally non-retryable.',
       },
     });
     expect(requestResponse.statusCode).toBe(200);
-    const requestBody = requestResponse.json<{ data: { id: string; status: string; resolutionState: string } }>();
+    const requestBody = requestResponse.json<{
+      data: { id: string; status: string; resolutionState: string };
+    }>();
     expect(requestBody.data.status).toBe('completed');
     expect(requestBody.data.resolutionState).toBe('accepted_partial');
 
@@ -3376,7 +4015,9 @@ describe('runtime-backed API routes', () => {
     expect(bundleResponse.statusCode).toBe(200);
 
     const historyBody = historyResponse.json<{ data: Array<{ id: string; status: string }> }>();
-    const detailBody = detailResponse.json<{ data: { id: string; status: string; resolutionState: string; note: string } }>();
+    const detailBody = detailResponse.json<{
+      data: { id: string; status: string; resolutionState: string; note: string };
+    }>();
     const bundleBody = bundleResponse.json<{
       data: {
         bundle: { status: string; resolutionState: string; interventionRecommendation: string };
@@ -3394,7 +4035,11 @@ describe('runtime-backed API routes', () => {
     expect(bundleBody.data.bundle.interventionRecommendation).toBe('accepted_partial_application');
     expect(bundleBody.data.partialProgress.appliedChildren).toBe(1);
     expect(bundleBody.data.partialProgress.nonRetryableChildren).toBe(1);
-    expect(bundleBody.data.resolutionActions.some((item) => item.id === requestBody.data.id && item.status === 'completed')).toBe(true);
+    expect(
+      bundleBody.data.resolutionActions.some(
+        (item) => item.id === requestBody.data.id && item.status === 'completed',
+      ),
+    ).toBe(true);
 
     await connection.close();
   });
@@ -3422,7 +4067,9 @@ describe('runtime-backed API routes', () => {
       url: '/api/v1/treasury/summary',
       headers: { 'x-api-key': TEST_API_KEY },
     });
-    const treasurySummaryBody = treasurySummaryResponse.json<{ data: { treasuryRunId: string } | null }>();
+    const treasurySummaryBody = treasurySummaryResponse.json<{
+      data: { treasuryRunId: string } | null;
+    }>();
     if (treasurySummaryBody.data === null) {
       throw new Error('Expected treasury summary.');
     }
@@ -3462,13 +4109,15 @@ describe('runtime-backed API routes', () => {
         details: {},
         readiness: 'blocked',
         executable: false,
-        blockedReasons: [{
-          code: 'venue_execution_unsupported',
-          category: 'venue_capability',
-          message: 'Carry venue remains unsupported for execution.',
-          operatorAction: 'Inspect venue readiness before retrying.',
-          details: {},
-        }],
+        blockedReasons: [
+          {
+            code: 'venue_execution_unsupported',
+            category: 'venue_capability',
+            message: 'Carry venue remains unsupported for execution.',
+            operatorAction: 'Inspect venue readiness before retrying.',
+            details: {},
+          },
+        ],
         approvalRequirement: 'operator',
         executionMode: proposal.executionMode,
         simulated: true,
@@ -3535,36 +4184,31 @@ describe('runtime-backed API routes', () => {
       })
       .returning();
 
-    await connection.db
-      .update(allocatorRebalanceProposals)
-      .set({
-        status: 'completed',
-        latestExecutionId: rebalanceExecution?.id ?? null,
-        linkedCommandId: 'api-escalation-workflow-setup',
-        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
-      });
+    await connection.db.update(allocatorRebalanceProposals).set({
+      status: 'completed',
+      latestExecutionId: rebalanceExecution?.id ?? null,
+      linkedCommandId: 'api-escalation-workflow-setup',
+      updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+    });
 
-    await connection.db
-      .update(treasuryActions)
-      .set({
-        latestExecutionId: treasuryExecution?.id ?? null,
-        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
-      });
+    await connection.db.update(treasuryActions).set({
+      latestExecutionId: treasuryExecution?.id ?? null,
+      updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+    });
 
-    await connection.db
-      .update(allocatorRebalanceExecutions)
-      .set({
-        outcome: {
-          applied: true,
-          downstreamCarryActionIds: [carryAction?.id],
-          downstreamTreasuryActionIds: [treasuryAction?.id],
-        },
-        updatedAt: new Date('2026-03-23T13:00:06.000Z'),
-      });
+    await connection.db.update(allocatorRebalanceExecutions).set({
+      outcome: {
+        applied: true,
+        downstreamCarryActionIds: [carryAction?.id],
+        downstreamTreasuryActionIds: [treasuryAction?.id],
+      },
+      updatedAt: new Date('2026-03-23T13:00:06.000Z'),
+    });
 
     const bundle = await waitFor(
       () => controlPlane.getRebalanceBundleForProposal(proposal.id),
-      (value): value is Exclude<typeof value, null> => value !== null && value.bundle.status === 'requires_intervention',
+      (value): value is Exclude<typeof value, null> =>
+        value !== null && value.bundle.status === 'requires_intervention',
     );
     if (bundle === null) {
       throw new Error('Expected requires_intervention bundle.');
@@ -3573,7 +4217,11 @@ describe('runtime-backed API routes', () => {
     const escalateResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/resolution-actions`,
+      ),
       payload: {
         resolutionActionType: 'escalate_bundle_for_review',
         note: 'Escalating bundle for explicit operator handoff and venue-side follow-up.',
@@ -3581,44 +4229,53 @@ describe('runtime-backed API routes', () => {
     });
     expect(escalateResponse.statusCode).toBe(200);
 
-    const [
-      escalationResponse,
-      openQueueResponse,
-      summaryResponse,
-      mineResponse,
-      assignResponse,
-    ] = await Promise.all([
-      app.inject({
-        method: 'GET',
-        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation`,
-        headers: { 'x-api-key': TEST_API_KEY },
-      }),
-      app.inject({
-        method: 'GET',
-        url: '/api/v1/allocator/escalations?openState=open&sortBy=due_at&sortDirection=asc',
-        headers: { 'x-api-key': TEST_API_KEY },
-      }),
-      app.inject({
-        method: 'GET',
-        url: '/api/v1/allocator/escalations/summary',
-        headers: operatorHeaders('operator', 'GET', '/api/v1/allocator/escalations/summary', 'operator-user'),
-      }),
-      app.inject({
-        method: 'GET',
-        url: '/api/v1/allocator/escalations/mine',
-        headers: operatorHeaders('operator', 'GET', '/api/v1/allocator/escalations/mine', 'operator-user'),
-      }),
-      app.inject({
-        method: 'POST',
-        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/assign`,
-        headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/assign`),
-        payload: {
-          ownerId: 'review-owner',
-          note: 'Assigning to the reviewer responsible for venue-side follow-up.',
-          dueAt: '2026-03-24T13:00:00.000Z',
-        },
-      }),
-    ]);
+    const [escalationResponse, openQueueResponse, summaryResponse, mineResponse, assignResponse] =
+      await Promise.all([
+        app.inject({
+          method: 'GET',
+          url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation`,
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/allocator/escalations?openState=open&sortBy=due_at&sortDirection=asc',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/allocator/escalations/summary',
+          headers: operatorHeaders(
+            'operator',
+            'GET',
+            '/api/v1/allocator/escalations/summary',
+            'operator-user',
+          ),
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/allocator/escalations/mine',
+          headers: operatorHeaders(
+            'operator',
+            'GET',
+            '/api/v1/allocator/escalations/mine',
+            'operator-user',
+          ),
+        }),
+        app.inject({
+          method: 'POST',
+          url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/assign`,
+          headers: operatorHeaders(
+            'operator',
+            'POST',
+            `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/assign`,
+          ),
+          payload: {
+            ownerId: 'review-owner',
+            note: 'Assigning to the reviewer responsible for venue-side follow-up.',
+            dueAt: '2026-03-24T13:00:00.000Z',
+          },
+        }),
+      ]);
     expect(escalationResponse.statusCode).toBe(200);
     expect(openQueueResponse.statusCode).toBe(200);
     expect(summaryResponse.statusCode).toBe(200);
@@ -3628,7 +4285,12 @@ describe('runtime-backed API routes', () => {
     const acknowledgeResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/acknowledge`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/acknowledge`, 'review-owner'),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/acknowledge`,
+        'review-owner',
+      ),
       payload: {
         note: 'Acknowledged by the assigned reviewer.',
       },
@@ -3638,7 +4300,12 @@ describe('runtime-backed API routes', () => {
     const reviewResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`, 'review-owner'),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`,
+        'review-owner',
+      ),
       payload: {
         note: 'Active review started for venue-side discrepancy investigation.',
       },
@@ -3648,38 +4315,49 @@ describe('runtime-backed API routes', () => {
     const closeResponse = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/close`,
-      headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/close`, 'review-owner'),
+      headers: operatorHeaders(
+        'operator',
+        'POST',
+        `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/close`,
+        'review-owner',
+      ),
       payload: {
         note: 'Resolved after operator handoff and venue-side follow-up were completed.',
       },
     });
     expect(closeResponse.statusCode).toBe(200);
 
-    const [historyResponse, bundleResponse, invalidReviewResponse, resolvedQueueResponse] = await Promise.all([
-      app.inject({
-        method: 'GET',
-        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/history`,
-        headers: { 'x-api-key': TEST_API_KEY },
-      }),
-      app.inject({
-        method: 'GET',
-        url: `/api/v1/allocator/rebalance-proposals/${proposal.id}/bundle`,
-        headers: { 'x-api-key': TEST_API_KEY },
-      }),
-      app.inject({
-        method: 'POST',
-        url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`,
-        headers: operatorHeaders('operator', 'POST', `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`, 'review-owner'),
-        payload: {
-          note: 'This should fail because the escalation is already resolved.',
-        },
-      }),
-      app.inject({
-        method: 'GET',
-        url: '/api/v1/allocator/escalations?status=resolved&openState=closed',
-        headers: { 'x-api-key': TEST_API_KEY },
-      }),
-    ]);
+    const [historyResponse, bundleResponse, invalidReviewResponse, resolvedQueueResponse] =
+      await Promise.all([
+        app.inject({
+          method: 'GET',
+          url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/history`,
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'GET',
+          url: `/api/v1/allocator/rebalance-proposals/${proposal.id}/bundle`,
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+        app.inject({
+          method: 'POST',
+          url: `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`,
+          headers: operatorHeaders(
+            'operator',
+            'POST',
+            `/api/v1/allocator/rebalance-bundles/${bundle.bundle.id}/escalation/start-review`,
+            'review-owner',
+          ),
+          payload: {
+            note: 'This should fail because the escalation is already resolved.',
+          },
+        }),
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/allocator/escalations?status=resolved&openState=closed',
+          headers: { 'x-api-key': TEST_API_KEY },
+        }),
+      ]);
 
     expect(historyResponse.statusCode).toBe(200);
     expect(bundleResponse.statusCode).toBe(200);
@@ -3693,7 +4371,12 @@ describe('runtime-backed API routes', () => {
       };
     }>();
     const openQueueBody = openQueueResponse.json<{
-      data: Array<{ bundleId: string; escalationStatus: string; escalationQueueState: string; ownerId: string | null }>;
+      data: Array<{
+        bundleId: string;
+        escalationStatus: string;
+        escalationQueueState: string;
+        ownerId: string | null;
+      }>;
     }>();
     const summaryBody = summaryResponse.json<{
       data: { open: number; overdue: number; mine: number };
@@ -3701,7 +4384,9 @@ describe('runtime-backed API routes', () => {
     const mineBody = mineResponse.json<{
       data: Array<{ bundleId: string; ownerId: string | null }>;
     }>();
-    const historyBody = historyResponse.json<{ data: Array<{ eventType: string; ownerId: string | null }> }>();
+    const historyBody = historyResponse.json<{
+      data: Array<{ eventType: string; ownerId: string | null }>;
+    }>();
     const resolvedQueueBody = resolvedQueueResponse.json<{
       data: Array<{ bundleId: string; escalationStatus: string; ownerId: string | null }>;
     }>();
@@ -3718,27 +4403,41 @@ describe('runtime-backed API routes', () => {
     }>();
 
     expect(escalationBody.data.escalation?.status).toBe('open');
-    expect(escalationBody.data.transitions.some((item) => item.transitionType === 'assign')).toBe(true);
-    expect(openQueueBody.data.some((item) =>
-      item.bundleId === bundle.bundle.id
-      && item.escalationStatus === 'open'
-      && item.escalationQueueState === 'on_track',
-    )).toBe(true);
+    expect(escalationBody.data.transitions.some((item) => item.transitionType === 'assign')).toBe(
+      true,
+    );
+    expect(
+      openQueueBody.data.some(
+        (item) =>
+          item.bundleId === bundle.bundle.id &&
+          item.escalationStatus === 'open' &&
+          item.escalationQueueState === 'on_track',
+      ),
+    ).toBe(true);
     expect(summaryBody.data.open).toBeGreaterThanOrEqual(1);
-    expect(mineBody.data.some((item) => item.bundleId === bundle.bundle.id && item.ownerId === 'operator-user')).toBe(true);
+    expect(
+      mineBody.data.some(
+        (item) => item.bundleId === bundle.bundle.id && item.ownerId === 'operator-user',
+      ),
+    ).toBe(true);
     expect(historyBody.data.map((item) => item.eventType)).toEqual(
       expect.arrayContaining(['created', 'assigned', 'acknowledged', 'review_started', 'resolved']),
     );
-    expect(resolvedQueueBody.data.some((item) =>
-      item.bundleId === bundle.bundle.id
-      && item.escalationStatus === 'resolved'
-      && item.ownerId === 'review-owner',
-    )).toBe(true);
+    expect(
+      resolvedQueueBody.data.some(
+        (item) =>
+          item.bundleId === bundle.bundle.id &&
+          item.escalationStatus === 'resolved' &&
+          item.ownerId === 'review-owner',
+      ),
+    ).toBe(true);
     expect(bundleBody.data.bundle.resolutionState).toBe('escalated');
     expect(bundleBody.data.bundle.escalationStatus).toBe('resolved');
     expect(bundleBody.data.bundle.escalationOwnerId).toBe('review-owner');
     expect(bundleBody.data.escalation?.closedBy).toBe('review-owner');
-    expect(bundleBody.data.escalationHistory.some((item) => item.eventType === 'resolved')).toBe(true);
+    expect(bundleBody.data.escalationHistory.some((item) => item.eventType === 'resolved')).toBe(
+      true,
+    );
 
     await connection.close();
   });
@@ -3777,7 +4476,11 @@ describe('runtime-backed API routes', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/v1/allocator/rebalance-proposals/${proposal?.id}/approve`,
-      headers: operatorHeaders('viewer', 'POST', `/api/v1/allocator/rebalance-proposals/${proposal?.id}/approve`),
+      headers: operatorHeaders(
+        'viewer',
+        'POST',
+        `/api/v1/allocator/rebalance-proposals/${proposal?.id}/approve`,
+      ),
     });
 
     expect(response.statusCode).toBe(403);

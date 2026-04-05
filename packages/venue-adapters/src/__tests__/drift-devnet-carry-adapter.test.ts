@@ -18,6 +18,7 @@ describe('DriftDevnetCarryAdapter', () => {
     });
 
     const capability = await adapter.getVenueCapabilitySnapshot();
+    const carryCapabilities = await adapter.getCarryCapabilities();
 
     expect(capability.connectorType).toBe('drift_native_devnet_execution');
     expect(capability.truthMode).toBe('real');
@@ -27,6 +28,11 @@ describe('DriftDevnetCarryAdapter', () => {
     expect(capability.missingPrerequisites.some((item) => item.includes('DRIFT_RPC_ENDPOINT'))).toBe(true);
     expect(capability.missingPrerequisites.some((item) => item.includes('DRIFT_PRIVATE_KEY'))).toBe(true);
     expect(capability.metadata['executionPosture']).toBe('devnet_execution_capable');
+    expect(carryCapabilities.supportsIncreaseExposure).toBe(true);
+    expect(carryCapabilities.supportsReduceExposure).toBe(true);
+    expect(carryCapabilities.metadata['supportedExecutionScope']).toContain(
+      'BTC-PERP market orders that can open, add to, or reduce a single live perp position',
+    );
   });
 
   it('returns connectivity-only truth until the execution authority key is configured', async () => {
@@ -107,6 +113,88 @@ describe('DriftDevnetCarryAdapter', () => {
     expect(retried.venueOrderId).toBe('devnet-sig-1');
     expect(retried.executionReference).toBe('devnet-sig-1');
     expect(placePerpOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('submits a real non-reduce-only devnet order for BTC-PERP exposure increases', async () => {
+    const keypair = Keypair.generate();
+    const placePerpOrder = vi.fn().mockResolvedValue('devnet-sig-open-1');
+    const adapter = new DriftDevnetCarryAdapter({
+      rpcEndpoint: 'https://rpc.example.test',
+      driftEnv: 'devnet',
+      privateKey: JSON.stringify(Array.from(keypair.secretKey)),
+    }, {
+      createConnection: () => ({
+        getVersion: vi.fn().mockResolvedValue({ 'solana-core': '1.18.0' }),
+      }) as never,
+      createDriftClient: () => ({
+        program: {} as never,
+        subscribe: vi.fn().mockResolvedValue(true),
+        unsubscribe: vi.fn().mockResolvedValue(undefined),
+        getPerpMarketAccount: vi.fn(),
+        getOracleDataForPerpMarket: vi.fn(),
+        getUserAccount: vi.fn().mockReturnValue({
+          perpPositions: [],
+        }),
+        placePerpOrder,
+      }) as never,
+    });
+
+    const result = await adapter.placeOrder({
+      clientOrderId: 'carry-open-1',
+      asset: 'BTC',
+      side: 'buy',
+      type: 'market',
+      size: '0.010000000',
+      reduceOnly: false,
+    });
+
+    expect(result.venueOrderId).toBe('devnet-sig-open-1');
+    expect(result.executionReference).toBe('devnet-sig-open-1');
+    expect(result.executionMode).toBe('real');
+    expect(placePerpOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reduceOnly: false,
+        direction: expect.any(Object),
+      }),
+      undefined,
+      0,
+    );
+  });
+
+  it('rejects non-reduce-only orders that would cross an opposite-side BTC-PERP position', async () => {
+    const keypair = Keypair.generate();
+    const adapter = new DriftDevnetCarryAdapter({
+      rpcEndpoint: 'https://rpc.example.test',
+      driftEnv: 'devnet',
+      privateKey: JSON.stringify(Array.from(keypair.secretKey)),
+    }, {
+      createConnection: () => ({
+        getVersion: vi.fn().mockResolvedValue({ 'solana-core': '1.18.0' }),
+      }) as never,
+      createDriftClient: () => ({
+        program: {} as never,
+        subscribe: vi.fn().mockResolvedValue(true),
+        unsubscribe: vi.fn().mockResolvedValue(undefined),
+        getPerpMarketAccount: vi.fn(),
+        getOracleDataForPerpMarket: vi.fn(),
+        getUserAccount: vi.fn().mockReturnValue({
+          perpPositions: [{
+            marketIndex: 1,
+            baseAssetAmount: new BN('-20000000'),
+          }],
+        }),
+        placePerpOrder: vi.fn(),
+      }) as never,
+    });
+
+    await expect(adapter.placeOrder({
+      clientOrderId: 'carry-open-2',
+      asset: 'BTC',
+      side: 'buy',
+      type: 'market',
+      size: '0.010000000',
+      reduceOnly: false,
+    })).rejects.toThrow('cannot cross the current short BTC-PERP position');
   });
 
   it('correlates strong Drift fill events and suppresses duplicate raw fill records', async () => {

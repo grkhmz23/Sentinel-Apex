@@ -54,11 +54,15 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
 
   private connected = false;
   private signatureCounter = 0;
-  private positionSize = new Decimal('0.020000000');
+  private positionSide: 'long' | 'short' | 'flat';
+  private positionSize: Decimal;
   private readonly executionReferences: string[] = [];
   private readonly submittedOrdersByClientOrderId = new Map<string, PlaceOrderResult>();
   private readonly eventEvidencePollCountByReference = new Map<string, number>();
-  private readonly pendingPositionReductions = new Map<string, Decimal>();
+  private readonly pendingPositionUpdates = new Map<string, {
+    side: 'long' | 'short' | 'flat';
+    size: Decimal;
+  }>();
 
   constructor(
     private readonly options: {
@@ -69,8 +73,21 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
       positionAppliedAfterPolls?: number;
       eventFillFraction?: Decimal.Value;
       duplicateEventCount?: number;
+      initialPositionSide?: 'long' | 'short' | 'flat';
+      initialPositionSize?: Decimal.Value;
     } = {},
-  ) {}
+  ) {
+    this.positionSide = options.initialPositionSide ?? 'long';
+    this.positionSize = new Decimal(
+      options.initialPositionSize
+        ?? (this.positionSide === 'flat' ? '0' : '0.020000000'),
+    );
+
+    if (this.positionSize.lte(0)) {
+      this.positionSide = 'flat';
+      this.positionSize = new Decimal(0);
+    }
+  }
 
   async connect(): Promise<void> {
     this.connected = true;
@@ -84,20 +101,31 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
     return this.connected;
   }
 
-  private applyPendingPositionReductions(): void {
+  private setPosition(side: 'long' | 'short' | 'flat', size: Decimal): void {
+    if (side === 'flat' || size.lte(0)) {
+      this.positionSide = 'flat';
+      this.positionSize = new Decimal(0);
+      return;
+    }
+
+    this.positionSide = side;
+    this.positionSize = size;
+  }
+
+  private applyPendingPositionUpdates(): void {
     const requiredPolls = this.options.positionAppliedAfterPolls ?? 0;
     if (requiredPolls <= 0) {
       return;
     }
 
-    for (const [reference, reduction] of this.pendingPositionReductions.entries()) {
+    for (const [reference, nextPosition] of this.pendingPositionUpdates.entries()) {
       const pollCount = this.eventEvidencePollCountByReference.get(reference) ?? 0;
       if (pollCount < requiredPolls) {
         continue;
       }
 
-      this.positionSize = Decimal.max(this.positionSize.minus(reduction), new Decimal(0));
-      this.pendingPositionReductions.delete(reference);
+      this.setPosition(nextPosition.side, nextPosition.size);
+      this.pendingPositionUpdates.delete(reference);
     }
   }
 
@@ -124,8 +152,8 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
       fillRole: null,
       metadata: {
         providerType: 'websocket',
-        reduceOnly: true,
-        side: 'sell',
+        reduceOnly: request.reduceOnly,
+        side: request.side,
       },
     };
   }
@@ -247,7 +275,7 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
       correlationConfidence: 'conflicting',
       evidenceOrigin: 'raw_and_derived',
       summary: `Conflicting Drift venue events were attributed to ${request.executionReference}.`,
-      blockedReason: 'Drift venue events conflicted with the expected market, side, or reduce-only execution semantics.',
+      blockedReason: 'Drift venue events conflicted with the expected market, side, or execution semantics.',
       observedAt: rawEvents[0]?.timestamp ?? null,
       eventType: 'OrderActionRecord',
       actionType: 'fill',
@@ -302,7 +330,7 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
       venueId: this.venueId,
       venueMode: 'live' as const,
       executionSupported: true,
-      supportsIncreaseExposure: false,
+      supportsIncreaseExposure: true,
       supportsReduceExposure: true,
       readOnly: false,
       approvedForLiveUse: false,
@@ -353,20 +381,20 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
         supportedExecutionScope: [
           'devnet only',
           'carry sleeve only',
-          'reduce-only BTC-PERP market orders',
+          'BTC-PERP market orders that can open, add to, or reduce a single live perp position',
         ],
         unsupportedExecutionScope: [
-          'increase exposure',
           'mainnet-beta execution',
+          'crossing an opposite-side BTC-PERP position with a non-reduce-only order',
         ],
       },
     };
   }
 
   async getVenueTruthSnapshot(): Promise<VenueTruthSnapshot> {
-    this.applyPendingPositionReductions();
+    this.applyPendingPositionUpdates();
     const capturedAt = new Date().toISOString();
-    const hasPosition = this.positionSize.gt(0);
+    const hasPosition = this.positionSide !== 'flat' && this.positionSize.gt(0);
 
     return {
       venueId: this.venueId,
@@ -459,7 +487,7 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
             marketKey: 'perp:1',
             marketSymbol: 'BTC-PERP',
             positionType: 'perp',
-            side: 'long',
+            side: this.positionSide,
             baseAssetAmount: this.positionSize.toFixed(9),
             quoteAssetAmount: '-1000.000000',
             entryPrice: '50000.000000',
@@ -513,6 +541,7 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
           : capturedAt,
       },
       payload: {
+        positionSide: this.positionSide,
         positionSize: this.positionSize.toFixed(9),
         executionReferenceCount: this.executionReferences.length,
       },
@@ -574,14 +603,14 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
   }
 
   async getPositions(): Promise<VenuePosition[]> {
-    if (this.positionSize.lte(0)) {
+    if (this.positionSide === 'flat' || this.positionSize.lte(0)) {
       return [];
     }
 
     return [{
       venueId: this.venueId,
       asset: 'BTC',
-      side: 'long',
+      side: this.positionSide,
       size: this.positionSize.toFixed(9),
       entryPrice: '50000.000000',
       markPrice: '50000.000000',
@@ -604,14 +633,44 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
       this.executionReferences.unshift(signature);
     }
     const appliedFraction = new Decimal(this.options.appliedFraction ?? 1);
-    const reduction = new Decimal(params.size).times(appliedFraction);
-    if ((this.options.positionAppliedAfterPolls ?? 0) <= 0) {
-      this.positionSize = Decimal.max(
-        this.positionSize.minus(reduction),
-        new Decimal(0),
-      );
+    const appliedSize = new Decimal(params.size).times(appliedFraction);
+    let nextPositionSide = this.positionSide;
+    let nextPositionSize = this.positionSize;
+
+    if (params.reduceOnly === true) {
+      const expectedPositionSide = params.side === 'sell' ? 'long' : 'short';
+      if (this.positionSide === 'flat' || this.positionSize.lte(0)) {
+        throw new Error('No live BTC-PERP position is available for reduce-only execution.');
+      }
+      if (this.positionSide !== expectedPositionSide) {
+        throw new Error(`Reduce-only ${params.side} orders can only reduce the current ${this.positionSide} BTC-PERP position.`);
+      }
+
+      nextPositionSide = this.positionSide;
+      nextPositionSize = Decimal.max(this.positionSize.minus(appliedSize), new Decimal(0));
+      if (nextPositionSize.lte(0)) {
+        nextPositionSide = 'flat';
+      }
     } else {
-      this.pendingPositionReductions.set(signature, reduction);
+      const targetPositionSide = params.side === 'buy' ? 'long' : 'short';
+      if (this.positionSide === 'flat' || this.positionSize.lte(0)) {
+        nextPositionSide = targetPositionSide;
+        nextPositionSize = appliedSize;
+      } else if (this.positionSide === targetPositionSide) {
+        nextPositionSide = targetPositionSide;
+        nextPositionSize = this.positionSize.plus(appliedSize);
+      } else {
+        throw new Error(`Non-reduce-only ${params.side} orders cannot cross the current ${this.positionSide} BTC-PERP position.`);
+      }
+    }
+
+    if ((this.options.positionAppliedAfterPolls ?? 0) <= 0) {
+      this.setPosition(nextPositionSide, nextPositionSize);
+    } else {
+      this.pendingPositionUpdates.set(signature, {
+        side: nextPositionSide,
+        size: nextPositionSize,
+      });
     }
 
     const result: PlaceOrderResult = {
@@ -646,7 +705,7 @@ class StubDevnetExecutionCarryAdapter implements VenueAdapter {
     return requests.map((request) => {
       const nextPollCount = (this.eventEvidencePollCountByReference.get(request.executionReference) ?? 0) + 1;
       this.eventEvidencePollCountByReference.set(request.executionReference, nextPollCount);
-      this.applyPendingPositionReductions();
+      this.applyPendingPositionUpdates();
 
       if (nextPollCount < (this.options.eventEvidenceAvailableAfterPolls ?? 1)) {
         return this.buildUnmatchedEventEvidence(
@@ -797,6 +856,116 @@ async function createLiveReductionAction(
       approvedCarryBudgetUsd: '0.00',
       projectedRemainingBudgetUsd: '0.00',
       openPositionCount: 1,
+    },
+  }];
+
+  const [action] = await store.createCarryActions({
+    strategyRunId,
+    intents,
+    actorId: 'vitest',
+    createdAt,
+  });
+
+  if (action === undefined) {
+    throw new Error('Expected carry action to be created.');
+  }
+
+  return action.id;
+}
+
+async function createLiveIncreaseAction(
+  store: RuntimeStore,
+  venueId: string,
+): Promise<string> {
+  const createdAt = new Date();
+  const strategyRunId = `run-${randomUUID()}`;
+  await store.createStrategyRun({
+    runId: strategyRunId,
+    sleeveId: 'carry',
+    executionMode: 'live',
+    triggerSource: 'vitest-devnet-execution-path',
+    metadata: {
+      source: 'devnet-execution-path.test.ts',
+    },
+  });
+  const plannedOrder: OrderIntent = {
+    intentId: `increase-${randomUUID()}`,
+    venueId: venueId as never,
+    asset: 'BTC' as never,
+    side: 'buy',
+    type: 'market',
+    size: '0.010000000',
+    limitPrice: null,
+    opportunityId: `opp-${randomUUID()}` as never,
+    reduceOnly: false,
+    createdAt,
+    metadata: {
+      actionType: 'increase_carry_exposure',
+      sleeveId: 'carry',
+      instrumentType: 'perp',
+      marketIndex: 1,
+      marketKey: 'perp:1',
+      marketSymbol: 'BTC-PERP',
+      positionSizeUsd: '500.00',
+    },
+  };
+
+  await store.persistOpportunity({
+    opportunityId: plannedOrder.opportunityId,
+    runId: strategyRunId,
+    sleeveId: 'carry',
+    asset: 'BTC',
+    opportunityType: 'funding_rate_arb',
+    expectedAnnualYieldPct: '12.50',
+    netYieldPct: '11.75',
+    confidenceScore: '0.90',
+    detectedAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + 60_000).toISOString(),
+    approved: true,
+    payload: {
+      source: 'devnet-execution-path.test.ts',
+    },
+  });
+
+  await store.persistIntent({
+    runId: strategyRunId,
+    intent: plannedOrder,
+    approved: true,
+    riskAssessment: {
+      opportunityId: plannedOrder.opportunityId,
+      orderId: null,
+      overallStatus: 'passed',
+      timestamp: createdAt,
+      results: [],
+    } satisfies RiskAssessment,
+    executionDisposition: 'queued',
+  });
+
+  const intents: CarryExecutionIntent[] = [{
+    actionType: 'increase_carry_exposure',
+    sourceKind: 'opportunity',
+    sourceReference: 'phase-6-devnet-open-test',
+    opportunityId: plannedOrder.opportunityId,
+    asset: 'BTC',
+    summary: 'Open BTC-PERP carry exposure through the devnet execution-capable connector.',
+    notionalUsd: '500.00',
+    details: {
+      projectedPositionUsd: '500.00',
+    },
+    readiness: 'actionable',
+    blockedReasons: [],
+    executable: true,
+    approvalRequirement: 'admin',
+    executionMode: 'live',
+    simulated: false,
+    plannedOrders: [plannedOrder],
+    effects: {
+      currentCarryAllocationUsd: '0.00',
+      projectedCarryAllocationUsd: '500.00',
+      projectedCarryAllocationPct: null,
+      approvedCarryBudgetUsd: '1000.00',
+      projectedRemainingBudgetUsd: '500.00',
+      openPositionCount: 0,
     },
   }];
 
@@ -974,6 +1143,90 @@ describe('phase 6.0 devnet execution path', () => {
 
     expect(eligibilityAfterExecution.eligibleForPromotion).toBe(true);
     expect(eligibilityAfterExecution.postTradeConfirmation.confirmedFullCount).toBe(1);
+  });
+
+  it('confirms a promoted live increase action from flat to long on the devnet connector', async () => {
+    const connectionString = await createConnectionString();
+    const adapter = new StubDevnetExecutionCarryAdapter({
+      initialPositionSide: 'flat',
+      initialPositionSize: '0',
+    });
+    const controlPlane = await RuntimeControlPlane.connect(connectionString);
+    const worker = await RuntimeWorker.createDeterministic(connectionString, {
+      executionMode: 'live',
+      liveExecutionEnabled: true,
+      venues: [],
+      carryAdapters: [adapter],
+      carryConfig: {
+        approvedVenues: ['sim-venue-a'],
+      },
+    }, {
+      cycleIntervalMs: 60_000,
+      pollIntervalMs: 10,
+    });
+    const runtimeStore = await createRuntimeStore(connectionString);
+
+    cleanups.push(async () => runtimeStore.close());
+    cleanups.push(async () => controlPlane.close());
+    cleanups.push(async () => worker.stop());
+
+    await worker.start();
+
+    await controlPlane.requestConnectorPromotion(
+      adapter.venueId,
+      'operator-user',
+      'operator',
+      'Requesting devnet execution review for increase path.',
+    );
+    await controlPlane.approveConnectorPromotion(
+      adapter.venueId,
+      'admin-user',
+      'admin',
+      'Approving devnet execution review for increase path.',
+    );
+
+    const actionId = await createLiveIncreaseAction(runtimeStore.store, adapter.venueId);
+    const command = await controlPlane.approveCarryAction(actionId, 'admin-user', 'admin');
+    if (command === null) {
+      throw new Error('Expected live increase carry execution command to be queued.');
+    }
+
+    const completedCommand = await waitFor(
+      () => controlPlane.getCommand(command.commandId),
+      (value): value is Exclude<typeof value, null> =>
+        value !== null && (value.status === 'completed' || value.status === 'failed'),
+    );
+    if (completedCommand === null || completedCommand.status !== 'completed') {
+      throw new Error(`Expected completed live increase execution command but received ${completedCommand?.status ?? 'missing'}.`);
+    }
+
+    const completedAction = await waitFor(
+      () => controlPlane.getCarryAction(actionId),
+      (value): value is Exclude<typeof value, null> =>
+        value !== null && value.action.status === 'completed' && value.executions.length > 0,
+    );
+    if (completedAction === null) {
+      throw new Error('Expected completed live increase carry action detail.');
+    }
+
+    const executionDetail = await waitFor(
+      () => controlPlane.getCarryExecution(completedAction.executions[0]?.id ?? ''),
+      (value): value is Exclude<typeof value, null> =>
+        value !== null && value.steps[0]?.postTradeConfirmation?.status === 'confirmed_full',
+    );
+    if (executionDetail === null) {
+      throw new Error('Expected confirmed live increase execution detail.');
+    }
+
+    expect(executionDetail.steps[0]?.status).toBe('filled');
+    expect(executionDetail.steps[0]?.filledSize).toBe('0.010000000');
+    expect(executionDetail.steps[0]?.reduceOnly).toBe(false);
+    expect(executionDetail.steps[0]?.postTradeConfirmation?.preTradePositionSide).toBe('flat');
+    expect(executionDetail.steps[0]?.postTradeConfirmation?.preTradePositionSize).toBe('0');
+    expect(executionDetail.steps[0]?.postTradeConfirmation?.observedPositionSide).toBe('long');
+    expect(executionDetail.steps[0]?.postTradeConfirmation?.confirmedSize).toBe('0.01');
+    expect(executionDetail.steps[0]?.postTradeConfirmation?.summary).toContain('long exposure increase');
+    expect(executionDetail.steps[0]?.postTradeConfirmation?.eventEvidence?.correlationStatus).toBe('event_matched_strong');
   });
 
   it('blocks subsequent execution readiness when venue truth only confirms a partial reduce-only delta', async () => {

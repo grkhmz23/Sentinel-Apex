@@ -13,12 +13,15 @@ import {
   createCarryExecution,
   createCarryStrategyProfile,
   createCarryVenue,
-  createCommand,
-  createDashboardSession,
-  createMismatch,
-  createMismatchDetail,
-  createOverview,
-  createRebalanceBundleDetail,
+    createCommand,
+    createDashboardSession,
+    createMismatch,
+    createMismatchDetail,
+    createOverview,
+    createSubmissionDossier,
+    createSubmissionEvidence,
+    createSubmissionExportBundle,
+    createRebalanceBundleDetail,
   createRebalanceEscalationQueueItem,
   createRebalanceEscalationQueueSummary,
   createRebalanceProposal,
@@ -52,6 +55,7 @@ import MismatchDetailPage from '../app/mismatches/[mismatchId]/page';
 import MismatchesPage from '../app/mismatches/page';
 import OverviewPage from '../app/page';
 import ReconciliationPage from '../app/reconciliation/page';
+import SubmissionPage from '../app/submission/page';
 import TreasuryActionDetailPage from '../app/treasury/actions/[actionId]/page';
 import TreasuryExecutionDetailPage from '../app/treasury/executions/[executionId]/page';
 import TreasuryExecutionsPage from '../app/treasury/executions/page';
@@ -141,6 +145,14 @@ vi.mock('./lib/runtime-api.server', () => ({
       targets: [createAllocatorTarget()],
       decisions: [createAllocatorRun()],
       rebalanceProposals: [createRebalanceProposal()],
+    },
+    error: null,
+  })),
+  loadSubmissionPageData: vi.fn(async () => ({
+    data: {
+      dossier: createSubmissionDossier(),
+      evidence: [createSubmissionEvidence()],
+      exportBundle: createSubmissionExportBundle(),
     },
     error: null,
   })),
@@ -273,6 +285,21 @@ describe('ops dashboard pages', () => {
     expect(screen.getAllByText('ready').length).toBeGreaterThan(0);
     expect(screen.getByText('Recent Mismatches')).toBeInTheDocument();
     expect(screen.getByText('Recent Commands')).toBeInTheDocument();
+  });
+
+  it('renders the submission dossier with readiness blockers and evidence links', async () => {
+    render(await SubmissionPage());
+
+    expect(screen.getByText('Submission Dossier')).toBeInTheDocument();
+    expect(screen.getByText('Submission Profile')).toBeInTheDocument();
+    expect(screen.getByText('Readiness Checks')).toBeInTheDocument();
+    expect(screen.getByText('Supported Scope')).toBeInTheDocument();
+    expect(screen.getByText('Blocked Scope')).toBeInTheDocument();
+    expect(screen.getByText('Verification Evidence')).toBeInTheDocument();
+    expect(screen.getByText('Export Bundle')).toBeInTheDocument();
+    expect(screen.getByText(/realized APY evidence is not currently persisted/i)).toBeInTheDocument();
+    expect(screen.getByText('Open wallet in Solscan')).toBeInTheDocument();
+    expect(screen.getByText(/Primary submission trade/)).toBeInTheDocument();
   });
 
   it('renders mismatch list and mismatch detail views', async () => {

@@ -57,7 +57,7 @@ The only real execution-capable path remains:
 - sleeve: carry
 - market: BTC-PERP
 - order type: market
-- risk posture: reduce-only
+- risk posture: single-market perp leg only; open/add/reduce supported
 
 Execution confirmation truth can now point to:
 
@@ -73,7 +73,7 @@ The following are still blocked and must not be claimed in a submission:
 
 - mainnet deployment
 - generic Ranger vault integration
-- increase-exposure live execution
+- multi-leg live carry orchestration
 - non-BTC markets
 - non-USDC vault base assets
 - DEX LP / junior tranche / insurance pool / circular stable-yield strategies
@@ -83,8 +83,7 @@ The following are still blocked and must not be claimed in a submission:
 The honest reviewer posture is:
 
 - eligible in principle at the strategy-policy layer for one narrow USDC carry profile
-- execution-capable only on a narrow Drift devnet reduction path
+- execution-capable only on a narrow Drift devnet single-market perp path
 - not production-ready
 - not mainnet-ready
 - not widened beyond the repo’s currently provable scope
-

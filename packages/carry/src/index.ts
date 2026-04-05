@@ -52,8 +52,58 @@ export { computePositionSize, computeMaxAllowedSize } from './position-sizer.js'
 export type { HedgeLegSizes } from './hedge-state.js';
 export { computeHedgeState, HEDGE_TOLERANCE_PCT } from './hedge-state.js';
 
+// Spot-perp coordination for delta-neutral execution
+export type {
+  HedgeLeg,
+  DeltaNeutralHedgePair,
+  SpotPerpCoordinationConfig,
+  HedgeExecutionPlan,
+  CoordinationValidationResult,
+} from './spot-perp-coordination.js';
+export {
+  createHedgePair,
+  validateHedgePair,
+  createHedgeExecutionPlan,
+  updateHedgePairWithExecution,
+  calculateHedgeDeviation,
+  isHedgeBalanced,
+  createHedgeReductionOrders,
+  calculateHedgeFundingCapture,
+  DEFAULT_SPOT_PERP_COORDINATION_CONFIG,
+} from './spot-perp-coordination.js';
+
 export type { PositionPnl, ComputeCarryPnlParams } from './pnl.js';
 export { computeCarryPnl } from './pnl.js';
+
+// Realized APY tracking
+export type {
+  RealizedTrade,
+  RealizedTradePnl,
+  DailySnapshot,
+  ApyCurrent,
+  PerformancePeriod,
+  StrategyPerformance,
+  ComputeTradePnlParams,
+  CalculateDailySnapshotParams,
+  CalculateApyCurrentParams,
+  CalculatePerformanceSummaryParams,
+  RollingApyParams,
+} from './realized-apy.js';
+export {
+  computeTradePnl,
+  calculateRealizedTradePnl,
+  calculateTimeWeightedReturn,
+  annualizeReturn,
+  calculateSimpleApy,
+  calculateRollingApy,
+  calculateApy7d,
+  calculateApy30d,
+  calculateApyLifetime,
+  calculateDailySnapshot,
+  calculateApyCurrent,
+  calculatePerformancePeriod,
+  calculateStrategyPerformance,
+} from './realized-apy.js';
 
 export {
   CarryControlledExecutionPlanner,

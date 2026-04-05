@@ -27,6 +27,9 @@ import type {
   RuntimeReconciliationSummaryView,
   RuntimeRemediationActionType,
   RuntimeRecoveryEventView,
+  SubmissionDossierView,
+  SubmissionEvidenceRecordView,
+  SubmissionExportBundleView,
   TreasuryExecutionView,
   TreasuryExecutionDetailView,
   TreasuryActionView,
@@ -80,6 +83,12 @@ export interface OverviewPageData {
   recoveryOutcomes: RuntimeRecoveryEventView[];
   reconciliationRuns: RuntimeReconciliationRunView[];
   activeFindings: RuntimeReconciliationFindingView[];
+}
+
+export interface SubmissionPageData {
+  dossier: SubmissionDossierView;
+  evidence: SubmissionEvidenceRecordView[];
+  exportBundle: SubmissionExportBundleView;
 }
 
 export interface AllocatorPageData {

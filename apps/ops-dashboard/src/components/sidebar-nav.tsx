@@ -20,6 +20,7 @@ const navigation: NavigationSection[] = [
     title: 'Control Plane',
     items: [
       { href: '/', label: 'Overview' },
+      { href: '/submission', label: 'Submission' },
       {
         href: '/allocator',
         label: 'Allocator',
@@ -37,8 +38,9 @@ const navigation: NavigationSection[] = [
     ],
   },
   {
-    title: 'Integrity & Recovery',
+    title: 'Verification & Recovery',
     items: [
+      { href: '/cex-import', label: 'CEX Import' },
       { href: '/mismatches', label: 'Mismatches' },
       { href: '/reconciliation', label: 'Reconciliation' },
       { href: '/operations', label: 'Operations' },

@@ -11,6 +11,7 @@ import {
 } from '@sentinel-apex/allocator';
 import {
   CarryControlledExecutionPlanner,
+  DEFAULT_BUILD_A_BEAR_STRATEGY_POLICY,
   DEFAULT_CARRY_CONFIG,
   DEFAULT_CARRY_OPERATIONAL_POLICY,
   buildCarryReductionIntents,
@@ -48,7 +49,10 @@ import {
 } from '@sentinel-apex/treasury';
 import {
   DriftDevnetCarryAdapter,
+  DriftMainnetCarryAdapter,
+  DriftMultiAssetCarryAdapter,
   DriftReadonlyTruthAdapter,
+  DriftSpotAdapter,
   VENUE_EXECUTION_MODE_METADATA_KEY,
   VENUE_EXECUTION_REFERENCE_METADATA_KEY,
   readCanonicalMarketIdentityFromMetadata,
@@ -283,30 +287,75 @@ function readPreTradePositionContext(metadata: Record<string, unknown>): PreTrad
   };
 }
 
+function positionSideFromOrderSide(side: 'buy' | 'sell'): 'long' | 'short' {
+  return side === 'buy' ? 'long' : 'short';
+}
+
+function expectedPositionSideForOrder(
+  side: 'buy' | 'sell',
+  reduceOnly: boolean,
+): 'long' | 'short' {
+  if (reduceOnly) {
+    return side === 'buy' ? 'short' : 'long';
+  }
+
+  return positionSideFromOrderSide(side);
+}
+
+function describeRequestedPositionChange(candidate: CarryExecutionConfirmationCandidate): string {
+  if (candidate.reduceOnly) {
+    return 'position reduction';
+  }
+
+  return `${positionSideFromOrderSide(candidate.side)} exposure increase`;
+}
+
+function describeExpectedExecutionSemantics(candidate: CarryExecutionConfirmationCandidate): string {
+  if (candidate.reduceOnly) {
+    return 'reduce-only BTC-PERP execution semantics';
+  }
+
+  return `${positionSideFromOrderSide(candidate.side)}-side BTC-PERP execution semantics`;
+}
+
+function positionExposureForSide(
+  side: 'long' | 'short' | 'flat' | null,
+  size: Decimal,
+  targetSide: 'long' | 'short',
+): Decimal {
+  if (side !== targetSide) {
+    return new Decimal(0);
+  }
+
+  return size;
+}
+
 function capturePreTradePositionContext(input: {
   asset: string;
   side: 'buy' | 'sell';
+  reduceOnly: boolean;
   marketKey: string | null;
   marketSymbol: string | null;
   capturedAt: Date;
   positions: VenuePosition[];
 }): PreTradePositionContext {
-  const expectedPositionSide = input.side === 'sell' ? 'long' : 'short';
-  const matchingPosition = input.positions.find((position) => (
+  const expectedPositionSide = expectedPositionSideForOrder(input.side, input.reduceOnly);
+  const matchingPositions = input.positions.filter((position) => (
     position.asset.trim().toUpperCase() === input.asset.trim().toUpperCase()
-      && position.side === expectedPositionSide
   ));
+  const matchingPosition = matchingPositions.find((position) => position.side === expectedPositionSide)
+    ?? matchingPositions[0];
 
   if (matchingPosition === undefined) {
     return {
-      captureStatus: 'unavailable',
+      captureStatus: 'captured',
       observedAt: input.capturedAt.toISOString(),
       asset: input.asset,
       marketKey: input.marketKey,
       marketSymbol: input.marketSymbol,
-      side: null,
-      size: null,
-      reason: `No ${expectedPositionSide} ${input.asset} position was available before submission.`,
+      side: 'flat',
+      size: '0',
+      reason: null,
     };
   }
 
@@ -337,7 +386,9 @@ function candidateGroupKey(candidate: CarryExecutionConfirmationCandidate): stri
     candidate.venueId,
     context?.asset ?? candidate.asset,
     context?.marketKey ?? context?.marketSymbol ?? candidate.asset,
-    context?.side ?? (candidate.side === 'sell' ? 'long' : 'short'),
+    context?.side === 'long' || context?.side === 'short'
+      ? context.side
+      : expectedPositionSideForOrder(candidate.side, candidate.reduceOnly),
   ].join(':');
 }
 
@@ -373,35 +424,38 @@ function findSnapshotPositionBoundary(
 }
 
 function buildPostTradeConfirmationSummary(
+  candidate: CarryExecutionConfirmationCandidate,
   status: CarryExecutionPostTradeConfirmationView['status'],
   requestedSize: string,
   confirmedSize: string | null,
   executionReference: string,
   eventEvidence: VenueExecutionEventEvidence | null,
 ): string {
+  const requestedChange = describeRequestedPositionChange(candidate);
+
   switch (status) {
     case 'confirmed_full':
-      return `Execution reference ${executionReference} has a strong Drift fill match and confirms the full requested ${requestedSize} position reduction.`;
+      return `Execution reference ${executionReference} has a strong Drift fill match and confirms the full requested ${requestedSize} ${requestedChange}.`;
     case 'confirmed_partial':
-      return `Execution reference ${executionReference} has attributed Drift fill evidence and venue truth, but only ${confirmedSize ?? '0'} of the requested ${requestedSize} reduction is jointly confirmed.`;
+      return `Execution reference ${executionReference} has attributed Drift fill evidence and venue truth, but only ${confirmedSize ?? '0'} of the requested ${requestedSize} ${requestedChange} is jointly confirmed.`;
     case 'confirmed_partial_event_only':
       return eventEvidence?.fillBaseAssetAmount == null
-        ? `Execution reference ${executionReference} has a strong Drift fill match, but venue position truth has not fully reflected the reduction yet.`
-        : `Execution reference ${executionReference} has a strong Drift fill match for ${eventEvidence.fillBaseAssetAmount}, but venue position truth has not fully reflected that reduction yet.`;
+        ? `Execution reference ${executionReference} has a strong Drift fill match, but venue position truth has not fully reflected the requested ${requestedChange} yet.`
+        : `Execution reference ${executionReference} has a strong Drift fill match for ${eventEvidence.fillBaseAssetAmount}, but venue position truth has not fully reflected that ${requestedChange} yet.`;
     case 'confirmed_partial_position_only':
-      return `Execution reference ${executionReference} confirms ${confirmedSize ?? '0'} of the requested ${requestedSize} reduction in venue truth, but venue-native Drift fill evidence is still missing or only probable.`;
+      return `Execution reference ${executionReference} confirms ${confirmedSize ?? '0'} of the requested ${requestedSize} ${requestedChange} in venue truth, but venue-native Drift fill evidence is still missing or only probable.`;
     case 'pending_event':
       return `Execution reference ${executionReference} is present in venue truth, but a strong venue-native Drift fill match has not been attributed yet.`;
     case 'pending_position_delta':
       return `Execution reference ${executionReference} has a strong Drift fill match, but the expected position delta is not yet visible in venue truth.`;
     case 'conflicting_event':
-      return `Execution reference ${executionReference} has Drift venue events that conflict with the expected reduce-only BTC-PERP execution semantics.`;
+      return `Execution reference ${executionReference} has Drift venue events that conflict with the expected ${describeExpectedExecutionSemantics(candidate)}.`;
     case 'conflicting_event_vs_position':
       return `Execution reference ${executionReference} has Drift event evidence that conflicts with the observed position delta.`;
     case 'missing_reference':
       return `Execution reference ${executionReference} is not present in the latest venue truth snapshot.`;
     case 'invalid_position_delta':
-      return `Execution reference ${executionReference} was observed, but the latest venue position state does not reflect a safe reduce-only delta.`;
+      return `Execution reference ${executionReference} was observed, but the latest venue position state does not reflect a safe ${requestedChange}.`;
     case 'insufficient_context':
       return `Execution reference ${executionReference} cannot be confirmed because the required pre-trade position context was not persisted.`;
     default:
@@ -447,6 +501,7 @@ function buildCarryExecutionPostTradeConfirmation(input: {
     status: input.status,
     evidenceBasis: input.evidenceBasis,
     summary: buildPostTradeConfirmationSummary(
+      input.candidate,
       input.status,
       input.candidate.requestedSize,
       confirmedSize,
@@ -586,12 +641,17 @@ function evaluatePostTradeConfirmationGroup(
     const eventEvidence = eventEvidenceByStepId.get(candidate.stepId) ?? null;
     const context = readPreTradePositionContext(candidate.metadata);
     const observedReference = observedReferences.get(candidate.executionReference);
+    const targetSide = expectedPositionSideForOrder(candidate.side, candidate.reduceOnly);
 
     if (
       context === null
       || context.captureStatus !== 'captured'
       || context.size === null
-      || (context.side !== 'long' && context.side !== 'short')
+      || (
+        candidate.reduceOnly
+          ? (context.side !== 'long' && context.side !== 'short')
+          : (context.side !== 'long' && context.side !== 'short' && context.side !== 'flat')
+      )
     ) {
       evaluations.push({
         candidate,
@@ -674,13 +734,25 @@ function evaluatePostTradeConfirmationGroup(
     const preSize = new Decimal(context.size);
     const boundarySize = new Decimal(boundary.size);
     const requestedSize = new Decimal(candidate.requestedSize);
-    const invalidDirection = boundary.side !== 'flat' && boundary.side !== context.side;
-    const increasedExposure = boundarySize.minus(preSize).greaterThan(POST_TRADE_POSITION_TOLERANCE);
-    const rawReduction = decimalMax(preSize.minus(boundarySize), new Decimal(0));
-    const positionConfirmedSize = decimalMax(
-      Decimal.min(rawReduction, requestedSize),
-      new Decimal(0),
-    );
+    const contextSide = context.side;
+    const boundarySide = boundary.side;
+    const invalidDirection = candidate.reduceOnly
+      ? boundarySide !== 'flat' && boundarySide !== contextSide
+      : boundarySide !== 'flat' && boundarySide !== targetSide;
+    const unsupportedStartingExposure = !candidate.reduceOnly
+      && contextSide !== 'flat'
+      && contextSide !== targetSide;
+    const increasedExposure = candidate.reduceOnly
+      ? boundarySize.minus(preSize).greaterThan(POST_TRADE_POSITION_TOLERANCE)
+      : false;
+    const targetPreExposure = positionExposureForSide(contextSide, preSize, targetSide);
+    const targetBoundaryExposure = positionExposureForSide(boundarySide, boundarySize, targetSide);
+    const reducedTargetExposure = !candidate.reduceOnly
+      && targetPreExposure.minus(targetBoundaryExposure).greaterThan(POST_TRADE_POSITION_TOLERANCE);
+    const rawPositionChange = candidate.reduceOnly
+      ? decimalMax(preSize.minus(boundarySize), new Decimal(0))
+      : decimalMax(targetBoundaryExposure.minus(targetPreExposure), new Decimal(0));
+    const positionConfirmedSize = decimalMax(Decimal.min(rawPositionChange, requestedSize), new Decimal(0));
     const remainingSize = decimalMax(requestedSize.minus(positionConfirmedSize), new Decimal(0));
     const eventFilledSize = parseOptionalDecimal(eventEvidence?.fillBaseAssetAmount);
     const boundedEventFilledSize = eventFilledSize === null
@@ -709,7 +781,11 @@ function evaluatePostTradeConfirmationGroup(
     if (hasConflictingEvent) {
       confirmation = buildCarryExecutionPostTradeConfirmation({
         candidate,
-        status: positionConfirmedSize.gt(POST_TRADE_POSITION_TOLERANCE) || invalidDirection || increasedExposure
+        status: positionConfirmedSize.gt(POST_TRADE_POSITION_TOLERANCE)
+          || invalidDirection
+          || increasedExposure
+          || unsupportedStartingExposure
+          || reducedTargetExposure
           ? 'conflicting_event_vs_position'
           : 'conflicting_event',
         evidenceBasis: 'conflicting',
@@ -721,10 +797,15 @@ function evaluatePostTradeConfirmationGroup(
         confirmedSize: positionConfirmedSize.gt(POST_TRADE_POSITION_TOLERANCE) ? positionConfirmedSize : null,
         remainingSize,
         blockedReason: eventEvidence?.blockedReason
-          ?? 'Drift venue events conflicted with the expected market, side, or reduce-only execution semantics.',
+          ?? `Drift venue events conflicted with the expected market, side, or ${describeExpectedExecutionSemantics(candidate)}.`,
         eventEvidence,
       });
-    } else if (invalidDirection || increasedExposure) {
+    } else if (
+      invalidDirection
+      || increasedExposure
+      || unsupportedStartingExposure
+      || reducedTargetExposure
+    ) {
       confirmation = buildCarryExecutionPostTradeConfirmation({
         candidate,
         status: hasStrongEventMatch || hasProbableEventMatch
@@ -738,9 +819,15 @@ function evaluatePostTradeConfirmationGroup(
         boundary,
         confirmedSize: null,
         remainingSize: requestedSize,
-        blockedReason: invalidDirection
-          ? 'Latest venue truth shows a position-side flip after a reduce-only submission.'
-          : 'Latest venue truth shows a larger position than was present before submission.',
+        blockedReason: unsupportedStartingExposure
+          ? `Pre-trade venue truth showed a ${contextSide} BTC-PERP position, but non-reduce-only confirmation currently only supports flat or ${targetSide} starting exposure.`
+          : invalidDirection
+            ? candidate.reduceOnly
+              ? 'Latest venue truth shows a position-side flip after a reduce-only submission.'
+              : `Latest venue truth shows a ${boundarySide} position after a ${targetSide} increase submission.`
+            : increasedExposure
+              ? 'Latest venue truth shows a larger position than was present before submission.'
+              : `Latest venue truth shows less ${targetSide} exposure than was present before submission.`,
         eventEvidence,
       });
     } else if (hasStrongEventMatch) {
@@ -756,7 +843,7 @@ function evaluatePostTradeConfirmationGroup(
           boundary,
           confirmedSize: null,
           remainingSize: requestedSize,
-          blockedReason: 'Strong Drift fill evidence was attributed, but the expected position delta is not yet reflected in venue truth.',
+          blockedReason: `Strong Drift fill evidence was attributed, but the expected ${describeRequestedPositionChange(candidate)} is not yet reflected in venue truth.`,
           eventEvidence,
         });
       } else if (expectedEventSize.minus(positionConfirmedSize).greaterThan(POST_TRADE_POSITION_TOLERANCE)) {
@@ -801,7 +888,7 @@ function evaluatePostTradeConfirmationGroup(
           boundary,
           confirmedSize: positionConfirmedSize,
           remainingSize,
-          blockedReason: `Only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize} is jointly confirmed by Drift fill evidence and venue truth.`,
+          blockedReason: `Only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize} is jointly confirmed by Drift fill evidence and venue truth for this ${describeRequestedPositionChange(candidate)}.`,
           eventEvidence,
         });
       }
@@ -1155,15 +1242,18 @@ export class SentinelRuntime {
       (overrides.internalDerivativeTargets ?? []).map((target) => [target.venueId, target] as const),
     );
     const driftRpcEndpoint = process.env['DRIFT_RPC_ENDPOINT'];
+    // Initialize multi-asset devnet adapter
     if (
       !adapters.has('drift-solana-devnet-carry')
       && process.env['DRIFT_EXECUTION_ENV'] === 'devnet'
     ) {
-      const adapter = new DriftDevnetCarryAdapter({
+      const adapter = new DriftMultiAssetCarryAdapter({
         venueId: 'drift-solana-devnet-carry',
-        venueName: 'Drift Solana Devnet Carry',
+        venueName: 'Drift Solana Devnet Carry (Multi-Asset)',
         rpcEndpoint: driftRpcEndpoint ?? '',
         driftEnv: 'devnet',
+        supportedAssets: ['BTC', 'ETH', 'SOL'],
+        executionEnabled: true,
         ...(process.env['DRIFT_PRIVATE_KEY'] === undefined
           ? {}
           : { privateKey: process.env['DRIFT_PRIVATE_KEY'] }),
@@ -1179,7 +1269,7 @@ export class SentinelRuntime {
       if (!internalDerivativeTargets.has(adapter.venueId)) {
         internalDerivativeTargets.set(adapter.venueId, {
           venueId: adapter.venueId,
-          venueName: 'Drift Solana Devnet Carry',
+          venueName: 'Drift Solana Devnet Carry (Multi-Asset)',
           ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
             ? {}
             : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
@@ -1188,6 +1278,69 @@ export class SentinelRuntime {
             : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
         });
       }
+    }
+    // Initialize multi-asset mainnet adapter
+    if (
+      !adapters.has('drift-solana-mainnet-carry')
+      && process.env['DRIFT_EXECUTION_ENV'] === 'mainnet-beta'
+    ) {
+      const executionEnabled = process.env['DRIFT_MAINNET_EXECUTION_ENABLED'] === 'true';
+      const adapter = new DriftMultiAssetCarryAdapter({
+        venueId: 'drift-solana-mainnet-carry',
+        venueName: 'Drift Solana Mainnet Carry (Multi-Asset)',
+        rpcEndpoint: driftRpcEndpoint ?? '',
+        driftEnv: 'mainnet-beta',
+        supportedAssets: ['BTC', 'ETH', 'SOL'],
+        executionEnabled,
+        ...(process.env['DRIFT_PRIVATE_KEY'] === undefined
+          ? {}
+          : { privateKey: process.env['DRIFT_PRIVATE_KEY'] }),
+        ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
+          ? {}
+          : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
+        ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
+          ? {}
+          : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
+      });
+      adapters.set(adapter.venueId, adapter);
+
+      if (!internalDerivativeTargets.has(adapter.venueId)) {
+        internalDerivativeTargets.set(adapter.venueId, {
+          venueId: adapter.venueId,
+          venueName: 'Drift Solana Mainnet Carry',
+          ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
+            ? {}
+            : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
+          ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
+            ? {}
+            : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
+        });
+      }
+    }
+    // Initialize Drift spot adapter if enabled
+    if (
+      !adapters.has('drift-solana-spot')
+      && driftRpcEndpoint !== undefined
+      && driftRpcEndpoint !== ''
+      && process.env['DRIFT_SPOT_EXECUTION_ENABLED'] === 'true'
+    ) {
+      const spotAdapter = new DriftSpotAdapter({
+        venueId: 'drift-solana-spot',
+        venueName: 'Drift Solana Spot',
+        rpcEndpoint: driftRpcEndpoint,
+        driftEnv: process.env['DRIFT_EXECUTION_ENV'] === 'devnet' ? 'devnet' : 'mainnet-beta',
+        executionEnabled: true,
+        ...(process.env['DRIFT_PRIVATE_KEY'] === undefined
+          ? {}
+          : { privateKey: process.env['DRIFT_PRIVATE_KEY'] }),
+        ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
+          ? {}
+          : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
+        ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
+          ? {}
+          : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
+      });
+      adapters.set(spotAdapter.venueId, spotAdapter);
     }
     if (
       !truthAdapters.has('drift-solana-readonly')
@@ -1265,7 +1418,7 @@ export class SentinelRuntime {
       sleeveId,
       approvedVenues: overrides.carryConfig?.approvedVenues ?? defaultVenues.map((venue) => venue.venueId),
       approvedAssets: ['BTC'],
-      minAnnualYieldPct: '2.0',
+      minAnnualYieldPct: DEFAULT_BUILD_A_BEAR_STRATEGY_POLICY.minimumTargetApyPct,
       minFundingRateAnnualized: '4.0',
       minCrossVenueSpreadPct: '0.15',
       ...(overrides.carryConfig ?? {}),
@@ -2281,6 +2434,7 @@ export class SentinelRuntime {
         [PRE_TRADE_POSITION_CONTEXT_METADATA_KEY]: capturePreTradePositionContext({
           asset: plannedOrder.asset,
           side: plannedOrder.side,
+          reduceOnly: plannedOrder.reduceOnly,
           marketKey: marketIdentity?.marketKey ?? marketValue(existingMetadata['marketKey']),
           marketSymbol: marketIdentity?.marketSymbol ?? marketValue(existingMetadata['marketSymbol']),
           capturedAt,

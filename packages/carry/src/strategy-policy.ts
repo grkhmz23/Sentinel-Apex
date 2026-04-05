@@ -208,17 +208,17 @@ function buildEvidenceSummary(
 ): CarryStrategyEvidenceSummary {
   const supportedScope = input?.supportedScope ?? [
     'USDC-denominated carry strategy metadata and policy enforcement.',
-    'Drift devnet carry execution evidence for BTC-PERP reduce-only market orders only.',
+    'Drift devnet carry execution evidence for BTC-PERP market orders that can open, add to, or reduce a single live perp position.',
     'Post-trade confirmation that combines tx signature, Drift event evidence, and refreshed position truth.',
   ];
   const blockedScope = input?.blockedScope ?? [
     'Mainnet deployment remains blocked.',
     'New markets, new venues, non-USDC base assets, and DEX LP / junior tranche / insurance pool / circular-yield strategies remain blocked.',
-    'Increase-exposure live execution remains blocked; the current real path is reduce-only on Drift devnet.',
+    'Multi-leg carry orchestration, spot-leg execution, and cross-venue live carry remain blocked even though the single-market Drift devnet perp leg can now open or reduce exposure.',
   ];
   const latestEvidenceSource = input?.latestEvidenceSource ?? 'none';
   const environment = input?.environment ?? 'devnet';
-  const supportLabel = input?.supportLabel ?? 'devnet_real_execution_narrow_scope';
+  const supportLabel = input?.supportLabel ?? 'devnet_real_execution_single_market_scope';
 
   return {
     environment,
@@ -231,8 +231,8 @@ function buildEvidenceSummary(
     latestEvidenceSource,
     summary: input?.summary ?? (
       latestEvidenceSource === 'devnet_execution'
-        ? 'The strategy has persisted devnet execution evidence, but only for the narrow Drift devnet carry path.'
-        : 'The strategy policy is wired for a narrow Drift devnet execution path; no mainnet or widened live scope is claimed.'
+        ? 'The strategy has persisted devnet execution evidence for the single-market Drift devnet carry path.'
+        : 'The strategy policy is wired for a single-market Drift devnet execution path; no mainnet or multi-leg live scope is claimed.'
     ),
   };
 }

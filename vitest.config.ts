@@ -34,6 +34,7 @@ function nodeProject(
 export default defineWorkspace([
   nodeProject('allocator', './packages/allocator'),
   nodeProject('carry', './packages/carry'),
+  nodeProject('cex-verification', './packages/cex-verification'),
   nodeProject('config', './packages/config'),
   nodeProject('db', './packages/db'),
   nodeProject('domain', './packages/domain'),

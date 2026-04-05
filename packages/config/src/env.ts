@@ -96,11 +96,14 @@ const envSchema = z
     DRIFT_READONLY_AUTHORITY_ADDRESS: z.string().optional(),
     DRIFT_READONLY_SUBACCOUNT_ID: z.coerce.number().int().min(0).optional(),
     DRIFT_READONLY_ACCOUNT_LABEL: z.string().optional(),
-    DRIFT_EXECUTION_ENV: z.enum(['devnet']).optional(),
+    DRIFT_EXECUTION_ENV: z.enum(['devnet', 'mainnet-beta']).optional(),
     DRIFT_EXECUTION_SUBACCOUNT_ID: z.coerce.number().int().min(0).optional(),
     DRIFT_EXECUTION_ACCOUNT_LABEL: z.string().optional(),
 
     DRIFT_PRIVATE_KEY: z.string().optional(),
+
+    DRIFT_MAINNET_EXECUTION_ENABLED: envBoolean,
+    DRIFT_SPOT_EXECUTION_ENABLED: envBoolean,
   })
   .superRefine((data, ctx) => {
     // API_SECRET_KEY is required outside of test environments

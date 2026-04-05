@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import Decimal from 'decimal.js';
+import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 
 import type {
   AllocatorDecision,
@@ -26,6 +27,7 @@ import {
   allocatorRecommendations,
   allocatorRuns,
   allocatorSleeveTargets,
+  apyCurrent,
   auditEvents,
   carryActionExecutions,
   carryActionOrderIntents,
@@ -40,6 +42,7 @@ import {
   portfolioCurrent,
   portfolioSnapshots,
   positions,
+  realizedTradePnl,
   riskCurrent,
   riskBreaches,
   riskSnapshots,
@@ -49,6 +52,7 @@ import {
   runtimeReconciliationFindings,
   runtimeReconciliationRuns,
   runtimeRecoveryEvents,
+  strategyPerformanceSummary,
   venueConnectorPromotionEvents,
   venueConnectorPromotions,
   runtimeState,
@@ -62,6 +66,12 @@ import {
   treasuryRuns,
   treasuryVenueSnapshots,
   venueConnectorSnapshots,
+  vaultCurrent,
+  vaultDepositLots,
+  vaultDepositors,
+  vaultRedemptionRequests,
+  vaultSubmissionEvidence,
+  vaultSubmissionProfiles,
   type Database,
 } from '@sentinel-apex/db';
 import type { OrderFill, OrderIntent, OrderStatus, RiskAssessment } from '@sentinel-apex/domain';
@@ -118,10 +128,12 @@ import type {
   OpportunityView,
   OrderView,
   PnlSummaryView,
+  PortfolioPnlResult,
   ProjectionStatus,
   PortfolioSnapshotView,
   PortfolioSummaryView,
   PositionView,
+  RecordVaultDepositInput,
   RebalanceCurrentView,
   RebalanceBundleCompletionState,
   RebalanceBundleRecoveryActionType,
@@ -198,6 +210,21 @@ import type {
   TreasuryExecutionView,
   TreasuryPolicyView,
   TreasurySummaryView,
+  RecordSubmissionEvidenceInput,
+  RequestVaultRedemptionInput,
+  SubmissionAddressScope,
+  SubmissionCheckStatus,
+  SubmissionCluster,
+  SubmissionDossierView,
+  SubmissionEvidenceRecordView,
+  SubmissionEvidenceSource,
+  SubmissionEvidenceStatus,
+  SubmissionEvidenceType,
+  SubmissionExportArtifactView,
+  SubmissionExportBundleView,
+  SubmissionReadinessCheckView,
+  SubmissionReadinessStatus,
+  SubmissionTrack,
   VenueAccountStateSnapshot,
   VenueTruthComparisonCoverageView,
   VenueDerivativeAccountStateSnapshot,
@@ -225,6 +252,15 @@ import type {
   VenueTruthSleeve,
   TreasuryVenueDetailView,
   TreasuryVenueView,
+  VaultDepositLotStatus,
+  VaultDepositLotView,
+  VaultDepositorStatus,
+  VaultDepositorView,
+  VaultExecutionEnvironment,
+  VaultRedemptionRequestStatus,
+  VaultRedemptionRequestView,
+  VaultSummaryView,
+  UpsertSubmissionDossierInput,
   WorkerLifecycleState,
   WorkerSchedulerState,
   WorkerStatusView,
@@ -246,11 +282,66 @@ function toIsoString(value: Date | string | null | undefined): string | null {
 
 const VENUE_SNAPSHOT_STALE_AFTER_MS = 15 * 60 * 1000;
 const CONNECTOR_PROMOTION_TARGET_POSTURE: ConnectorPromotionTargetPosture = 'approved_for_live';
+const DEFAULT_PROTOCOL_VAULT_ID = 'apex-usdc-carry-vault';
+const DEFAULT_PROTOCOL_MANAGER_NAME = 'Sentinel Apex';
+const DEFAULT_SUBMISSION_DOSSIER_ID = 'build-a-bear-main-track';
+const DEFAULT_SUBMISSION_NAME = 'Build-A-Bear Main Track';
+const DEFAULT_SUBMISSION_BUILD_WINDOW_START = '2026-03-09T00:00:00.000Z';
+const DEFAULT_SUBMISSION_BUILD_WINDOW_END = '2026-04-06T23:59:59.999Z';
 
 type VenueInventoryCoreView = Omit<VenueInventoryItemView, 'promotion'>;
 type VenueSnapshotCoreView = Omit<VenueSnapshotView, 'promotion'>;
 type CarryVenueCoreView = Omit<CarryVenueView, 'promotion'>;
 type TreasuryVenueCoreView = Omit<TreasuryVenueView, 'promotion'>;
+
+interface VaultDefaultConfig {
+  vaultId: string;
+  vaultName: string;
+  strategyId: string;
+  strategyName: string;
+  managerName: string | null;
+  managerWalletAddress: string | null;
+  baseAsset: string;
+  lockPeriodMonths: number;
+  rolling: boolean;
+  reassessmentCadenceMonths: number;
+  targetApyFloorPct: string;
+  metadata: Record<string, unknown>;
+}
+
+interface SubmissionDefaultConfig {
+  id: string;
+  submissionName: string;
+  track: SubmissionTrack;
+  buildWindowStart: Date;
+  buildWindowEnd: Date;
+  cluster: SubmissionCluster;
+  walletAddress: string | null;
+  vaultAddress: string | null;
+  cexExecutionUsed: boolean;
+  cexVenues: string[];
+  cexTradeHistoryProvided: boolean;
+  cexReadOnlyApiKeyProvided: boolean;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+}
+
+function mapStrategyEnvironmentToVaultExecutionEnvironment(
+  environment: string | null | undefined,
+): VaultExecutionEnvironment {
+  switch (environment) {
+    case 'live':
+      return 'mainnet';
+    case 'devnet':
+      return 'devnet';
+    case 'backtest':
+      return 'backtest';
+    case 'simulation':
+      return 'simulation';
+    default:
+      return 'unknown';
+  }
+}
 
 interface CarryExecutionConfirmationCandidateRecord {
   stepId: string;
@@ -285,9 +376,7 @@ function summariseBooleanKey(key: string): string {
   return `${toSentenceCase(key)} marker`;
 }
 
-function countCoverageStatuses(
-  coverage: VenueTruthCoverage,
-): {
+function countCoverageStatuses(coverage: VenueTruthCoverage): {
   available: number;
   partial: number;
   unsupported: number;
@@ -298,7 +387,9 @@ function countCoverageStatuses(
     unsupported: 0,
   };
 
-  for (const item of Object.values(coverage) as Array<VenueTruthCoverage[keyof VenueTruthCoverage]>) {
+  for (const item of Object.values(coverage) as Array<
+    VenueTruthCoverage[keyof VenueTruthCoverage]
+  >) {
     if (item.status === 'available' || item.status === 'partial' || item.status === 'unsupported') {
       summary[item.status] += 1;
     }
@@ -333,17 +424,17 @@ function inferReadOnlyValidationState(input: {
   }
 
   if (
-    input.snapshotFreshness === 'fresh'
-    && input.healthState === 'healthy'
-    && input.snapshotCompleteness === 'complete'
+    input.snapshotFreshness === 'fresh' &&
+    input.healthState === 'healthy' &&
+    input.snapshotCompleteness === 'complete'
   ) {
     return 'complete';
   }
 
   if (
-    input.snapshotFreshness === 'fresh'
-    && input.healthState !== 'unavailable'
-    && input.snapshotCompleteness !== 'minimal'
+    input.snapshotFreshness === 'fresh' &&
+    input.healthState !== 'unavailable' &&
+    input.snapshotCompleteness !== 'minimal'
   ) {
     return 'partial';
   }
@@ -355,13 +446,10 @@ function collectConnectorConfigReadinessMarkers(
   metadata: Record<string, unknown>,
 ): ConnectorConfigReadinessMarkerView[] {
   return Object.entries(metadata)
-    .filter(([key, value]) => (
-      typeof value === 'boolean'
-      && (
-        key.endsWith('Configured')
-        || key.endsWith('Enabled')
-      )
-    ))
+    .filter(
+      ([key, value]) =>
+        typeof value === 'boolean' && (key.endsWith('Configured') || key.endsWith('Enabled')),
+    )
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => ({
       key,
@@ -404,9 +492,8 @@ function asCarryExecutionPostTradeConfirmation(
   value: unknown,
 ): CarryExecutionPostTradeConfirmationView | null {
   const candidate = asJsonObject(value);
-  return typeof candidate['status'] === 'string'
-    && typeof candidate['summary'] === 'string'
-    ? candidate as unknown as CarryExecutionPostTradeConfirmationView
+  return typeof candidate['status'] === 'string' && typeof candidate['summary'] === 'string'
+    ? (candidate as unknown as CarryExecutionPostTradeConfirmationView)
     : null;
 }
 
@@ -415,9 +502,8 @@ function asConnectorPostTradeConfirmationEvidence(
   evaluatedAt: string | null,
 ): ConnectorPostTradeConfirmationEvidenceView {
   const candidate = asJsonObject(value);
-  return typeof candidate['status'] === 'string'
-    && Array.isArray(candidate['entries'])
-    ? candidate as unknown as ConnectorPostTradeConfirmationEvidenceView
+  return typeof candidate['status'] === 'string' && Array.isArray(candidate['entries'])
+    ? (candidate as unknown as ConnectorPostTradeConfirmationEvidenceView)
     : buildDefaultPostTradeConfirmationEvidence(evaluatedAt);
 }
 
@@ -472,7 +558,10 @@ function buildConnectorEligibilityBlockers(input: {
     }
   }
 
-  if (input.capabilityClass === 'execution_capable' && input.postTradeConfirmation.status === 'blocked') {
+  if (
+    input.capabilityClass === 'execution_capable' &&
+    input.postTradeConfirmation.status === 'blocked'
+  ) {
     blockers.push(...input.postTradeConfirmation.blockingReasons);
   }
 
@@ -488,8 +577,9 @@ function buildConnectorReadinessEvidence(
   });
   const coverageCounts = countCoverageStatuses(venue.truthCoverage);
   const configReadiness = collectConnectorConfigReadinessMarkers(venue.metadata);
-  const postTradeConfirmation = venue.executionConfirmationState
-    ?? buildDefaultPostTradeConfirmationEvidence(venue.lastSnapshotAt);
+  const postTradeConfirmation =
+    venue.executionConfirmationState ??
+    buildDefaultPostTradeConfirmationEvidence(venue.lastSnapshotAt);
   const readOnlyValidationState = inferReadOnlyValidationState({
     truthMode: venue.truthMode,
     snapshotFreshness: venue.snapshotFreshness,
@@ -672,9 +762,8 @@ function buildPromotionSummaryFromRow(
   const promotionStatus = row.promotionStatus as ConnectorPromotionStatus;
   const effectivePosture = deriveEffectivePosture(evidence.capabilityClass, promotionStatus);
   const approvedForLiveUse = promotionStatus === 'approved';
-  const sensitiveExecutionEligible = approvedForLiveUse
-    && effectivePosture === 'approved_for_live'
-    && evidence.eligibleForPromotion;
+  const sensitiveExecutionEligible =
+    approvedForLiveUse && effectivePosture === 'approved_for_live' && evidence.eligibleForPromotion;
 
   return {
     promotionId: row.id,
@@ -699,9 +788,7 @@ function buildPromotionSummaryFromRow(
   };
 }
 
-function asConnectorReadinessEvidence(
-  value: unknown,
-): ConnectorReadinessEvidenceView {
+function asConnectorReadinessEvidence(value: unknown): ConnectorReadinessEvidenceView {
   return asRecord(value) as unknown as ConnectorReadinessEvidenceView;
 }
 
@@ -713,7 +800,7 @@ function mapPromotionEventRow(
     promotionId: row.promotionId,
     venueId: row.venueId,
     eventType: row.eventType as ConnectorPromotionEventType,
-    fromStatus: row.fromStatus === null ? null : row.fromStatus as ConnectorPromotionStatus,
+    fromStatus: row.fromStatus === null ? null : (row.fromStatus as ConnectorPromotionStatus),
     toStatus: row.toStatus as ConnectorPromotionStatus,
     effectivePosture: row.effectivePosture as ConnectorEffectivePosture,
     requestedTargetPosture: row.requestedTargetPosture as ConnectorPromotionTargetPosture,
@@ -820,51 +907,64 @@ function deserialiseVenueSnapshotPayload(
 
   return {
     rawPayload: Object.keys(rawPayload).length === 0 ? payload : rawPayload,
-    snapshotCompleteness: payload['snapshotCompleteness'] === 'complete'
-      || payload['snapshotCompleteness'] === 'partial'
-      || payload['snapshotCompleteness'] === 'minimal'
-      ? payload['snapshotCompleteness']
-      : 'minimal',
-    truthCoverage: asJsonObject(coverage)['accountState'] !== undefined
-      ? coverage as VenueTruthCoverage
-      : createEmptyVenueTruthCoverage(),
-    sourceMetadata: asJsonObject(sourceMetadata)['sourceName'] !== undefined
-      ? sourceMetadata as VenueTruthSourceMetadata
-      : defaultVenueTruthSourceMetadata(connectorType, truthMode),
-    accountState: asJsonObject(payload['accountState'])['accountAddress'] !== undefined
-      || asJsonObject(payload['accountState'])['accountExists'] !== undefined
-      ? payload['accountState'] as VenueAccountStateSnapshot
-      : null,
+    snapshotCompleteness:
+      payload['snapshotCompleteness'] === 'complete' ||
+      payload['snapshotCompleteness'] === 'partial' ||
+      payload['snapshotCompleteness'] === 'minimal'
+        ? payload['snapshotCompleteness']
+        : 'minimal',
+    truthCoverage:
+      asJsonObject(coverage)['accountState'] !== undefined
+        ? (coverage as VenueTruthCoverage)
+        : createEmptyVenueTruthCoverage(),
+    sourceMetadata:
+      asJsonObject(sourceMetadata)['sourceName'] !== undefined
+        ? (sourceMetadata as VenueTruthSourceMetadata)
+        : defaultVenueTruthSourceMetadata(connectorType, truthMode),
+    accountState:
+      asJsonObject(payload['accountState'])['accountAddress'] !== undefined ||
+      asJsonObject(payload['accountState'])['accountExists'] !== undefined
+        ? (payload['accountState'] as VenueAccountStateSnapshot)
+        : null,
     balanceState: Array.isArray(asJsonObject(payload['balanceState'])['balances'])
-      ? payload['balanceState'] as VenueSnapshotView['balanceState']
+      ? (payload['balanceState'] as VenueSnapshotView['balanceState'])
       : null,
-    capacityState: asJsonObject(payload['capacityState'])['availableCapacityUsd'] !== undefined
-      ? payload['capacityState'] as VenueSnapshotView['capacityState']
-      : null,
+    capacityState:
+      asJsonObject(payload['capacityState'])['availableCapacityUsd'] !== undefined
+        ? (payload['capacityState'] as VenueSnapshotView['capacityState'])
+        : null,
     exposureState: Array.isArray(asJsonObject(payload['exposureState'])['exposures'])
-      ? payload['exposureState'] as VenueExposureStateSnapshot
+      ? (payload['exposureState'] as VenueExposureStateSnapshot)
       : null,
-    derivativeAccountState: asJsonObject(payload['derivativeAccountState'])['accountModel'] !== undefined
-      || asJsonObject(payload['derivativeAccountState'])['venueAccountType'] !== undefined
-      ? payload['derivativeAccountState'] as VenueDerivativeAccountStateSnapshot
+    derivativeAccountState:
+      asJsonObject(payload['derivativeAccountState'])['accountModel'] !== undefined ||
+      asJsonObject(payload['derivativeAccountState'])['venueAccountType'] !== undefined
+        ? (payload['derivativeAccountState'] as VenueDerivativeAccountStateSnapshot)
+        : null,
+    derivativePositionState: Array.isArray(
+      asJsonObject(payload['derivativePositionState'])['positions'],
+    )
+      ? (payload['derivativePositionState'] as VenueDerivativePositionStateSnapshot)
       : null,
-    derivativePositionState: Array.isArray(asJsonObject(payload['derivativePositionState'])['positions'])
-      ? payload['derivativePositionState'] as VenueDerivativePositionStateSnapshot
+    derivativeHealthState:
+      asJsonObject(payload['derivativeHealthState'])['healthStatus'] !== undefined ||
+      asJsonObject(payload['derivativeHealthState'])['methodology'] !== undefined
+        ? (payload['derivativeHealthState'] as VenueDerivativeHealthStateSnapshot)
+        : null,
+    orderState:
+      Array.isArray(asJsonObject(payload['orderState'])['openOrders']) ||
+      asJsonObject(payload['orderState'])['referenceMode'] !== undefined
+        ? (payload['orderState'] as VenueOrderStateSnapshot)
+        : null,
+    executionReferenceState: Array.isArray(
+      asJsonObject(payload['executionReferenceState'])['references'],
+    )
+      ? (payload['executionReferenceState'] as VenueExecutionReferenceStateSnapshot)
       : null,
-    derivativeHealthState: asJsonObject(payload['derivativeHealthState'])['healthStatus'] !== undefined
-      || asJsonObject(payload['derivativeHealthState'])['methodology'] !== undefined
-      ? payload['derivativeHealthState'] as VenueDerivativeHealthStateSnapshot
-      : null,
-    orderState: Array.isArray(asJsonObject(payload['orderState'])['openOrders'])
-      || asJsonObject(payload['orderState'])['referenceMode'] !== undefined
-      ? payload['orderState'] as VenueOrderStateSnapshot
-      : null,
-    executionReferenceState: Array.isArray(asJsonObject(payload['executionReferenceState'])['references'])
-      ? payload['executionReferenceState'] as VenueExecutionReferenceStateSnapshot
-      : null,
-    executionConfirmationState: asJsonObject(payload['executionConfirmationState'])['status'] !== undefined
-      ? asConnectorPostTradeConfirmationEvidence(payload['executionConfirmationState'], null)
-      : null,
+    executionConfirmationState:
+      asJsonObject(payload['executionConfirmationState'])['status'] !== undefined
+        ? asConnectorPostTradeConfirmationEvidence(payload['executionConfirmationState'], null)
+        : null,
   };
 }
 
@@ -905,10 +1005,26 @@ interface PersistedInternalDerivativeRowShape {
 
 function defaultInternalDerivativeCoverage(): InternalDerivativeCoverageView {
   return {
-    accountState: coverageItem('unsupported', 'No internal derivative account state is currently persisted.', []),
-    positionState: coverageItem('unsupported', 'No internal derivative position state is currently persisted.', []),
-    healthState: coverageItem('unsupported', 'No internal derivative health state is currently persisted.', []),
-    orderState: coverageItem('unsupported', 'No internal derivative order state is currently persisted.', []),
+    accountState: coverageItem(
+      'unsupported',
+      'No internal derivative account state is currently persisted.',
+      [],
+    ),
+    positionState: coverageItem(
+      'unsupported',
+      'No internal derivative position state is currently persisted.',
+      [],
+    ),
+    healthState: coverageItem(
+      'unsupported',
+      'No internal derivative health state is currently persisted.',
+      [],
+    ),
+    orderState: coverageItem(
+      'unsupported',
+      'No internal derivative order state is currently persisted.',
+      [],
+    ),
   };
 }
 
@@ -934,20 +1050,23 @@ function deserialiseInternalDerivativeSections(
   const orderState = asJsonObject(row.orderState);
 
   return {
-    coverage: coverage['accountState'] !== undefined
-      ? row.coverage as InternalDerivativeCoverageView
-      : defaultInternalDerivativeCoverage(),
-    accountState: accountState['venueId'] !== undefined
-      ? row.accountState as InternalDerivativeSnapshotView['accountState']
-      : null,
+    coverage:
+      coverage['accountState'] !== undefined
+        ? (row.coverage as InternalDerivativeCoverageView)
+        : defaultInternalDerivativeCoverage(),
+    accountState:
+      accountState['venueId'] !== undefined
+        ? (row.accountState as InternalDerivativeSnapshotView['accountState'])
+        : null,
     positionState: Array.isArray(positionState['positions'])
-      ? row.positionState as InternalDerivativeSnapshotView['positionState']
+      ? (row.positionState as InternalDerivativeSnapshotView['positionState'])
       : null,
-    healthState: healthState['methodology'] !== undefined
-      ? row.healthState as InternalDerivativeSnapshotView['healthState']
-      : null,
+    healthState:
+      healthState['methodology'] !== undefined
+        ? (row.healthState as InternalDerivativeSnapshotView['healthState'])
+        : null,
     orderState: Array.isArray(orderState['openOrders'])
-      ? row.orderState as InternalDerivativeSnapshotView['orderState']
+      ? (row.orderState as InternalDerivativeSnapshotView['orderState'])
       : null,
   };
 }
@@ -1034,8 +1153,8 @@ function inferVenueTruthSourceDepth(input: {
   }
 
   if (
-    input.connectorType === 'drift_native_readonly'
-    || input.sourceMetadata.sourceName === 'drift_native_readonly'
+    input.connectorType === 'drift_native_readonly' ||
+    input.sourceMetadata.sourceName === 'drift_native_readonly'
   ) {
     return 'drift_native_readonly';
   }
@@ -1053,14 +1172,12 @@ function comparisonCoverageItem(
   };
 }
 
-function deriveVenueTruthProfile(
-  snapshotData: PersistedVenueSnapshotPayload,
-): VenueTruthProfile {
+function deriveVenueTruthProfile(snapshotData: PersistedVenueSnapshotPayload): VenueTruthProfile {
   if (
-    snapshotData.truthCoverage.derivativeAccountState.status !== 'unsupported'
-    || snapshotData.truthCoverage.derivativePositionState.status !== 'unsupported'
-    || snapshotData.truthCoverage.derivativeHealthState.status !== 'unsupported'
-    || snapshotData.truthCoverage.orderState.status !== 'unsupported'
+    snapshotData.truthCoverage.derivativeAccountState.status !== 'unsupported' ||
+    snapshotData.truthCoverage.derivativePositionState.status !== 'unsupported' ||
+    snapshotData.truthCoverage.derivativeHealthState.status !== 'unsupported' ||
+    snapshotData.truthCoverage.orderState.status !== 'unsupported'
   ) {
     return 'derivative_aware';
   }
@@ -1070,10 +1187,10 @@ function deriveVenueTruthProfile(
   }
 
   if (
-    snapshotData.truthCoverage.accountState.status === 'available'
-    || snapshotData.truthCoverage.balanceState.status === 'available'
-    || snapshotData.truthCoverage.exposureState.status === 'available'
-    || snapshotData.truthCoverage.executionReferences.status === 'available'
+    snapshotData.truthCoverage.accountState.status === 'available' ||
+    snapshotData.truthCoverage.balanceState.status === 'available' ||
+    snapshotData.truthCoverage.exposureState.status === 'available' ||
+    snapshotData.truthCoverage.executionReferences.status === 'available'
   ) {
     return 'generic_wallet';
   }
@@ -1097,22 +1214,25 @@ function deriveVenueTruthComparisonCoverage(input: {
   const executionReferenceCoverage = input.snapshotData.truthCoverage.executionReferences;
 
   return {
-    executionReferences: executionReferenceCoverage.status === 'available'
-      ? comparisonCoverageItem('available', null)
-      : comparisonCoverageItem(
-        executionReferenceCoverage.status,
-        executionReferenceCoverage.reason
-          ?? 'Recent execution references are not available for comparison.',
-      ),
+    executionReferences:
+      executionReferenceCoverage.status === 'available'
+        ? comparisonCoverageItem('available', null)
+        : comparisonCoverageItem(
+            executionReferenceCoverage.status,
+            executionReferenceCoverage.reason ??
+              'Recent execution references are not available for comparison.',
+          ),
     positionInventory: comparisonCoverageItem(
       'unsupported',
-      isDriftNativeReadonly && input.snapshotData.truthCoverage.derivativePositionState.status === 'available'
+      isDriftNativeReadonly &&
+        input.snapshotData.truthCoverage.derivativePositionState.status === 'available'
         ? 'Decoded Drift position inventory is visible, but the runtime does not yet persist venue-native Drift position projections for direct comparison.'
         : 'The runtime does not yet maintain a truthful internal position model that can be compared directly against this venue snapshot.',
     ),
     healthState: comparisonCoverageItem(
       'unsupported',
-      isDriftNativeReadonly && input.snapshotData.truthCoverage.derivativeHealthState.status === 'available'
+      isDriftNativeReadonly &&
+        input.snapshotData.truthCoverage.derivativeHealthState.status === 'available'
         ? 'Drift health and margin metrics are visible, but the runtime does not yet persist an internal canonical health model for direct comparison.'
         : 'No internal health-state model is available for direct reconciliation against this venue snapshot.',
     ),
@@ -1124,22 +1244,22 @@ function deriveVenueTruthComparisonCoverage(input: {
     ),
     notes: isDriftNativeReadonly
       ? [
-        'Decoded Drift account, position, health, and order sections are operator-visible venue truth.',
-        'Current reconciliation directly compares internal execution references when they are available.',
-        'Direct internal-versus-external Drift position, health, and order comparisons remain intentionally unsupported until the runtime persists matching canonical internal models.',
-      ]
+          'Decoded Drift account, position, health, and order sections are operator-visible venue truth.',
+          'Current reconciliation directly compares internal execution references when they are available.',
+          'Direct internal-versus-external Drift position, health, and order comparisons remain intentionally unsupported until the runtime persists matching canonical internal models.',
+        ]
       : connectorDepth === 'generic_rpc_readonly'
         ? [
-          'This connector exposes generic read-only truth rather than venue-native Drift decode.',
-          'Execution-reference comparison is the only direct real-venue reconciliation path currently available.',
-        ]
+            'This connector exposes generic read-only truth rather than venue-native Drift decode.',
+            'Execution-reference comparison is the only direct real-venue reconciliation path currently available.',
+          ]
         : connectorDepth === 'simulation'
           ? [
-            'Simulated venue truth is generated internally and is not treated as external reconciliation coverage.',
-          ]
+              'Simulated venue truth is generated internally and is not treated as external reconciliation coverage.',
+            ]
           : [
-            'This connector depth does not currently expose additional direct reconciliation coverage beyond the recorded truth sections.',
-          ],
+              'This connector depth does not currently expose additional direct reconciliation coverage beyond the recorded truth sections.',
+            ],
   };
 }
 
@@ -1149,6 +1269,569 @@ function serialiseMap(map: Map<string, string>): Record<string, string> {
 
 function asJsonObject(value: unknown): Record<string, unknown> {
   return asRecord(value);
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'string') {
+      return [];
+    }
+
+    const trimmed = item.trim();
+    return trimmed.length === 0 ? [] : [trimmed];
+  });
+}
+
+function decimalOrZero(value: string | number | Decimal | null | undefined): Decimal {
+  if (value === null || value === undefined) {
+    return new Decimal(0);
+  }
+
+  return new Decimal(value);
+}
+
+function formatDecimal(value: Decimal, decimalPlaces = 8): string {
+  return value.toFixed(decimalPlaces);
+}
+
+function formatMoney(value: Decimal): string {
+  return value.toFixed(2);
+}
+
+function addMonths(value: Date, months: number): Date {
+  const next = new Date(value.getTime());
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+function normalizeSubmissionCluster(value: string | null | undefined): SubmissionCluster {
+  switch (value) {
+    case 'devnet':
+    case 'mainnet-beta':
+      return value;
+    default:
+      return 'unknown';
+  }
+}
+
+function normalizeSubmissionTrack(value: string | null | undefined): SubmissionTrack {
+  return value === 'drift_side_track' ? 'drift_side_track' : 'build_a_bear_main_track';
+}
+
+function normalizeSubmissionEvidenceType(value: string | null | undefined): SubmissionEvidenceType {
+  switch (value) {
+    case 'on_chain_transaction':
+    case 'performance_snapshot':
+    case 'cex_trade_history':
+    case 'cex_read_only_api':
+      return value;
+    default:
+      return 'document';
+  }
+}
+
+function normalizeSubmissionEvidenceStatus(
+  value: string | null | undefined,
+): SubmissionEvidenceStatus {
+  switch (value) {
+    case 'verified':
+    case 'rejected':
+      return value;
+    default:
+      return 'recorded';
+  }
+}
+
+function normalizeSubmissionEvidenceSource(
+  value: string | null | undefined,
+): SubmissionEvidenceSource {
+  switch (value) {
+    case 'runtime':
+    case 'solscan':
+    case 'exchange_export':
+    case 'exchange_api':
+      return value;
+    default:
+      return 'manual';
+  }
+}
+
+function sanitizeSubmissionEvidenceReference(
+  evidenceType: SubmissionEvidenceType,
+  reference: string | null,
+): string | null {
+  if (evidenceType === 'cex_read_only_api') {
+    return null;
+  }
+
+  return reference;
+}
+
+function resolveSubmissionAddressScope(
+  walletAddress: string | null,
+  vaultAddress: string | null,
+): SubmissionAddressScope {
+  if (walletAddress !== null && vaultAddress !== null) {
+    return 'both';
+  }
+  if (walletAddress !== null) {
+    return 'wallet';
+  }
+  if (vaultAddress !== null) {
+    return 'vault';
+  }
+  return 'unconfigured';
+}
+
+function buildSolscanUrl(
+  kind: 'account' | 'tx',
+  value: string | null,
+  cluster: SubmissionCluster,
+): string | null {
+  if (value === null || cluster === 'unknown') {
+    return null;
+  }
+
+  const encodedValue = encodeURIComponent(value);
+  const path = kind === 'account' ? 'account' : 'tx';
+  const clusterQuery = cluster === 'devnet' ? '?cluster=devnet' : '';
+  return `https://solscan.io/${path}/${encodedValue}${clusterQuery}`;
+}
+
+function mapVaultExecutionEnvironmentToSubmissionCluster(
+  environment: VaultExecutionEnvironment,
+): SubmissionCluster {
+  switch (environment) {
+    case 'devnet':
+      return 'devnet';
+    case 'mainnet':
+      return 'mainnet-beta';
+    default:
+      return 'unknown';
+  }
+}
+
+function buildDefaultVaultConfig(): VaultDefaultConfig {
+  const profile = buildCarryStrategyProfile();
+  return {
+    vaultId: DEFAULT_PROTOCOL_VAULT_ID,
+    vaultName: 'Apex USDC Delta-Neutral Carry Vault',
+    strategyId: profile.strategyId,
+    strategyName: profile.strategyName,
+    managerName: DEFAULT_PROTOCOL_MANAGER_NAME,
+    managerWalletAddress: null,
+    baseAsset: profile.vaultBaseAsset,
+    lockPeriodMonths: profile.tenor.lockPeriodMonths,
+    rolling: profile.tenor.rolling,
+    reassessmentCadenceMonths: profile.tenor.reassessmentCadenceMonths,
+    targetApyFloorPct: profile.apy.targetFloorPct,
+    metadata: {
+      strategyFamily: profile.strategyFamily,
+      lockReassessmentPolicy: profile.lockReassessmentPolicy,
+    },
+  };
+}
+
+function buildDefaultSubmissionConfig(): SubmissionDefaultConfig {
+  return {
+    id: DEFAULT_SUBMISSION_DOSSIER_ID,
+    submissionName: DEFAULT_SUBMISSION_NAME,
+    track: 'build_a_bear_main_track',
+    buildWindowStart: new Date(DEFAULT_SUBMISSION_BUILD_WINDOW_START),
+    buildWindowEnd: new Date(DEFAULT_SUBMISSION_BUILD_WINDOW_END),
+    cluster: 'unknown',
+    walletAddress: null,
+    vaultAddress: null,
+    cexExecutionUsed: false,
+    cexVenues: [],
+    cexTradeHistoryProvided: false,
+    cexReadOnlyApiKeyProvided: false,
+    notes: null,
+    metadata: {},
+  };
+}
+
+function buildSubmissionReadinessCheck(
+  key: string,
+  status: SubmissionCheckStatus,
+  summary: string,
+  blockedReason: string | null,
+  details: Record<string, unknown>,
+): SubmissionReadinessCheckView {
+  return {
+    key,
+    status,
+    summary,
+    blockedReason,
+    details,
+  };
+}
+
+function buildSubmissionReadiness(input: {
+  addressScope: SubmissionAddressScope;
+  cluster: SubmissionCluster;
+  baseAsset: string;
+  lockPeriodMonths: number;
+  rolling: boolean;
+  reassessmentCadenceMonths: number;
+  targetApyFloorPct: string;
+  strategyEligibilityStatus: CarryStrategyProfileView['eligibility']['status'];
+  strategyBlockedReasons: string[];
+  realizedApyPct: string | null;
+  realExecutionCountInWindow: number;
+  onChainEvidenceCountInWindow: number;
+  performanceEvidenceCount: number;
+  cexExecutionUsed: boolean;
+  cexTradeHistoryProvided: boolean;
+  cexReadOnlyApiKeyProvided: boolean;
+  cexTradeHistoryEvidenceCount: number;
+  cexReadOnlyApiEvidenceCount: number;
+}): SubmissionDossierView['readiness'] {
+  const checks: SubmissionReadinessCheckView[] = [];
+
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'submission_address_present',
+      input.addressScope === 'unconfigured' ? 'fail' : 'pass',
+      input.addressScope === 'unconfigured'
+        ? 'Submission is missing both wallet and vault addresses.'
+        : 'Submission includes a wallet or vault address for on-chain verification.',
+      input.addressScope === 'unconfigured' ? 'submission_address_required' : null,
+      { addressScope: input.addressScope },
+    ),
+  );
+
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'mainnet_cluster',
+      input.cluster === 'mainnet-beta' ? 'pass' : 'fail',
+      input.cluster === 'mainnet-beta'
+        ? 'Submission is configured for mainnet-beta verification.'
+        : `Submission currently points to ${input.cluster}; verified performance for seeding requires mainnet-beta evidence.`,
+      input.cluster === 'mainnet-beta' ? null : 'mainnet_cluster_required',
+      { cluster: input.cluster },
+    ),
+  );
+
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'base_asset_usdc',
+      input.baseAsset === 'USDC' ? 'pass' : 'fail',
+      input.baseAsset === 'USDC'
+        ? 'Vault base asset is USDC as required.'
+        : `Vault base asset ${input.baseAsset} is not eligible; Build-A-Bear requires USDC.`,
+      input.baseAsset === 'USDC' ? null : 'vault_base_asset_must_be_usdc',
+      { baseAsset: input.baseAsset },
+    ),
+  );
+
+  const validTenor =
+    input.lockPeriodMonths === 3 && input.rolling && input.reassessmentCadenceMonths === 3;
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'tenor_three_month_rolling',
+      validTenor ? 'pass' : 'fail',
+      validTenor
+        ? 'Vault tenor is a 3-month rolling lock with 3-month reassessment.'
+        : 'Vault tenor does not match the required 3-month rolling lock with 3-month reassessment.',
+      validTenor ? null : 'vault_tenor_must_be_three_month_rolling',
+      {
+        lockPeriodMonths: input.lockPeriodMonths,
+        rolling: input.rolling,
+        reassessmentCadenceMonths: input.reassessmentCadenceMonths,
+      },
+    ),
+  );
+
+  const targetApyPasses = decimalOrZero(input.targetApyFloorPct).gte(10);
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'target_apy_floor',
+      targetApyPasses ? 'pass' : 'fail',
+      targetApyPasses
+        ? `Configured APY floor ${input.targetApyFloorPct}% meets the 10% minimum.`
+        : `Configured APY floor ${input.targetApyFloorPct}% is below the 10% minimum.`,
+      targetApyPasses ? null : 'target_apy_floor_below_minimum',
+      { targetApyFloorPct: input.targetApyFloorPct },
+    ),
+  );
+
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'strategy_policy_eligibility',
+      input.strategyEligibilityStatus === 'eligible' ? 'pass' : 'fail',
+      input.strategyEligibilityStatus === 'eligible'
+        ? 'Strategy metadata currently satisfies the Build-A-Bear policy rules.'
+        : 'Strategy metadata is still blocked by Build-A-Bear policy rules.',
+      input.strategyEligibilityStatus === 'eligible'
+        ? null
+        : input.strategyBlockedReasons[0] ?? 'strategy_policy_ineligible',
+      {
+        strategyEligibilityStatus: input.strategyEligibilityStatus,
+        strategyBlockedReasons: input.strategyBlockedReasons,
+      },
+    ),
+  );
+
+  const realizedApyAvailable = input.realizedApyPct !== null;
+  const realizedApyMeetsMinimum =
+    realizedApyAvailable && decimalOrZero(input.realizedApyPct).gte(10);
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'realized_performance_evidence',
+      !realizedApyAvailable || !realizedApyMeetsMinimum ? 'fail' : 'pass',
+      !realizedApyAvailable
+        ? input.performanceEvidenceCount > 0
+          ? 'Performance evidence artifacts exist, but realized APY is still not persisted as a numeric value.'
+          : 'Realized APY evidence is not currently persisted.'
+        : realizedApyMeetsMinimum
+          ? `Realized APY ${input.realizedApyPct}% meets the 10% minimum.`
+          : `Realized APY ${input.realizedApyPct}% is below the 10% minimum.`,
+      !realizedApyAvailable
+        ? 'realized_apy_evidence_missing'
+        : realizedApyMeetsMinimum
+          ? null
+          : 'realized_apy_below_minimum',
+      {
+        realizedApyPct: input.realizedApyPct,
+        performanceEvidenceCount: input.performanceEvidenceCount,
+      },
+    ),
+  );
+
+  const onChainEvidenceCount = Math.max(
+    input.realExecutionCountInWindow,
+    input.onChainEvidenceCountInWindow,
+  );
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'on_chain_trade_evidence',
+      onChainEvidenceCount > 0 ? 'pass' : 'fail',
+      onChainEvidenceCount > 0
+        ? input.onChainEvidenceCountInWindow > 0
+          ? `Submission window includes ${input.onChainEvidenceCountInWindow} explicit on-chain evidence record(s).`
+          : `Submission window includes ${input.realExecutionCountInWindow} real execution record(s).`
+        : 'No real on-chain execution evidence is currently persisted inside the submission window.',
+      onChainEvidenceCount > 0 ? null : 'on_chain_trade_evidence_missing',
+      {
+        realExecutionCountInWindow: input.realExecutionCountInWindow,
+        onChainEvidenceCountInWindow: input.onChainEvidenceCountInWindow,
+      },
+    ),
+  );
+
+  const cexArtifactsReady =
+    !input.cexExecutionUsed || (
+      (input.cexTradeHistoryProvided || input.cexTradeHistoryEvidenceCount > 0) &&
+      (input.cexReadOnlyApiKeyProvided || input.cexReadOnlyApiEvidenceCount > 0)
+    );
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'cex_verification_artifacts',
+      cexArtifactsReady ? 'pass' : 'fail',
+      !input.cexExecutionUsed
+        ? 'CEX verification artifacts are not required for an on-chain-only submission.'
+        : (
+          input.cexTradeHistoryProvided || input.cexTradeHistoryEvidenceCount > 0
+        ) && (
+          input.cexReadOnlyApiKeyProvided || input.cexReadOnlyApiEvidenceCount > 0
+        )
+          ? 'Required CEX verification artifacts are marked as provided.'
+          : 'CEX execution is enabled, but the required trade history or read-only API key artifact is still missing.',
+      cexArtifactsReady ? null : 'cex_verification_artifacts_missing',
+      {
+        cexExecutionUsed: input.cexExecutionUsed,
+        cexTradeHistoryProvided: input.cexTradeHistoryProvided,
+        cexReadOnlyApiKeyProvided: input.cexReadOnlyApiKeyProvided,
+        cexTradeHistoryEvidenceCount: input.cexTradeHistoryEvidenceCount,
+        cexReadOnlyApiEvidenceCount: input.cexReadOnlyApiEvidenceCount,
+      },
+    ),
+  );
+
+  const blockedReasons = checks.flatMap((check) =>
+    check.status === 'fail' && check.blockedReason !== null ? [check.blockedReason] : []);
+  const warnings = checks.flatMap((check) =>
+    check.status === 'warning' && check.blockedReason !== null ? [check.blockedReason] : []);
+  const status: SubmissionReadinessStatus = blockedReasons.length > 0
+    ? 'blocked'
+    : warnings.length > 0
+      ? 'partial'
+      : 'ready';
+
+  return {
+    status,
+    summary:
+      status === 'ready'
+        ? 'Submission dossier has the required eligibility, address, and evidence markers to support a Main Track review.'
+        : status === 'partial'
+          ? 'Submission dossier is usable but still has warnings to resolve before review.'
+          : 'Submission dossier is still blocked because one or more eligibility or verification requirements are unmet.',
+    blockedReasons,
+    warnings,
+    checks,
+  };
+}
+
+function buildSubmissionExportArtifact(
+  key: string,
+  label: string,
+  required: boolean,
+  status: SubmissionCheckStatus,
+  summary: string,
+  blockedReason: string | null,
+  evidenceCount: number,
+  evidenceTypes: SubmissionEvidenceType[],
+): SubmissionExportArtifactView {
+  return {
+    key,
+    label,
+    required,
+    status,
+    summary,
+    blockedReason,
+    evidenceCount,
+    evidenceTypes,
+  };
+}
+
+function buildSubmissionExportBundle(input: {
+  dossier: SubmissionDossierView;
+  evidence: SubmissionEvidenceRecordView[];
+}): SubmissionExportBundleView {
+  const evidenceByType = (type: SubmissionEvidenceType): SubmissionEvidenceRecordView[] =>
+    input.evidence.filter((item) => item.evidenceType === type && item.status !== 'rejected');
+  const addressCount = [input.dossier.walletAddress, input.dossier.vaultAddress].filter(
+    (value): value is string => value !== null,
+  ).length;
+  const onChainEvidence = evidenceByType('on_chain_transaction').filter((item) => item.withinBuildWindow);
+  const performanceEvidence = evidenceByType('performance_snapshot');
+  const cexTradeHistoryEvidence = evidenceByType('cex_trade_history');
+  const cexApiEvidence = evidenceByType('cex_read_only_api');
+  const artifactChecklist: SubmissionExportArtifactView[] = [
+    buildSubmissionExportArtifact(
+      'addresses',
+      'Canonical wallet or vault address',
+      true,
+      input.dossier.addressScope === 'unconfigured' ? 'fail' : 'pass',
+      input.dossier.addressScope === 'unconfigured'
+        ? 'Submission is still missing a canonical wallet or vault address.'
+        : `Submission exposes ${addressCount} canonical on-chain verification address(es).`,
+      input.dossier.addressScope === 'unconfigured' ? 'submission_address_required' : null,
+      addressCount,
+      [],
+    ),
+    buildSubmissionExportArtifact(
+      'on_chain_trade_activity',
+      'On-chain trade activity in the build window',
+      true,
+      onChainEvidence.length > 0 || input.dossier.realExecutionCountInWindow > 0 ? 'pass' : 'fail',
+      onChainEvidence.length > 0
+        ? `${onChainEvidence.length} explicit on-chain transaction evidence item(s) are attached to the build window.`
+        : input.dossier.realExecutionCountInWindow > 0
+          ? `Runtime persists ${input.dossier.realExecutionCountInWindow} real execution record(s) in the build window, but no explicit evidence attachment was recorded.`
+          : 'No on-chain trade evidence is attached to the build window.',
+      onChainEvidence.length > 0 || input.dossier.realExecutionCountInWindow > 0
+        ? null
+        : 'on_chain_trade_evidence_missing',
+      onChainEvidence.length,
+      ['on_chain_transaction'],
+    ),
+    buildSubmissionExportArtifact(
+      'realized_performance',
+      'Realized performance evidence',
+      true,
+      input.dossier.realizedApyPct !== null && decimalOrZero(input.dossier.realizedApyPct).gte(10)
+        ? 'pass'
+        : 'fail',
+      input.dossier.realizedApyPct === null
+        ? performanceEvidence.length > 0
+          ? 'Performance evidence attachments exist, but no realized APY value is persisted yet.'
+          : 'No realized APY evidence is attached or persisted yet.'
+        : decimalOrZero(input.dossier.realizedApyPct).gte(10)
+          ? `Realized APY ${input.dossier.realizedApyPct}% is persisted and meets the minimum.`
+          : `Realized APY ${input.dossier.realizedApyPct}% is persisted but below the 10% minimum.`,
+      input.dossier.realizedApyPct !== null && decimalOrZero(input.dossier.realizedApyPct).gte(10)
+        ? null
+        : input.dossier.realizedApyPct === null
+          ? 'realized_apy_evidence_missing'
+          : 'realized_apy_below_minimum',
+      performanceEvidence.length,
+      ['performance_snapshot'],
+    ),
+    buildSubmissionExportArtifact(
+      'cex_trade_history',
+      'CEX trade history export',
+      input.dossier.cexExecutionUsed,
+      !input.dossier.cexExecutionUsed || input.dossier.cexTradeHistoryProvided || cexTradeHistoryEvidence.length > 0
+        ? 'pass'
+        : 'fail',
+      !input.dossier.cexExecutionUsed
+        ? 'Not required for an on-chain-only submission.'
+        : input.dossier.cexTradeHistoryProvided || cexTradeHistoryEvidence.length > 0
+          ? 'CEX trade history evidence is marked as provided.'
+          : 'CEX trade history export is still missing.',
+      !input.dossier.cexExecutionUsed || input.dossier.cexTradeHistoryProvided || cexTradeHistoryEvidence.length > 0
+        ? null
+        : 'cex_verification_artifacts_missing',
+      cexTradeHistoryEvidence.length,
+      ['cex_trade_history'],
+    ),
+    buildSubmissionExportArtifact(
+      'cex_read_only_api',
+      'CEX read-only API verification',
+      input.dossier.cexExecutionUsed,
+      !input.dossier.cexExecutionUsed || input.dossier.cexReadOnlyApiKeyProvided || cexApiEvidence.length > 0
+        ? 'pass'
+        : 'fail',
+      !input.dossier.cexExecutionUsed
+        ? 'Not required for an on-chain-only submission.'
+        : input.dossier.cexReadOnlyApiKeyProvided || cexApiEvidence.length > 0
+          ? 'CEX read-only API verification is marked as provided.'
+          : 'CEX read-only API verification is still missing.',
+      !input.dossier.cexExecutionUsed || input.dossier.cexReadOnlyApiKeyProvided || cexApiEvidence.length > 0
+        ? null
+        : 'cex_verification_artifacts_missing',
+      cexApiEvidence.length,
+      ['cex_read_only_api'],
+    ),
+  ];
+
+  const verificationLinks = [
+    input.dossier.walletVerificationUrl,
+    input.dossier.vaultVerificationUrl,
+    input.dossier.latestExecutionReferenceUrl,
+    ...input.evidence.map((item) => item.url),
+  ].flatMap((value) => (value === null ? [] : [value]));
+
+  const blockedReasons = artifactChecklist.flatMap((item) =>
+    item.status === 'fail' && item.blockedReason !== null ? [item.blockedReason] : []);
+  const judgeSummary = blockedReasons.length === 0
+    ? 'Submission bundle includes the required verification artifacts for a Main Track review.'
+    : `Submission bundle remains blocked by ${blockedReasons.length} requirement(s): ${blockedReasons.join(', ')}.`;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    dossier: input.dossier,
+    evidence: input.evidence,
+    artifactChecklist,
+    judgeSummary,
+    blockedReasons,
+    verificationLinks: [...new Set(verificationLinks)],
+  };
 }
 
 function asTreasuryBlockedReasons(value: unknown): TreasuryActionBlockedReason[] {
@@ -1168,21 +1851,23 @@ function asTreasuryBlockedReasons(value: unknown): TreasuryActionBlockedReason[]
     const operatorAction = record['operatorAction'];
 
     if (
-      typeof code !== 'string'
-      || typeof category !== 'string'
-      || typeof message !== 'string'
-      || typeof operatorAction !== 'string'
+      typeof code !== 'string' ||
+      typeof category !== 'string' ||
+      typeof message !== 'string' ||
+      typeof operatorAction !== 'string'
     ) {
       return [];
     }
 
-    return [{
-      code: code as TreasuryActionBlockedReason['code'],
-      category: category as TreasuryActionBlockedReason['category'],
-      message,
-      operatorAction,
-      details: asJsonObject(record['details']),
-    }];
+    return [
+      {
+        code: code as TreasuryActionBlockedReason['code'],
+        category: category as TreasuryActionBlockedReason['category'],
+        message,
+        operatorAction,
+        details: asJsonObject(record['details']),
+      },
+    ];
   });
 }
 
@@ -1203,21 +1888,23 @@ function asCarryBlockedReasons(value: unknown): CarryOperationalBlockedReason[] 
     const operatorAction = record['operatorAction'];
 
     if (
-      typeof code !== 'string'
-      || typeof category !== 'string'
-      || typeof message !== 'string'
-      || typeof operatorAction !== 'string'
+      typeof code !== 'string' ||
+      typeof category !== 'string' ||
+      typeof message !== 'string' ||
+      typeof operatorAction !== 'string'
     ) {
       return [];
     }
 
-    return [{
-      code: code as CarryOperationalBlockedReason['code'],
-      category: category as CarryOperationalBlockedReason['category'],
-      message,
-      operatorAction,
-      details: asJsonObject(record['details']),
-    }];
+    return [
+      {
+        code: code as CarryOperationalBlockedReason['code'],
+        category: category as CarryOperationalBlockedReason['category'],
+        message,
+        operatorAction,
+        details: asJsonObject(record['details']),
+      },
+    ];
   });
 }
 
@@ -1228,14 +1915,14 @@ function asCarryStrategyProfile(value: unknown): CarryStrategyProfileView | null
 
   const record = value as Record<string, unknown>;
   if (
-    typeof record['strategyId'] !== 'string'
-    || typeof record['strategyName'] !== 'string'
-    || typeof record['vaultBaseAsset'] !== 'string'
-    || typeof record['strategyFamily'] !== 'string'
-    || typeof record['yieldSourceCategory'] !== 'string'
-    || typeof record['leverageModel'] !== 'string'
-    || typeof record['oracleDependencyClass'] !== 'string'
-    || typeof record['lockReassessmentPolicy'] !== 'string'
+    typeof record['strategyId'] !== 'string' ||
+    typeof record['strategyName'] !== 'string' ||
+    typeof record['vaultBaseAsset'] !== 'string' ||
+    typeof record['strategyFamily'] !== 'string' ||
+    typeof record['yieldSourceCategory'] !== 'string' ||
+    typeof record['leverageModel'] !== 'string' ||
+    typeof record['oracleDependencyClass'] !== 'string' ||
+    typeof record['lockReassessmentPolicy'] !== 'string'
   ) {
     return null;
   }
@@ -1272,25 +1959,29 @@ function asBundleRecoveryBlockedReasons(value: unknown): RebalanceBundleRecovery
     const operatorAction = record['operatorAction'];
 
     if (
-      typeof code !== 'string'
-      || typeof category !== 'string'
-      || typeof message !== 'string'
-      || typeof operatorAction !== 'string'
+      typeof code !== 'string' ||
+      typeof category !== 'string' ||
+      typeof message !== 'string' ||
+      typeof operatorAction !== 'string'
     ) {
       return [];
     }
 
-    return [{
-      code: code as RebalanceBundleRecoveryBlockedReason['code'],
-      category: category as RebalanceBundleRecoveryBlockedReason['category'],
-      message,
-      operatorAction,
-      details: asJsonObject(record['details']),
-    }];
+    return [
+      {
+        code: code as RebalanceBundleRecoveryBlockedReason['code'],
+        category: category as RebalanceBundleRecoveryBlockedReason['category'],
+        message,
+        operatorAction,
+        details: asJsonObject(record['details']),
+      },
+    ];
   });
 }
 
-function asBundleResolutionBlockedReasons(value: unknown): RebalanceBundleResolutionBlockedReason[] {
+function asBundleResolutionBlockedReasons(
+  value: unknown,
+): RebalanceBundleResolutionBlockedReason[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -1307,30 +1998,24 @@ function asBundleResolutionBlockedReasons(value: unknown): RebalanceBundleResolu
     const operatorAction = record['operatorAction'];
 
     if (
-      typeof code !== 'string'
-      || typeof category !== 'string'
-      || typeof message !== 'string'
-      || typeof operatorAction !== 'string'
+      typeof code !== 'string' ||
+      typeof category !== 'string' ||
+      typeof message !== 'string' ||
+      typeof operatorAction !== 'string'
     ) {
       return [];
     }
 
-    return [{
-      code: code as RebalanceBundleResolutionBlockedReason['code'],
-      category: category as RebalanceBundleResolutionBlockedReason['category'],
-      message,
-      operatorAction,
-      details: asJsonObject(record['details']),
-    }];
+    return [
+      {
+        code: code as RebalanceBundleResolutionBlockedReason['code'],
+        category: category as RebalanceBundleResolutionBlockedReason['category'],
+        message,
+        operatorAction,
+        details: asJsonObject(record['details']),
+      },
+    ];
   });
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is string => typeof item === 'string');
 }
 
 function asAllocatorRationales(value: unknown): AllocatorRationale[] {
@@ -1351,12 +2036,14 @@ function asAllocatorRationales(value: unknown): AllocatorRationale[] {
       return [];
     }
 
-    return [{
-      code,
-      severity: severity as AllocatorRationale['severity'],
-      summary,
-      details: asJsonObject(record['details']),
-    }];
+    return [
+      {
+        code,
+        severity: severity as AllocatorRationale['severity'],
+        summary,
+        details: asJsonObject(record['details']),
+      },
+    ];
   });
 }
 
@@ -1375,19 +2062,21 @@ function asRebalanceBlockedReasons(value: unknown): RebalanceBlockedReason[] {
     const message = record['message'];
     const operatorAction = record['operatorAction'];
     if (
-      typeof code !== 'string'
-      || typeof message !== 'string'
-      || typeof operatorAction !== 'string'
+      typeof code !== 'string' ||
+      typeof message !== 'string' ||
+      typeof operatorAction !== 'string'
     ) {
       return [];
     }
 
-    return [{
-      code: code as RebalanceBlockedReason['code'],
-      message,
-      operatorAction,
-      details: asJsonObject(record['details']),
-    }];
+    return [
+      {
+        code: code as RebalanceBlockedReason['code'],
+        message,
+        operatorAction,
+        details: asJsonObject(record['details']),
+      },
+    ];
   });
 }
 
@@ -1487,10 +2176,12 @@ function isMismatchActionable(
     return false;
   }
 
-  return status === 'open'
-    || status === 'acknowledged'
-    || status === 'recovering'
-    || status === 'reopened';
+  return (
+    status === 'open' ||
+    status === 'acknowledged' ||
+    status === 'recovering' ||
+    status === 'reopened'
+  );
 }
 
 function recommendedRemediationsForMismatch(
@@ -1499,18 +2190,18 @@ function recommendedRemediationsForMismatch(
 ): RuntimeRemediationActionType[] {
   const findingType = latestFinding?.findingType ?? null;
   if (
-    findingType === 'projection_state_mismatch'
-    || findingType === 'stale_projection_state'
-    || mismatch.category === 'projection_mismatch'
+    findingType === 'projection_state_mismatch' ||
+    findingType === 'stale_projection_state' ||
+    mismatch.category === 'projection_mismatch'
   ) {
     return ['rebuild_projections'];
   }
 
   if (
-    findingType === 'order_state_mismatch'
-    || findingType === 'position_exposure_mismatch'
-    || findingType === 'command_outcome_mismatch'
-    || mismatch.category === 'execution_state_mismatch'
+    findingType === 'order_state_mismatch' ||
+    findingType === 'position_exposure_mismatch' ||
+    findingType === 'command_outcome_mismatch' ||
+    mismatch.category === 'execution_state_mismatch'
   ) {
     return ['run_cycle', 'rebuild_projections'];
   }
@@ -1604,7 +2295,9 @@ function mapReconciliationFindingRow(
   };
 }
 
-function mapRecoveryEventRow(row: typeof runtimeRecoveryEvents.$inferSelect): RuntimeRecoveryEventView {
+function mapRecoveryEventRow(
+  row: typeof runtimeRecoveryEvents.$inferSelect,
+): RuntimeRecoveryEventView {
   return {
     id: row.id,
     mismatchId: row.mismatchId ?? null,
@@ -1620,9 +2313,7 @@ function mapRecoveryEventRow(row: typeof runtimeRecoveryEvents.$inferSelect): Ru
   };
 }
 
-function mapTreasurySummaryRow(
-  row: typeof treasuryRuns.$inferSelect,
-): TreasurySummaryView {
+function mapTreasurySummaryRow(row: typeof treasuryRuns.$inferSelect): TreasurySummaryView {
   const summary = asJsonObject(row.summary);
   const reserveStatus = asRecord(summary['reserveStatus']);
   const alerts = Array.isArray(summary['alerts'])
@@ -1682,15 +2373,16 @@ function mapTreasuryVenueRow(
   const supportsReduction = metadata['supportsReduction'] === true;
   const readOnly = metadata['readOnly'] === true;
   const approvedForLiveUse = metadata['approvedForLiveUse'] === true;
-  const onboardingState = typeof metadata['onboardingState'] === 'string'
-    ? metadata['onboardingState'] as TreasuryVenueView['onboardingState']
-    : row.venueMode === 'simulated'
-      ? 'simulated'
-      : readOnly
-        ? 'read_only'
-        : approvedForLiveUse
-          ? 'approved_for_live'
-          : 'ready_for_review';
+  const onboardingState =
+    typeof metadata['onboardingState'] === 'string'
+      ? (metadata['onboardingState'] as TreasuryVenueView['onboardingState'])
+      : row.venueMode === 'simulated'
+        ? 'simulated'
+        : readOnly
+          ? 'read_only'
+          : approvedForLiveUse
+            ? 'approved_for_live'
+            : 'ready_for_review';
 
   return {
     venueId: row.venueId,
@@ -1723,9 +2415,7 @@ function mapTreasuryVenueRow(
   };
 }
 
-function mapTreasuryActionRow(
-  row: typeof treasuryActions.$inferSelect,
-): TreasuryActionView {
+function mapTreasuryActionRow(row: typeof treasuryActions.$inferSelect): TreasuryActionView {
   return {
     id: row.id,
     treasuryRunId: row.treasuryRunId,
@@ -1804,9 +2494,7 @@ function mapAllocatorSummaryRow(row: typeof allocatorRuns.$inferSelect): Allocat
   };
 }
 
-function mapCarryVenueRow(
-  row: typeof carryVenueSnapshots.$inferSelect,
-): CarryVenueCoreView {
+function mapCarryVenueRow(row: typeof carryVenueSnapshots.$inferSelect): CarryVenueCoreView {
   return {
     strategyRunId: row.strategyRunId,
     venueId: row.venueId,
@@ -1818,7 +2506,9 @@ function mapCarryVenueRow(
     approvedForLiveUse: row.approvedForLiveUse,
     healthy: row.healthy,
     onboardingState: row.onboardingState as CarryVenueView['onboardingState'],
-    missingPrerequisites: Array.isArray(row.missingPrerequisites) ? row.missingPrerequisites as string[] : [],
+    missingPrerequisites: Array.isArray(row.missingPrerequisites)
+      ? (row.missingPrerequisites as string[])
+      : [],
     metadata: asJsonObject(row.metadata),
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
@@ -1926,14 +2616,16 @@ function mapVenueInventoryItem(
   };
 }
 
-function mapCarryActionRow(
-  row: typeof carryActions.$inferSelect,
-): CarryActionView {
+function mapCarryActionRow(row: typeof carryActions.$inferSelect): CarryActionView {
   const details = asJsonObject(row.details);
   const executionPlan = asJsonObject(row.executionPlan);
-  const strategyProfile = asCarryStrategyProfile(executionPlan['strategyProfile']) ?? buildCarryStrategyProfile({
-    projectedApyPct: asDecimalLikeString(details['netYieldPct'] ?? details['expectedAnnualYieldPct']),
-  });
+  const strategyProfile =
+    asCarryStrategyProfile(executionPlan['strategyProfile']) ??
+    buildCarryStrategyProfile({
+      projectedApyPct: asDecimalLikeString(
+        details['netYieldPct'] ?? details['expectedAnnualYieldPct'],
+      ),
+    });
 
   return {
     id: row.id,
@@ -1996,16 +2688,16 @@ function mapCarryPlannedOrderRow(
       provenance: 'derived',
       capturedAtStage: 'carry_planned_order',
       source: 'carry_action_order_intents',
-      notes: ['Carry planned-order market identity falls back to persisted order metadata when venue-native metadata is unavailable.'],
+      notes: [
+        'Carry planned-order market identity falls back to persisted order metadata when venue-native metadata is unavailable.',
+      ],
     }),
     metadata,
     createdAt: row.createdAt.toISOString(),
   };
 }
 
-function mapCarryExecutionRow(
-  row: typeof carryActionExecutions.$inferSelect,
-): CarryExecutionView {
+function mapCarryExecutionRow(row: typeof carryActionExecutions.$inferSelect): CarryExecutionView {
   return {
     id: row.id,
     carryActionId: row.carryActionId,
@@ -2070,7 +2762,9 @@ function mapCarryExecutionStepRow(
       provenance: 'derived',
       capturedAtStage: 'carry_execution_step',
       source: 'carry_execution_steps',
-      notes: ['Carry execution-step market identity falls back to persisted step metadata when venue-native metadata is unavailable.'],
+      notes: [
+        'Carry execution-step market identity falls back to persisted step metadata when venue-native metadata is unavailable.',
+      ],
     }),
     metadata,
     createdAt: row.createdAt.toISOString(),
@@ -2090,7 +2784,9 @@ function deriveOrderMarketIdentity(
     provenance: 'derived',
     capturedAtStage: 'runtime_order',
     source: 'runtime_orders_table',
-    notes: ['Runtime order market identity falls back to persisted order metadata when no venue-native market metadata was captured earlier.'],
+    notes: [
+      'Runtime order market identity falls back to persisted order metadata when no venue-native market metadata was captured earlier.',
+    ],
   });
 }
 
@@ -2137,7 +2833,9 @@ function mapAllocatorRunRow(row: typeof allocatorRuns.$inferSelect): AllocatorRu
     allocatableCapitalUsd: row.allocatableCapitalUsd,
     recommendationCount: row.recommendationCount,
     rationale: asAllocatorRationales(row.rationale),
-    constraints: Array.isArray(row.constraints) ? row.constraints as AllocatorRunView['constraints'] : [],
+    constraints: Array.isArray(row.constraints)
+      ? (row.constraints as AllocatorRunView['constraints'])
+      : [],
     inputSnapshot: asJsonObject(row.inputSnapshot),
     policySnapshot: asJsonObject(row.policySnapshot),
     evaluatedAt: row.evaluatedAt.toISOString(),
@@ -2289,7 +2987,8 @@ function mapRebalanceBundleRow(
     status: row.status as RebalanceBundleStatus,
     completionState: row.completionState as RebalanceBundleCompletionState,
     outcomeClassification: row.outcomeClassification as RebalanceBundleOutcomeClassification,
-    interventionRecommendation: row.interventionRecommendation as RebalanceBundleInterventionRecommendation,
+    interventionRecommendation:
+      row.interventionRecommendation as RebalanceBundleInterventionRecommendation,
     totalChildCount: row.totalChildCount,
     blockedChildCount: row.blockedChildCount,
     failedChildCount: row.failedChildCount,
@@ -2330,13 +3029,15 @@ function mapRebalanceBundleRecoveryActionRow(
     targetChildSummary: row.targetChildSummary,
     eligibilityState: row.eligibilityState as RebalanceBundleRecoveryEligibilityState,
     blockedReasons: asBundleRecoveryBlockedReasons(row.blockedReasons),
-    approvalRequirement: row.approvalRequirement as RebalanceBundleRecoveryActionView['approvalRequirement'],
+    approvalRequirement:
+      row.approvalRequirement as RebalanceBundleRecoveryActionView['approvalRequirement'],
     status: row.status as RebalanceBundleRecoveryStatus,
     requestedBy: row.requestedBy,
     requestedAt: row.requestedAt.toISOString(),
     note: row.note ?? null,
     linkedCommandId: row.linkedCommandId ?? null,
-    targetCommandType: row.targetCommandType as RebalanceBundleRecoveryActionView['targetCommandType'],
+    targetCommandType:
+      row.targetCommandType as RebalanceBundleRecoveryActionView['targetCommandType'],
     linkedCarryActionId: row.linkedCarryActionId ?? null,
     linkedTreasuryActionId: row.linkedTreasuryActionId ?? null,
     outcomeSummary: row.outcomeSummary ?? null,
@@ -2475,7 +3176,8 @@ function sortEscalationQueueItems(
         break;
       case 'latest_activity':
       default:
-        comparison = new Date(left.latestActivityAt).getTime() - new Date(right.latestActivityAt).getTime();
+        comparison =
+          new Date(left.latestActivityAt).getTime() - new Date(right.latestActivityAt).getTime();
         break;
     }
 
@@ -2510,9 +3212,10 @@ function summariseRebalanceDownstreamRollup(input: {
     status = 'completed';
   }
 
-  const summary = input.actionCount === 0
-    ? 'No downstream actions were persisted.'
-    : `${input.actionCount} actions and ${input.executionCount} executions recorded.`;
+  const summary =
+    input.actionCount === 0
+      ? 'No downstream actions were persisted.'
+      : `${input.actionCount} actions and ${input.executionCount} executions recorded.`;
 
   return {
     status,
@@ -2529,9 +3232,7 @@ function summariseRebalanceDownstreamRollup(input: {
 }
 
 function deriveBundleChildState(
-  action:
-    | RebalanceCarryActionNodeView['action']
-    | RebalanceTreasuryActionNodeView['action'],
+  action: RebalanceCarryActionNodeView['action'] | RebalanceTreasuryActionNodeView['action'],
   executions: Array<CarryExecutionView | TreasuryExecutionView>,
 ): 'blocked' | 'failed' | 'completed' | 'pending' | 'executing' {
   if (executions.some((execution) => execution.status === 'failed')) {
@@ -2565,9 +3266,7 @@ function deriveBundleChildState(
   return 'pending';
 }
 
-function deriveRebalanceBundleSnapshot(
-  graph: RebalanceExecutionGraphView,
-): {
+function deriveRebalanceBundleSnapshot(graph: RebalanceExecutionGraphView): {
   status: RebalanceBundleStatus;
   completionState: RebalanceBundleCompletionState;
   outcomeClassification: RebalanceBundleOutcomeClassification;
@@ -2582,10 +3281,10 @@ function deriveRebalanceBundleSnapshot(
   finalizedAt: string | null;
 } {
   const carryChildStates = graph.downstream.carry.actions.map((node) =>
-    deriveBundleChildState(node.action, node.executions)
+    deriveBundleChildState(node.action, node.executions),
   );
   const treasuryChildStates = graph.downstream.treasury.actions.map((node) =>
-    deriveBundleChildState(node.action, node.executions)
+    deriveBundleChildState(node.action, node.executions),
   );
   const childStates = [...carryChildStates, ...treasuryChildStates];
 
@@ -2593,7 +3292,9 @@ function deriveRebalanceBundleSnapshot(
   const blockedChildCount = childStates.filter((state) => state === 'blocked').length;
   const failedChildCount = childStates.filter((state) => state === 'failed').length;
   const completedChildCount = childStates.filter((state) => state === 'completed').length;
-  const pendingChildCount = childStates.filter((state) => state === 'pending' || state === 'executing').length;
+  const pendingChildCount = childStates.filter(
+    (state) => state === 'pending' || state === 'executing',
+  ).length;
   const hasCompletedChildren = completedChildCount > 0;
   const hasPendingChildren = pendingChildCount > 0;
   const hasFailedChildren = failedChildCount > 0;
@@ -2603,7 +3304,8 @@ function deriveRebalanceBundleSnapshot(
   let status: RebalanceBundleStatus = 'proposed';
   let completionState: RebalanceBundleCompletionState = 'open';
   let outcomeClassification: RebalanceBundleOutcomeClassification = 'pending';
-  let interventionRecommendation: RebalanceBundleInterventionRecommendation = 'operator_review_required';
+  let interventionRecommendation: RebalanceBundleInterventionRecommendation =
+    'operator_review_required';
   let finalizationReason: string | null = null;
 
   if (proposal.status === 'rejected') {
@@ -2611,14 +3313,18 @@ function deriveRebalanceBundleSnapshot(
     completionState = 'finalized';
     outcomeClassification = 'rejected';
     interventionRecommendation = 'no_action_needed';
-    finalizationReason = proposal.rejectionReason ?? 'Proposal was rejected before coordinated execution.';
-  } else if (proposal.status === 'proposed' || proposal.status === 'approved' || proposal.status === 'queued') {
+    finalizationReason =
+      proposal.rejectionReason ?? 'Proposal was rejected before coordinated execution.';
+  } else if (
+    proposal.status === 'proposed' ||
+    proposal.status === 'approved' ||
+    proposal.status === 'queued'
+  ) {
     status = proposal.status === 'queued' ? 'queued' : 'proposed';
     completionState = 'open';
     outcomeClassification = 'pending';
-    interventionRecommendation = proposal.status === 'queued'
-      ? 'wait_for_inflight_children'
-      : 'operator_review_required';
+    interventionRecommendation =
+      proposal.status === 'queued' ? 'wait_for_inflight_children' : 'operator_review_required';
   } else if (proposal.status === 'executing' || hasPendingChildren) {
     status = 'executing';
     completionState = 'open';
@@ -2635,13 +3341,15 @@ function deriveRebalanceBundleSnapshot(
     completionState = 'finalized';
     outcomeClassification = 'partial_application';
     interventionRecommendation = 'unresolved_partial_application';
-    finalizationReason = 'At least one downstream child completed and at least one remains blocked.';
+    finalizationReason =
+      'At least one downstream child completed and at least one remains blocked.';
   } else if (hasFailedChildren) {
     status = 'failed';
     completionState = 'finalized';
     outcomeClassification = 'failed';
     interventionRecommendation = 'inspect_child_failures';
-    finalizationReason = 'At least one downstream child failed and no child completed successfully.';
+    finalizationReason =
+      'At least one downstream child failed and no child completed successfully.';
   } else if (hasBlockedChildren) {
     status = 'blocked';
     completionState = 'finalized';
@@ -2653,7 +3361,8 @@ function deriveRebalanceBundleSnapshot(
     completionState = 'finalized';
     outcomeClassification = 'partial_application';
     interventionRecommendation = 'unresolved_partial_application';
-    finalizationReason = 'The rebalance finished with only a subset of downstream children completed.';
+    finalizationReason =
+      'The rebalance finished with only a subset of downstream children completed.';
   } else if (proposal.status === 'failed') {
     status = hasCompletedChildren ? 'requires_intervention' : 'failed';
     completionState = 'finalized';
@@ -2667,17 +3376,22 @@ function deriveRebalanceBundleSnapshot(
     completionState = 'finalized';
     outcomeClassification = 'safe_complete';
     interventionRecommendation = 'no_action_needed';
-    finalizationReason = 'All downstream work recorded for the rebalance bundle completed successfully.';
+    finalizationReason =
+      'All downstream work recorded for the rebalance bundle completed successfully.';
   }
 
-  const terminalTimestamp = graph.timeline
-    .filter((entry) =>
-      entry.scope !== 'recovery_action'
-      && (entry.status === 'completed' || entry.status === 'failed' || entry.status === 'rejected')
-    )
-    .map((entry) => entry.at)
-    .sort()
-    .at(-1) ?? null;
+  const terminalTimestamp =
+    graph.timeline
+      .filter(
+        (entry) =>
+          entry.scope !== 'recovery_action' &&
+          (entry.status === 'completed' ||
+            entry.status === 'failed' ||
+            entry.status === 'rejected'),
+      )
+      .map((entry) => entry.at)
+      .sort()
+      .at(-1) ?? null;
 
   return {
     status,
@@ -2737,27 +3451,29 @@ function createRebalanceTimeline(input: {
   resolutionActions: RebalanceBundleResolutionActionView[];
   escalationHistory: RebalanceBundleEscalationEventView[];
 }): RebalanceExecutionTimelineEntry[] {
-  const entries: RebalanceExecutionTimelineEntry[] = [{
-    id: `${input.detail.proposal.id}:proposed`,
-    eventType: 'proposed',
-    at: input.detail.proposal.createdAt,
-    actorId: null,
-    sleeveId: 'allocator',
-    scope: 'proposal',
-    status: input.detail.proposal.status,
-    summary: 'Rebalance proposal was persisted from the allocator decision.',
-    linkedCommandId: null,
-    linkedRebalanceExecutionId: null,
-    linkedActionId: null,
-    linkedExecutionId: null,
-    linkedRecoveryActionId: null,
-    linkedResolutionActionId: null,
-    linkedEscalationId: null,
-    details: {
-      allocatorRunId: input.detail.proposal.allocatorRunId,
-      actionType: input.detail.proposal.actionType,
+  const entries: RebalanceExecutionTimelineEntry[] = [
+    {
+      id: `${input.detail.proposal.id}:proposed`,
+      eventType: 'proposed',
+      at: input.detail.proposal.createdAt,
+      actorId: null,
+      sleeveId: 'allocator',
+      scope: 'proposal',
+      status: input.detail.proposal.status,
+      summary: 'Rebalance proposal was persisted from the allocator decision.',
+      linkedCommandId: null,
+      linkedRebalanceExecutionId: null,
+      linkedActionId: null,
+      linkedExecutionId: null,
+      linkedRecoveryActionId: null,
+      linkedResolutionActionId: null,
+      linkedEscalationId: null,
+      details: {
+        allocatorRunId: input.detail.proposal.allocatorRunId,
+        actionType: input.detail.proposal.actionType,
+      },
     },
-  }];
+  ];
 
   if (input.detail.proposal.approvedAt !== null) {
     entries.push({
@@ -2837,7 +3553,8 @@ function createRebalanceTimeline(input: {
       sleeveId: 'allocator',
       scope: 'rebalance_execution',
       status: execution.status,
-      summary: execution.outcomeSummary ?? execution.lastError ?? 'Rebalance execution was recorded.',
+      summary:
+        execution.outcomeSummary ?? execution.lastError ?? 'Rebalance execution was recorded.',
       linkedCommandId: execution.commandId,
       linkedRebalanceExecutionId: execution.id,
       linkedActionId: null,
@@ -2879,7 +3596,8 @@ function createRebalanceTimeline(input: {
         sleeveId: 'allocator',
         scope: 'rebalance_execution',
         status: execution.status,
-        summary: execution.outcomeSummary ?? execution.lastError ?? 'Rebalance execution completed.',
+        summary:
+          execution.outcomeSummary ?? execution.lastError ?? 'Rebalance execution completed.',
         linkedCommandId: execution.commandId,
         linkedRebalanceExecutionId: execution.id,
         linkedActionId: null,
@@ -2996,7 +3714,8 @@ function createRebalanceTimeline(input: {
         sleeveId: 'treasury',
         scope: 'downstream_execution',
         status: execution.status,
-        summary: execution.outcomeSummary ?? execution.lastError ?? 'Treasury execution was recorded.',
+        summary:
+          execution.outcomeSummary ?? execution.lastError ?? 'Treasury execution was recorded.',
         linkedCommandId: execution.commandId,
         linkedRebalanceExecutionId: null,
         linkedActionId: node.action.id,
@@ -3013,11 +3732,12 @@ function createRebalanceTimeline(input: {
   }
 
   for (const recoveryAction of input.recoveryActions) {
-    const sleeveId: RebalanceExecutionTimelineEntry['sleeveId'] = recoveryAction.targetChildType === 'carry_action'
-      ? 'carry'
-      : recoveryAction.targetChildType === 'treasury_action'
-        ? 'treasury'
-        : 'allocator';
+    const sleeveId: RebalanceExecutionTimelineEntry['sleeveId'] =
+      recoveryAction.targetChildType === 'carry_action'
+        ? 'carry'
+        : recoveryAction.targetChildType === 'treasury_action'
+          ? 'treasury'
+          : 'allocator';
 
     entries.push({
       id: `${recoveryAction.id}:requested`,
@@ -3030,9 +3750,11 @@ function createRebalanceTimeline(input: {
       summary: `Recovery requested for ${recoveryAction.targetChildType} ${recoveryAction.targetChildId}.`,
       linkedCommandId: recoveryAction.linkedCommandId,
       linkedRebalanceExecutionId: null,
-      linkedActionId: recoveryAction.targetChildType === 'carry_action' || recoveryAction.targetChildType === 'treasury_action'
-        ? recoveryAction.targetChildId
-        : null,
+      linkedActionId:
+        recoveryAction.targetChildType === 'carry_action' ||
+        recoveryAction.targetChildType === 'treasury_action'
+          ? recoveryAction.targetChildId
+          : null,
       linkedExecutionId: null,
       linkedRecoveryActionId: recoveryAction.id,
       linkedResolutionActionId: null,
@@ -3057,9 +3779,11 @@ function createRebalanceTimeline(input: {
         summary: `Recovery action queued ${recoveryAction.targetCommandType ?? 'command'} for ${recoveryAction.targetChildId}.`,
         linkedCommandId: recoveryAction.linkedCommandId,
         linkedRebalanceExecutionId: null,
-        linkedActionId: recoveryAction.targetChildType === 'carry_action' || recoveryAction.targetChildType === 'treasury_action'
-          ? recoveryAction.targetChildId
-          : null,
+        linkedActionId:
+          recoveryAction.targetChildType === 'carry_action' ||
+          recoveryAction.targetChildType === 'treasury_action'
+            ? recoveryAction.targetChildId
+            : null,
         linkedExecutionId: null,
         linkedRecoveryActionId: recoveryAction.id,
         linkedResolutionActionId: null,
@@ -3071,11 +3795,12 @@ function createRebalanceTimeline(input: {
     }
 
     if (recoveryAction.completedAt !== null) {
-      const eventType = recoveryAction.status === 'completed'
-        ? 'recovery_completed'
-        : recoveryAction.status === 'blocked'
-          ? 'recovery_blocked'
-          : 'recovery_failed';
+      const eventType =
+        recoveryAction.status === 'completed'
+          ? 'recovery_completed'
+          : recoveryAction.status === 'blocked'
+            ? 'recovery_blocked'
+            : 'recovery_failed';
       entries.push({
         id: `${recoveryAction.id}:${recoveryAction.status}`,
         eventType,
@@ -3084,14 +3809,17 @@ function createRebalanceTimeline(input: {
         sleeveId,
         scope: 'recovery_action',
         status: recoveryAction.status,
-        summary: recoveryAction.outcomeSummary
-          ?? recoveryAction.lastError
-          ?? `Recovery action ${recoveryAction.status}.`,
+        summary:
+          recoveryAction.outcomeSummary ??
+          recoveryAction.lastError ??
+          `Recovery action ${recoveryAction.status}.`,
         linkedCommandId: recoveryAction.linkedCommandId,
         linkedRebalanceExecutionId: null,
-        linkedActionId: recoveryAction.targetChildType === 'carry_action' || recoveryAction.targetChildType === 'treasury_action'
-          ? recoveryAction.targetChildId
-          : null,
+        linkedActionId:
+          recoveryAction.targetChildType === 'carry_action' ||
+          recoveryAction.targetChildType === 'treasury_action'
+            ? recoveryAction.targetChildId
+            : null,
         linkedExecutionId: null,
         linkedRecoveryActionId: recoveryAction.id,
         linkedResolutionActionId: null,
@@ -3104,15 +3832,17 @@ function createRebalanceTimeline(input: {
   for (const resolutionAction of input.resolutionActions) {
     entries.push({
       id: `${resolutionAction.id}:${resolutionAction.status}`,
-      eventType: resolutionAction.status === 'blocked' ? 'resolution_blocked' : 'resolution_completed',
+      eventType:
+        resolutionAction.status === 'blocked' ? 'resolution_blocked' : 'resolution_completed',
       at: resolutionAction.completedAt ?? resolutionAction.requestedAt,
       actorId: resolutionAction.completedBy ?? resolutionAction.requestedBy,
       sleeveId: 'allocator',
       scope: 'resolution_action',
       status: resolutionAction.status,
-      summary: resolutionAction.outcomeSummary
-        ?? resolutionAction.note
-        ?? `Bundle resolution recorded as ${resolutionAction.resolutionState}.`,
+      summary:
+        resolutionAction.outcomeSummary ??
+        resolutionAction.note ??
+        `Bundle resolution recorded as ${resolutionAction.resolutionState}.`,
       linkedCommandId: null,
       linkedRebalanceExecutionId: null,
       linkedActionId: null,
@@ -3132,15 +3862,16 @@ function createRebalanceTimeline(input: {
   }
 
   for (const escalationEvent of input.escalationHistory) {
-    const eventType = escalationEvent.eventType === 'created'
-      ? 'escalation_created'
-      : escalationEvent.eventType === 'assigned'
-        ? 'escalation_assigned'
-        : escalationEvent.eventType === 'acknowledged'
-          ? 'escalation_acknowledged'
-          : escalationEvent.eventType === 'review_started'
-            ? 'escalation_review_started'
-            : 'escalation_resolved';
+    const eventType =
+      escalationEvent.eventType === 'created'
+        ? 'escalation_created'
+        : escalationEvent.eventType === 'assigned'
+          ? 'escalation_assigned'
+          : escalationEvent.eventType === 'acknowledged'
+            ? 'escalation_acknowledged'
+            : escalationEvent.eventType === 'review_started'
+              ? 'escalation_review_started'
+              : 'escalation_resolved';
     entries.push({
       id: `${escalationEvent.escalationId}:${escalationEvent.eventType}:${escalationEvent.id}`,
       eventType,
@@ -3149,8 +3880,8 @@ function createRebalanceTimeline(input: {
       sleeveId: 'allocator',
       scope: 'escalation',
       status: escalationEvent.toStatus,
-      summary: escalationEvent.note
-        ?? `Bundle escalation transitioned to ${escalationEvent.toStatus}.`,
+      summary:
+        escalationEvent.note ?? `Bundle escalation transitioned to ${escalationEvent.toStatus}.`,
       linkedCommandId: null,
       linkedRebalanceExecutionId: null,
       linkedActionId: null,
@@ -3232,9 +3963,10 @@ function createTreasuryTimeline(
       at: execution.createdAt,
       actorId: execution.requestedBy,
       status: execution.status,
-      summary: execution.outcomeSummary
-        ?? execution.lastError
-        ?? 'Treasury execution attempt was recorded.',
+      summary:
+        execution.outcomeSummary ??
+        execution.lastError ??
+        'Treasury execution attempt was recorded.',
       linkedCommandId: execution.commandId,
       linkedExecutionId: execution.id,
       details: {
@@ -3264,9 +3996,10 @@ function createTreasuryTimeline(
         at: execution.completedAt,
         actorId: execution.startedBy ?? execution.requestedBy,
         status: execution.status,
-        summary: execution.outcomeSummary
-          ?? execution.lastError
-          ?? (execution.status === 'completed'
+        summary:
+          execution.outcomeSummary ??
+          execution.lastError ??
+          (execution.status === 'completed'
             ? 'Treasury execution completed.'
             : 'Treasury execution failed.'),
         linkedCommandId: execution.commandId,
@@ -3348,9 +4081,8 @@ function createCarryTimeline(
     at: execution.createdAt,
     actorId: execution.requestedBy,
     status: execution.status,
-    summary: execution.outcomeSummary
-      ?? execution.lastError
-      ?? 'Carry execution attempt was recorded.',
+    summary:
+      execution.outcomeSummary ?? execution.lastError ?? 'Carry execution attempt was recorded.',
     linkedCommandId: execution.commandId,
     linkedExecutionId: execution.id,
     linkedStepId: null,
@@ -3382,9 +4114,10 @@ function createCarryTimeline(
       at: step.createdAt,
       actorId: execution.startedBy ?? execution.requestedBy,
       status: null,
-      summary: step.outcomeSummary
-        ?? step.lastError
-        ?? `Execution step ${step.intentId} recorded with status ${step.status}.`,
+      summary:
+        step.outcomeSummary ??
+        step.lastError ??
+        `Execution step ${step.intentId} recorded with status ${step.status}.`,
       linkedCommandId: execution.commandId,
       linkedExecutionId: execution.id,
       linkedStepId: step.id,
@@ -3405,9 +4138,10 @@ function createCarryTimeline(
       at: execution.completedAt,
       actorId: execution.startedBy ?? execution.requestedBy,
       status: execution.status,
-      summary: execution.outcomeSummary
-        ?? execution.lastError
-        ?? (execution.status === 'completed'
+      summary:
+        execution.outcomeSummary ??
+        execution.lastError ??
+        (execution.status === 'completed'
           ? 'Carry execution completed.'
           : 'Carry execution failed.'),
       linkedCommandId: execution.commandId,
@@ -3482,23 +4216,29 @@ export class RuntimeOrderStore implements OrderStore {
   constructor(private readonly db: Database) {}
 
   async save(record: OrderRecord): Promise<void> {
-    const persistedMarketIdentity = readCanonicalMarketIdentityFromMetadata(record.intent.metadata, {
-      venueId: record.intent.venueId,
-      asset: record.intent.asset,
-      marketType: record.intent.metadata['instrumentType'],
-      provenance: 'derived',
-      capturedAtStage: 'runtime_order',
-      source: 'runtime_order_store_save',
-      notes: ['Runtime orders persist the best available market identity from intent creation or execution-time promotion.'],
-    }) ?? createCanonicalMarketIdentity({
-      venueId: record.intent.venueId,
-      asset: record.intent.asset,
-      marketType: record.intent.metadata['instrumentType'],
-      provenance: 'derived',
-      capturedAtStage: 'runtime_order',
-      source: 'runtime_order_store_save',
-      notes: ['Runtime orders derived market identity from asset and instrument type because no richer metadata was present.'],
-    });
+    const persistedMarketIdentity =
+      readCanonicalMarketIdentityFromMetadata(record.intent.metadata, {
+        venueId: record.intent.venueId,
+        asset: record.intent.asset,
+        marketType: record.intent.metadata['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'runtime_order',
+        source: 'runtime_order_store_save',
+        notes: [
+          'Runtime orders persist the best available market identity from intent creation or execution-time promotion.',
+        ],
+      }) ??
+      createCanonicalMarketIdentity({
+        venueId: record.intent.venueId,
+        asset: record.intent.asset,
+        marketType: record.intent.metadata['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'runtime_order',
+        source: 'runtime_order_store_save',
+        notes: [
+          'Runtime orders derived market identity from asset and instrument type because no richer metadata was present.',
+        ],
+      });
     const persistedMetadata = attachCanonicalMarketIdentityToMetadata(
       record.intent.metadata,
       persistedMarketIdentity,
@@ -3508,9 +4248,8 @@ export class RuntimeOrderStore implements OrderStore {
       .insert(orders)
       .values({
         clientOrderId: record.intent.intentId,
-        strategyRunId: typeof persistedMetadata['runId'] === 'string'
-          ? persistedMetadata['runId']
-          : null,
+        strategyRunId:
+          typeof persistedMetadata['runId'] === 'string' ? persistedMetadata['runId'] : null,
         sleeveId: extractSleeveId(record.intent),
         opportunityId: record.intent.opportunityId,
         venueId: record.intent.venueId,
@@ -3518,9 +4257,10 @@ export class RuntimeOrderStore implements OrderStore {
         asset: record.intent.asset,
         side: record.intent.side,
         orderType: record.intent.type,
-        executionMode: typeof persistedMetadata['executionMode'] === 'string'
-          ? String(persistedMetadata['executionMode'])
-          : 'dry-run',
+        executionMode:
+          typeof persistedMetadata['executionMode'] === 'string'
+            ? String(persistedMetadata['executionMode'])
+            : 'dry-run',
         reduceOnly: record.intent.reduceOnly,
         requestedSize: record.intent.size,
         requestedPrice: record.intent.limitPrice,
@@ -3537,9 +4277,10 @@ export class RuntimeOrderStore implements OrderStore {
       .onConflictDoUpdate({
         target: orders.clientOrderId,
         set: {
-          strategyRunId: typeof persistedMetadata['runId'] === 'string'
-            ? String(persistedMetadata['runId'])
-            : null,
+          strategyRunId:
+            typeof persistedMetadata['runId'] === 'string'
+              ? String(persistedMetadata['runId'])
+              : null,
           sleeveId: extractSleeveId(record.intent),
           opportunityId: record.intent.opportunityId,
           venueId: record.intent.venueId,
@@ -3547,9 +4288,10 @@ export class RuntimeOrderStore implements OrderStore {
           asset: record.intent.asset,
           side: record.intent.side,
           orderType: record.intent.type,
-          executionMode: typeof persistedMetadata['executionMode'] === 'string'
-            ? String(persistedMetadata['executionMode'])
-            : 'dry-run',
+          executionMode:
+            typeof persistedMetadata['executionMode'] === 'string'
+              ? String(persistedMetadata['executionMode'])
+              : 'dry-run',
           reduceOnly: record.intent.reduceOnly,
           requestedSize: record.intent.size,
           requestedPrice: record.intent.limitPrice,
@@ -3602,15 +4344,17 @@ export class RuntimeOrderStore implements OrderStore {
       filledSize: row.filledSize,
       averageFillPrice: row.averageFillPrice,
       feesPaid: fillRows[0]?.fee ?? null,
-      fills: fillRows.map((fillRow): OrderFill => ({
-        fillId: fillRow.fillId ?? fillRow.id,
-        orderId: row.clientOrderId as OrderFill['orderId'],
-        filledSize: fillRow.size,
-        fillPrice: fillRow.price,
-        fee: fillRow.fee,
-        feeAsset: (fillRow.feeAsset ?? row.asset),
-        filledAt: fillRow.filledAt,
-      })),
+      fills: fillRows.map(
+        (fillRow): OrderFill => ({
+          fillId: fillRow.fillId ?? fillRow.id,
+          orderId: row.clientOrderId as OrderFill['orderId'],
+          filledSize: fillRow.size,
+          fillPrice: fillRow.price,
+          fee: fillRow.fee,
+          feeAsset: fillRow.feeAsset ?? row.asset,
+          filledAt: fillRow.filledAt,
+        }),
+      ),
       submittedAt: row.submittedAt,
       completedAt: row.completedAt,
       lastError: row.lastError,
@@ -3760,7 +4504,7 @@ export class RuntimeStore {
   }
 
   async getCarryStrategyProfile(): Promise<CarryStrategyProfileView> {
-    const [latestActionRow, latestExecutionRow, latestStepRow] = await Promise.all([
+    const [latestActionRow, latestExecutionRow, latestStepRow, apyCurrentRow] = await Promise.all([
       this.db
         .select()
         .from(carryActions)
@@ -3779,32 +4523,57 @@ export class RuntimeStore {
         .orderBy(desc(carryExecutionSteps.createdAt))
         .limit(1)
         .then((rows) => rows[0] ?? null),
+      this.db
+        .select()
+        .from(apyCurrent)
+        .where(eq(apyCurrent.sleeveId, 'carry'))
+        .then((rows) => rows[0] ?? null),
     ]);
 
     const latestAction = latestActionRow === null ? null : mapCarryActionRow(latestActionRow);
-    const latestExecution = latestExecutionRow === null ? null : mapCarryExecutionRow(latestExecutionRow);
+    const latestExecution =
+      latestExecutionRow === null ? null : mapCarryExecutionRow(latestExecutionRow);
     const latestStep = latestStepRow === null ? null : mapCarryExecutionStepRow(latestStepRow);
-    const profile = latestAction?.strategyProfile ?? buildCarryStrategyProfile();
-    const latestExecutionReference = latestStep?.executionReference ?? latestExecution?.venueExecutionReference ?? null;
+    
+    // Build profile with realized APY if available
+    const profileInput = apyCurrentRow !== null && apyCurrentRow['realizedApyLifetime'] !== null
+      ? {
+          realizedApyPct: apyCurrentRow['realizedApyLifetime'],
+          realizedApySource: 'devnet' as const,
+          realizedApyUpdatedAt: apyCurrentRow['updatedAt'].toISOString(),
+        }
+      : {};
+    
+    const profile = latestAction?.strategyProfile ?? buildCarryStrategyProfile(profileInput);
+    const latestExecutionReference =
+      latestStep?.executionReference ?? latestExecution?.venueExecutionReference ?? null;
     const latestConfirmationStatus = latestStep?.postTradeConfirmation?.status ?? null;
-    const latestEvidenceSource = latestStep !== null && !latestStep.simulated
+    const latestEvidenceSource =
+      latestStep !== null && !latestStep.simulated
+        ? 'devnet_execution'
+        : profile.apy.projectedApyPct === null
+          ? 'none'
+          : 'projected';
+
+    // Update evidence source if we have realized APY
+    const finalEvidenceSource = apyCurrentRow?.['calculationBasis'] === 'live_trades'
       ? 'devnet_execution'
-      : profile.apy.projectedApyPct === null
-        ? 'none'
-        : 'projected';
+      : latestEvidenceSource;
 
     return {
       ...profile,
       evidence: {
         ...profile.evidence,
-        environment: latestStep !== null && !latestStep.simulated ? 'devnet' : profile.evidence.environment,
+        environment:
+          latestStep !== null && !latestStep.simulated ? 'devnet' : profile.evidence.environment,
         latestExecutionId: latestExecution?.id ?? null,
         latestExecutionReference,
         latestConfirmationStatus,
-        latestEvidenceSource,
-        summary: latestEvidenceSource === 'devnet_execution'
-          ? 'Latest strategy evidence includes a persisted Drift devnet execution reference plus the current confirmation state for the narrow real execution path.'
-          : 'The strategy profile is eligible in principle, but current persisted evidence is limited to projected policy metadata unless a real devnet execution has completed.',
+        latestEvidenceSource: finalEvidenceSource,
+        summary:
+          finalEvidenceSource === 'devnet_execution'
+            ? `Latest strategy evidence includes ${apyCurrentRow?.['totalTradesClosed'] ?? 0} closed trades with realized APY ${apyCurrentRow?.['realizedApyLifetime'] ?? 'unavailable'}% plus the current confirmation state for the narrow real execution path.`
+            : 'The strategy profile is eligible in principle, but current persisted evidence is limited to projected policy metadata unless a real devnet execution has completed.',
       },
     };
   }
@@ -3820,29 +4589,30 @@ export class RuntimeStore {
       return null;
     }
 
-    const [plannedOrderRows, executionRows, latestCommand, linkedRebalanceProposal] = await Promise.all([
-      this.db
-        .select()
-        .from(carryActionOrderIntents)
-        .where(eq(carryActionOrderIntents.carryActionId, actionRow.id))
-        .orderBy(desc(carryActionOrderIntents.createdAt)),
-      this.db
-        .select()
-        .from(carryActionExecutions)
-        .where(eq(carryActionExecutions.carryActionId, actionRow.id))
-        .orderBy(desc(carryActionExecutions.createdAt)),
-      actionRow.linkedCommandId === null
-        ? Promise.resolve<RuntimeCommandView | null>(null)
-        : this.getRuntimeCommand(actionRow.linkedCommandId),
-      actionRow.linkedRebalanceProposalId === null
-        ? Promise.resolve<RebalanceProposalView | null>(null)
-        : this.db
+    const [plannedOrderRows, executionRows, latestCommand, linkedRebalanceProposal] =
+      await Promise.all([
+        this.db
           .select()
-          .from(allocatorRebalanceProposals)
-          .where(eq(allocatorRebalanceProposals.id, actionRow.linkedRebalanceProposalId))
-          .limit(1)
-          .then((rows) => rows[0] === undefined ? null : mapRebalanceProposalRow(rows[0])),
-    ]);
+          .from(carryActionOrderIntents)
+          .where(eq(carryActionOrderIntents.carryActionId, actionRow.id))
+          .orderBy(desc(carryActionOrderIntents.createdAt)),
+        this.db
+          .select()
+          .from(carryActionExecutions)
+          .where(eq(carryActionExecutions.carryActionId, actionRow.id))
+          .orderBy(desc(carryActionExecutions.createdAt)),
+        actionRow.linkedCommandId === null
+          ? Promise.resolve<RuntimeCommandView | null>(null)
+          : this.getRuntimeCommand(actionRow.linkedCommandId),
+        actionRow.linkedRebalanceProposalId === null
+          ? Promise.resolve<RebalanceProposalView | null>(null)
+          : this.db
+              .select()
+              .from(allocatorRebalanceProposals)
+              .where(eq(allocatorRebalanceProposals.id, actionRow.linkedRebalanceProposalId))
+              .limit(1)
+              .then((rows) => (rows[0] === undefined ? null : mapRebalanceProposalRow(rows[0]))),
+      ]);
 
     return {
       action: mapCarryActionRow(actionRow),
@@ -3873,7 +4643,9 @@ export class RuntimeStore {
     return rows.map(mapCarryExecutionRow);
   }
 
-  private async getCarryExecutionViewRecord(executionId: string): Promise<CarryExecutionView | null> {
+  private async getCarryExecutionViewRecord(
+    executionId: string,
+  ): Promise<CarryExecutionView | null> {
     const [row] = await this.db
       .select()
       .from(carryActionExecutions)
@@ -3917,37 +4689,42 @@ export class RuntimeStore {
       venueIds.add(plannedOrder.venueId);
     }
 
-    const venueSnapshotsCore = action === null || action.strategyRunId === null || venueIds.size === 0
-      ? []
-      : (await this.db
-        .select()
-        .from(carryVenueSnapshots)
-        .where(eq(carryVenueSnapshots.strategyRunId, action.strategyRunId)))
-        .filter((row) => venueIds.has(row['venueId']))
-        .map(mapCarryVenueRow);
+    const venueSnapshotsCore =
+      action === null || action.strategyRunId === null || venueIds.size === 0
+        ? []
+        : (
+            await this.db
+              .select()
+              .from(carryVenueSnapshots)
+              .where(eq(carryVenueSnapshots.strategyRunId, action.strategyRunId))
+          )
+            .filter((row) => venueIds.has(row['venueId']))
+            .map(mapCarryVenueRow);
     const inventory = await this.listVenueInventoryCore(500);
     const inventoryByVenueId = new Map(inventory.map((venue) => [venue.venueId, venue] as const));
     const promotionSummaryMap = await this.buildPromotionSummaryMap(inventory);
     const venueSnapshots = venueSnapshotsCore.map((venue) => {
       const inventoryView = inventoryByVenueId.get(venue.venueId);
-      const promotion = inventoryView === undefined
-        ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
-          venueId: venue.venueId,
-          venueName: venue.venueId,
-          connectorType: 'carry_adapter',
-          sleeveApplicability: ['carry'],
-          truthMode: venue.venueMode === 'simulated' ? 'simulated' : 'real',
-          executionSupport: venue.executionSupported,
-          readOnlySupport: venue.readOnly,
-          healthy: venue.healthy,
-          healthState: venue.healthy ? 'healthy' : 'degraded',
-          degradedReason: venue.healthy ? null : 'carry_venue_snapshot_reported_unhealthy',
-          lastSnapshotAt: venue.updatedAt,
-          missingPrerequisites: venue.missingPrerequisites,
-        }))
-        : promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
-          buildConnectorReadinessEvidence(inventoryView),
-        );
+      const promotion =
+        inventoryView === undefined
+          ? buildDefaultPromotionSummary(
+              buildFallbackConnectorReadinessEvidence({
+                venueId: venue.venueId,
+                venueName: venue.venueId,
+                connectorType: 'carry_adapter',
+                sleeveApplicability: ['carry'],
+                truthMode: venue.venueMode === 'simulated' ? 'simulated' : 'real',
+                executionSupport: venue.executionSupported,
+                readOnlySupport: venue.readOnly,
+                healthy: venue.healthy,
+                healthState: venue.healthy ? 'healthy' : 'degraded',
+                degradedReason: venue.healthy ? null : 'carry_venue_snapshot_reported_unhealthy',
+                lastSnapshotAt: venue.updatedAt,
+                missingPrerequisites: venue.missingPrerequisites,
+              }),
+            )
+          : (promotionSummaryMap.get(venue.venueId) ??
+            buildDefaultPromotionSummary(buildConnectorReadinessEvidence(inventoryView)));
 
       return {
         ...venue,
@@ -3955,9 +4732,9 @@ export class RuntimeStore {
         promotion,
       };
     });
-    const steps = stepRows.map(mapCarryExecutionStepRow).sort(
-      (left, right) => left.createdAt.localeCompare(right.createdAt),
-    );
+    const steps = stepRows
+      .map(mapCarryExecutionStepRow)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
     return {
       execution,
@@ -3993,7 +4770,10 @@ export class RuntimeStore {
       .map((row) => mapVenueInventoryItem(row, lastSuccessfulByVenue.get(row.venueId) ?? null));
   }
 
-  private async listVenueSnapshotsCore(venueId: string, limit = 20): Promise<VenueSnapshotCoreView[]> {
+  private async listVenueSnapshotsCore(
+    venueId: string,
+    limit = 20,
+  ): Promise<VenueSnapshotCoreView[]> {
     const rows = await this.db
       .select()
       .from(venueConnectorSnapshots)
@@ -4007,16 +4787,23 @@ export class RuntimeStore {
   private async getLatestVenuePromotionRows(
     venueIds?: string[],
   ): Promise<Map<string, typeof venueConnectorPromotions.$inferSelect>> {
-    const rows = venueIds === undefined || venueIds.length === 0
-      ? await this.db
-        .select()
-        .from(venueConnectorPromotions)
-        .orderBy(desc(venueConnectorPromotions.updatedAt), desc(venueConnectorPromotions.requestedAt))
-      : await this.db
-        .select()
-        .from(venueConnectorPromotions)
-        .where(inArray(venueConnectorPromotions.venueId, venueIds))
-        .orderBy(desc(venueConnectorPromotions.updatedAt), desc(venueConnectorPromotions.requestedAt));
+    const rows =
+      venueIds === undefined || venueIds.length === 0
+        ? await this.db
+            .select()
+            .from(venueConnectorPromotions)
+            .orderBy(
+              desc(venueConnectorPromotions.updatedAt),
+              desc(venueConnectorPromotions.requestedAt),
+            )
+        : await this.db
+            .select()
+            .from(venueConnectorPromotions)
+            .where(inArray(venueConnectorPromotions.venueId, venueIds))
+            .orderBy(
+              desc(venueConnectorPromotions.updatedAt),
+              desc(venueConnectorPromotions.requestedAt),
+            );
 
     const latestByVenue = new Map<string, typeof venueConnectorPromotions.$inferSelect>();
     for (const row of rows) {
@@ -4031,7 +4818,9 @@ export class RuntimeStore {
   private async buildPromotionSummaryMap(
     venues: VenueInventoryCoreView[],
   ): Promise<Map<string, ConnectorPromotionSummaryView>> {
-    const latestPromotions = await this.getLatestVenuePromotionRows(venues.map((venue) => venue.venueId));
+    const latestPromotions = await this.getLatestVenuePromotionRows(
+      venues.map((venue) => venue.venueId),
+    );
     const summaries = new Map<string, ConnectorPromotionSummaryView>();
 
     for (const venue of venues) {
@@ -4067,9 +4856,10 @@ export class RuntimeStore {
       venueName: venue.venueName,
       connectorType: venue.connectorType,
       sleeveApplicability: venue.sleeveApplicability,
-      current: latestPromotion === undefined
-        ? buildDefaultPromotionSummary(evidence)
-        : buildPromotionSummaryFromRow(latestPromotion, evidence),
+      current:
+        latestPromotion === undefined
+          ? buildDefaultPromotionSummary(evidence)
+          : buildPromotionSummaryFromRow(latestPromotion, evidence),
       evidence,
       history: historyRows.map(mapPromotionEventRow),
     };
@@ -4089,24 +4879,26 @@ export class RuntimeStore {
 
     return venues.map((venue) => {
       const inventoryView = inventoryByVenueId.get(venue.venueId);
-      const promotion = inventoryView === undefined
-        ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
-          venueId: venue.venueId,
-          venueName: venue.venueId,
-          connectorType: 'carry_adapter',
-          sleeveApplicability: ['carry'],
-          truthMode: venue.venueMode === 'simulated' ? 'simulated' : 'real',
-          executionSupport: venue.executionSupported,
-          readOnlySupport: venue.readOnly,
-          healthy: venue.healthy,
-          healthState: venue.healthy ? 'healthy' : 'degraded',
-          degradedReason: venue.healthy ? null : 'carry_venue_snapshot_reported_unhealthy',
-          lastSnapshotAt: venue.updatedAt,
-          missingPrerequisites: venue.missingPrerequisites,
-        }))
-        : promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
-          buildConnectorReadinessEvidence(inventoryView),
-        );
+      const promotion =
+        inventoryView === undefined
+          ? buildDefaultPromotionSummary(
+              buildFallbackConnectorReadinessEvidence({
+                venueId: venue.venueId,
+                venueName: venue.venueId,
+                connectorType: 'carry_adapter',
+                sleeveApplicability: ['carry'],
+                truthMode: venue.venueMode === 'simulated' ? 'simulated' : 'real',
+                executionSupport: venue.executionSupported,
+                readOnlySupport: venue.readOnly,
+                healthy: venue.healthy,
+                healthState: venue.healthy ? 'healthy' : 'degraded',
+                degradedReason: venue.healthy ? null : 'carry_venue_snapshot_reported_unhealthy',
+                lastSnapshotAt: venue.updatedAt,
+                missingPrerequisites: venue.missingPrerequisites,
+              }),
+            )
+          : (promotionSummaryMap.get(venue.venueId) ??
+            buildDefaultPromotionSummary(buildConnectorReadinessEvidence(inventoryView)));
 
       return {
         ...venue,
@@ -4123,9 +4915,9 @@ export class RuntimeStore {
     return venues.map((venue) => ({
       ...venue,
       approvedForLiveUse: promotionSummaryMap.get(venue.venueId)?.approvedForLiveUse ?? false,
-      promotion: promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
-        buildConnectorReadinessEvidence(venue),
-      ),
+      promotion:
+        promotionSummaryMap.get(venue.venueId) ??
+        buildDefaultPromotionSummary(buildConnectorReadinessEvidence(venue)),
     }));
   }
 
@@ -4135,8 +4927,11 @@ export class RuntimeStore {
     return {
       totalVenues: venues.length,
       simulatedOnly: venues.filter((venue) => venue.truthMode === 'simulated').length,
-      realReadOnly: venues.filter((venue) => venue.truthMode === 'real' && venue.readOnlySupport).length,
-      realExecutionCapable: venues.filter((venue) => venue.truthMode === 'real' && venue.executionSupport).length,
+      realReadOnly: venues.filter((venue) => venue.truthMode === 'real' && venue.readOnlySupport)
+        .length,
+      realExecutionCapable: venues.filter(
+        (venue) => venue.truthMode === 'real' && venue.executionSupport,
+      ).length,
       derivativeAware: venues.filter((venue) => venue.truthProfile === 'derivative_aware').length,
       genericWallet: venues.filter((venue) => venue.truthProfile === 'generic_wallet').length,
       capacityOnly: venues.filter((venue) => venue.truthProfile === 'capacity_only').length,
@@ -4183,12 +4978,14 @@ export class RuntimeStore {
         summary.capacityOnlyVenues += 1;
       }
 
-      summary.connectorDepth[inferVenueTruthSourceDepth({
-        connectorType: venue.connectorType,
-        truthMode: venue.truthMode,
-        executionSupport: venue.executionSupport,
-        sourceMetadata: venue.sourceMetadata,
-      })] += 1;
+      summary.connectorDepth[
+        inferVenueTruthSourceDepth({
+          connectorType: venue.connectorType,
+          truthMode: venue.truthMode,
+          executionSupport: venue.executionSupport,
+          sourceMetadata: venue.sourceMetadata,
+        })
+      ] += 1;
 
       if (venue.snapshotCompleteness === 'complete') {
         summary.completeSnapshots += 1;
@@ -4233,22 +5030,33 @@ export class RuntimeStore {
     const venues = await this.listVenues(500);
     const promotionRows = venues.map((venue) => ({
       venue,
-      promotion: venue.promotion ?? buildDefaultPromotionSummary(buildConnectorReadinessEvidence(venue)),
+      promotion:
+        venue.promotion ?? buildDefaultPromotionSummary(buildConnectorReadinessEvidence(venue)),
     }));
 
     return {
       totalVenues: promotionRows.length,
-      candidates: promotionRows.filter(({ promotion }) => promotion.capabilityClass === 'execution_capable').length,
-      pendingReview: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'pending_review').length,
-      approved: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'approved').length,
-      approvedAndEligible: promotionRows.filter(({ promotion }) => promotion.sensitiveExecutionEligible).length,
-      rejected: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'rejected').length,
-      suspended: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'suspended').length,
-      blockedByEvidence: promotionRows.filter(({ promotion }) => (
-        promotion.capabilityClass === 'execution_capable'
-        && !promotion.sensitiveExecutionEligible
-        && promotion.blockers.length > 0
-      )).length,
+      candidates: promotionRows.filter(
+        ({ promotion }) => promotion.capabilityClass === 'execution_capable',
+      ).length,
+      pendingReview: promotionRows.filter(
+        ({ promotion }) => promotion.promotionStatus === 'pending_review',
+      ).length,
+      approved: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'approved')
+        .length,
+      approvedAndEligible: promotionRows.filter(
+        ({ promotion }) => promotion.sensitiveExecutionEligible,
+      ).length,
+      rejected: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'rejected')
+        .length,
+      suspended: promotionRows.filter(({ promotion }) => promotion.promotionStatus === 'suspended')
+        .length,
+      blockedByEvidence: promotionRows.filter(
+        ({ promotion }) =>
+          promotion.capabilityClass === 'execution_capable' &&
+          !promotion.sensitiveExecutionEligible &&
+          promotion.blockers.length > 0,
+      ).length,
     };
   }
 
@@ -4299,24 +5107,22 @@ export class RuntimeStore {
     evidence: ConnectorReadinessEvidenceView;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
-    await this.db
-      .insert(venueConnectorPromotionEvents)
-      .values({
-        promotionId: input.promotionId,
-        venueId: input.venueId,
-        eventType: input.eventType,
-        fromStatus: input.fromStatus,
-        toStatus: input.toStatus,
-        effectivePosture: input.effectivePosture,
-        requestedTargetPosture: CONNECTOR_PROMOTION_TARGET_POSTURE,
-        actorId: input.actorId,
-        note: input.note,
-        readinessEvidence: input.evidence,
-        missingPrerequisitesSnapshot: input.evidence.missingPrerequisites,
-        blockersSnapshot: input.evidence.blockingReasons,
-        metadata: input.metadata ?? {},
-        occurredAt: new Date(),
-      });
+    await this.db.insert(venueConnectorPromotionEvents).values({
+      promotionId: input.promotionId,
+      venueId: input.venueId,
+      eventType: input.eventType,
+      fromStatus: input.fromStatus,
+      toStatus: input.toStatus,
+      effectivePosture: input.effectivePosture,
+      requestedTargetPosture: CONNECTOR_PROMOTION_TARGET_POSTURE,
+      actorId: input.actorId,
+      note: input.note,
+      readinessEvidence: input.evidence,
+      missingPrerequisitesSnapshot: input.evidence.missingPrerequisites,
+      blockersSnapshot: input.evidence.blockingReasons,
+      metadata: input.metadata ?? {},
+      occurredAt: new Date(),
+    });
   }
 
   async requestConnectorPromotion(input: {
@@ -4349,9 +5155,8 @@ export class RuntimeStore {
         missingPrerequisitesSnapshot: evidence.missingPrerequisites,
         blockersSnapshot: evidence.blockingReasons,
         lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
-        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
-          ? null
-          : new Date(venue.lastSuccessfulSnapshotAt),
+        lastSuccessfulTruthSnapshotAt:
+          venue.lastSuccessfulSnapshotAt === null ? null : new Date(venue.lastSuccessfulSnapshotAt),
         snapshotFreshness: venue.snapshotFreshness,
         snapshotCompleteness: venue.snapshotCompleteness,
         healthState: venue.healthState,
@@ -4417,9 +5222,8 @@ export class RuntimeStore {
         missingPrerequisitesSnapshot: evidence.missingPrerequisites,
         blockersSnapshot: evidence.blockingReasons,
         lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
-        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
-          ? null
-          : new Date(venue.lastSuccessfulSnapshotAt),
+        lastSuccessfulTruthSnapshotAt:
+          venue.lastSuccessfulSnapshotAt === null ? null : new Date(venue.lastSuccessfulSnapshotAt),
         snapshotFreshness: venue.snapshotFreshness,
         snapshotCompleteness: venue.snapshotCompleteness,
         healthState: venue.healthState,
@@ -4481,9 +5285,8 @@ export class RuntimeStore {
         missingPrerequisitesSnapshot: evidence.missingPrerequisites,
         blockersSnapshot: evidence.blockingReasons,
         lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
-        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
-          ? null
-          : new Date(venue.lastSuccessfulSnapshotAt),
+        lastSuccessfulTruthSnapshotAt:
+          venue.lastSuccessfulSnapshotAt === null ? null : new Date(venue.lastSuccessfulSnapshotAt),
         snapshotFreshness: venue.snapshotFreshness,
         snapshotCompleteness: venue.snapshotCompleteness,
         healthState: venue.healthState,
@@ -4545,9 +5348,8 @@ export class RuntimeStore {
         missingPrerequisitesSnapshot: evidence.missingPrerequisites,
         blockersSnapshot: evidence.blockingReasons,
         lastTruthSnapshotAt: new Date(venue.lastSnapshotAt),
-        lastSuccessfulTruthSnapshotAt: venue.lastSuccessfulSnapshotAt === null
-          ? null
-          : new Date(venue.lastSuccessfulSnapshotAt),
+        lastSuccessfulTruthSnapshotAt:
+          venue.lastSuccessfulSnapshotAt === null ? null : new Date(venue.lastSuccessfulSnapshotAt),
         snapshotFreshness: venue.snapshotFreshness,
         snapshotCompleteness: venue.snapshotCompleteness,
         healthState: venue.healthState,
@@ -4580,24 +5382,26 @@ export class RuntimeStore {
       this.listVenueInventoryCore(500),
     ]);
     const venue = inventory.find((item) => item.venueId === venueId);
-    const promotion = venue === undefined
-      ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
-        venueId,
-        venueName: venueId,
-        connectorType: 'unknown_connector',
-        sleeveApplicability: [],
-        truthMode: 'simulated',
-        executionSupport: false,
-        readOnlySupport: true,
-        healthy: false,
-        healthState: 'unavailable',
-        degradedReason: 'venue_inventory_missing',
-        lastSnapshotAt: new Date(0).toISOString(),
-        missingPrerequisites: ['Venue inventory is missing for this connector.'],
-      }))
-      : (await this.buildPromotionSummaryMap([venue])).get(venueId) ?? buildDefaultPromotionSummary(
-        buildConnectorReadinessEvidence(venue),
-      );
+    const promotion =
+      venue === undefined
+        ? buildDefaultPromotionSummary(
+            buildFallbackConnectorReadinessEvidence({
+              venueId,
+              venueName: venueId,
+              connectorType: 'unknown_connector',
+              sleeveApplicability: [],
+              truthMode: 'simulated',
+              executionSupport: false,
+              readOnlySupport: true,
+              healthy: false,
+              healthState: 'unavailable',
+              degradedReason: 'venue_inventory_missing',
+              lastSnapshotAt: new Date(0).toISOString(),
+              missingPrerequisites: ['Venue inventory is missing for this connector.'],
+            }),
+          )
+        : ((await this.buildPromotionSummaryMap([venue])).get(venueId) ??
+          buildDefaultPromotionSummary(buildConnectorReadinessEvidence(venue)));
 
     return snapshots.map((snapshot) => ({
       ...snapshot,
@@ -4656,7 +5460,10 @@ export class RuntimeStore {
       .select()
       .from(internalDerivativeSnapshots)
       .where(eq(internalDerivativeSnapshots.venueId, venueId))
-      .orderBy(desc(internalDerivativeSnapshots.capturedAt), desc(internalDerivativeSnapshots.createdAt))
+      .orderBy(
+        desc(internalDerivativeSnapshots.capturedAt),
+        desc(internalDerivativeSnapshots.createdAt),
+      )
       .limit(limit);
 
     return rows.map(mapInternalDerivativeSnapshotRow);
@@ -4720,7 +5527,10 @@ export class RuntimeStore {
           reference: treasuryActionExecutions.venueExecutionReference,
         })
         .from(treasuryActionExecutions)
-        .innerJoin(treasuryActions, eq(treasuryActions.id, treasuryActionExecutions.treasuryActionId))
+        .innerJoin(
+          treasuryActions,
+          eq(treasuryActions.id, treasuryActionExecutions.treasuryActionId),
+        )
         .where(eq(treasuryActions.venueId, venueId))
         .orderBy(desc(treasuryActionExecutions.updatedAt))
         .limit(limit),
@@ -4770,62 +5580,66 @@ export class RuntimeStore {
         completedAt: carryExecutionSteps.completedAt,
       })
       .from(carryExecutionSteps)
-      .where(and(
-        eq(carryExecutionSteps.venueId, venueId),
-        eq(carryExecutionSteps.simulated, false),
-        sql`${carryExecutionSteps.executionReference} is not null`,
-      ))
+      .where(
+        and(
+          eq(carryExecutionSteps.venueId, venueId),
+          eq(carryExecutionSteps.simulated, false),
+          sql`${carryExecutionSteps.executionReference} is not null`,
+        ),
+      )
       .orderBy(desc(carryExecutionSteps.updatedAt))
       .limit(limit);
 
-    return rows.flatMap((row) => row.executionReference === null
-      ? []
-      : [{
-        stepId: row.stepId,
-        carryExecutionId: row.carryExecutionId,
-        carryActionId: row.carryActionId,
-        strategyRunId: row.strategyRunId ?? null,
-        intentId: row.intentId,
-        venueId: row.venueId,
-        asset: row.asset,
-        side: row.side as CarryExecutionStepView['side'],
-        requestedSize: row.requestedSize,
-        reduceOnly: row.reduceOnly,
-        clientOrderId: row.clientOrderId ?? null,
-        executionReference: row.executionReference,
-        status: row.status,
-        simulated: row.simulated,
-        metadata: asJsonObject(row.metadata),
-        outcome: asJsonObject(row.outcome),
-        createdAt: row.createdAt.toISOString(),
-        updatedAt: row.updatedAt.toISOString(),
-        completedAt: toIsoString(row.completedAt),
-      }]);
+    return rows.flatMap((row) =>
+      row.executionReference === null
+        ? []
+        : [
+            {
+              stepId: row.stepId,
+              carryExecutionId: row.carryExecutionId,
+              carryActionId: row.carryActionId,
+              strategyRunId: row.strategyRunId ?? null,
+              intentId: row.intentId,
+              venueId: row.venueId,
+              asset: row.asset,
+              side: row.side as CarryExecutionStepView['side'],
+              requestedSize: row.requestedSize,
+              reduceOnly: row.reduceOnly,
+              clientOrderId: row.clientOrderId ?? null,
+              executionReference: row.executionReference,
+              status: row.status,
+              simulated: row.simulated,
+              metadata: asJsonObject(row.metadata),
+              outcome: asJsonObject(row.outcome),
+              createdAt: row.createdAt.toISOString(),
+              updatedAt: row.updatedAt.toISOString(),
+              completedAt: toIsoString(row.completedAt),
+            },
+          ],
+    );
   }
 
-  async updateRuntimeStatus(
-    patch: {
-      executionMode?: 'dry-run' | 'live';
-      liveExecutionEnabled?: boolean;
-      riskLimits?: Record<string, unknown>;
-      halted?: boolean;
-      lifecycleState?: RuntimeLifecycleState;
-      projectionStatus?: ProjectionStatus;
-      lastRunId?: string | null;
-      lastRunStatus?: string | null;
-      lastSuccessfulRunId?: string | null;
-      lastCycleStartedAt?: Date | null;
-      lastCycleCompletedAt?: Date | null;
-      lastProjectionRebuildAt?: Date | null;
-      lastProjectionSourceRunId?: string | null;
-      startedAt?: Date | null;
-      readyAt?: Date | null;
-      stoppedAt?: Date | null;
-      lastError?: string | null;
-      reason?: string | null;
-      lastUpdatedBy: string;
-    },
-  ): Promise<void> {
+  async updateRuntimeStatus(patch: {
+    executionMode?: 'dry-run' | 'live';
+    liveExecutionEnabled?: boolean;
+    riskLimits?: Record<string, unknown>;
+    halted?: boolean;
+    lifecycleState?: RuntimeLifecycleState;
+    projectionStatus?: ProjectionStatus;
+    lastRunId?: string | null;
+    lastRunStatus?: string | null;
+    lastSuccessfulRunId?: string | null;
+    lastCycleStartedAt?: Date | null;
+    lastCycleCompletedAt?: Date | null;
+    lastProjectionRebuildAt?: Date | null;
+    lastProjectionSourceRunId?: string | null;
+    startedAt?: Date | null;
+    readyAt?: Date | null;
+    stoppedAt?: Date | null;
+    lastError?: string | null;
+    reason?: string | null;
+    lastUpdatedBy: string;
+  }): Promise<void> {
     await this.db
       .update(runtimeState)
       .set({
@@ -4836,7 +5650,9 @@ export class RuntimeStore {
         ...(patch.riskLimits !== undefined ? { riskLimits: patch.riskLimits } : {}),
         ...(patch.halted !== undefined ? { halted: patch.halted } : {}),
         ...(patch.lifecycleState !== undefined ? { lifecycleState: patch.lifecycleState } : {}),
-        ...(patch.projectionStatus !== undefined ? { projectionStatus: patch.projectionStatus } : {}),
+        ...(patch.projectionStatus !== undefined
+          ? { projectionStatus: patch.projectionStatus }
+          : {}),
         ...(patch.lastRunId !== undefined ? { lastRunId: patch.lastRunId } : {}),
         ...(patch.lastRunStatus !== undefined ? { lastRunStatus: patch.lastRunStatus } : {}),
         ...(patch.lastSuccessfulRunId !== undefined
@@ -4935,36 +5751,38 @@ export class RuntimeStore {
     };
   }
 
-  async updateWorkerStatus(
-    patch: {
-      workerId?: string;
-      lifecycleState?: WorkerLifecycleState;
-      schedulerState?: WorkerSchedulerState;
-      currentOperation?: string | null;
-      currentCommandId?: string | null;
-      currentRunId?: string | null;
-      cycleIntervalMs?: number;
-      processId?: number | null;
-      hostname?: string | null;
-      lastHeartbeatAt?: Date | null;
-      lastStartedAt?: Date | null;
-      lastStoppedAt?: Date | null;
-      lastRunStartedAt?: Date | null;
-      lastRunCompletedAt?: Date | null;
-      lastSuccessAt?: Date | null;
-      lastFailureAt?: Date | null;
-      lastFailureReason?: string | null;
-      nextScheduledRunAt?: Date | null;
-    },
-  ): Promise<void> {
+  async updateWorkerStatus(patch: {
+    workerId?: string;
+    lifecycleState?: WorkerLifecycleState;
+    schedulerState?: WorkerSchedulerState;
+    currentOperation?: string | null;
+    currentCommandId?: string | null;
+    currentRunId?: string | null;
+    cycleIntervalMs?: number;
+    processId?: number | null;
+    hostname?: string | null;
+    lastHeartbeatAt?: Date | null;
+    lastStartedAt?: Date | null;
+    lastStoppedAt?: Date | null;
+    lastRunStartedAt?: Date | null;
+    lastRunCompletedAt?: Date | null;
+    lastSuccessAt?: Date | null;
+    lastFailureAt?: Date | null;
+    lastFailureReason?: string | null;
+    nextScheduledRunAt?: Date | null;
+  }): Promise<void> {
     await this.db
       .update(runtimeWorkerState)
       .set({
         ...(patch.workerId !== undefined ? { workerId: patch.workerId } : {}),
         ...(patch.lifecycleState !== undefined ? { lifecycleState: patch.lifecycleState } : {}),
         ...(patch.schedulerState !== undefined ? { schedulerState: patch.schedulerState } : {}),
-        ...(patch.currentOperation !== undefined ? { currentOperation: patch.currentOperation } : {}),
-        ...(patch.currentCommandId !== undefined ? { currentCommandId: patch.currentCommandId } : {}),
+        ...(patch.currentOperation !== undefined
+          ? { currentOperation: patch.currentOperation }
+          : {}),
+        ...(patch.currentCommandId !== undefined
+          ? { currentCommandId: patch.currentCommandId }
+          : {}),
         ...(patch.currentRunId !== undefined ? { currentRunId: patch.currentRunId } : {}),
         ...(patch.cycleIntervalMs !== undefined ? { cycleIntervalMs: patch.cycleIntervalMs } : {}),
         ...(patch.processId !== undefined ? { processId: patch.processId } : {}),
@@ -4972,12 +5790,20 @@ export class RuntimeStore {
         ...(patch.lastHeartbeatAt !== undefined ? { lastHeartbeatAt: patch.lastHeartbeatAt } : {}),
         ...(patch.lastStartedAt !== undefined ? { lastStartedAt: patch.lastStartedAt } : {}),
         ...(patch.lastStoppedAt !== undefined ? { lastStoppedAt: patch.lastStoppedAt } : {}),
-        ...(patch.lastRunStartedAt !== undefined ? { lastRunStartedAt: patch.lastRunStartedAt } : {}),
-        ...(patch.lastRunCompletedAt !== undefined ? { lastRunCompletedAt: patch.lastRunCompletedAt } : {}),
+        ...(patch.lastRunStartedAt !== undefined
+          ? { lastRunStartedAt: patch.lastRunStartedAt }
+          : {}),
+        ...(patch.lastRunCompletedAt !== undefined
+          ? { lastRunCompletedAt: patch.lastRunCompletedAt }
+          : {}),
         ...(patch.lastSuccessAt !== undefined ? { lastSuccessAt: patch.lastSuccessAt } : {}),
         ...(patch.lastFailureAt !== undefined ? { lastFailureAt: patch.lastFailureAt } : {}),
-        ...(patch.lastFailureReason !== undefined ? { lastFailureReason: patch.lastFailureReason } : {}),
-        ...(patch.nextScheduledRunAt !== undefined ? { nextScheduledRunAt: patch.nextScheduledRunAt } : {}),
+        ...(patch.lastFailureReason !== undefined
+          ? { lastFailureReason: patch.lastFailureReason }
+          : {}),
+        ...(patch.nextScheduledRunAt !== undefined
+          ? { nextScheduledRunAt: patch.nextScheduledRunAt }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(runtimeWorkerState.id, 'primary'));
@@ -5080,7 +5906,10 @@ export class RuntimeStore {
     return this.getRuntimeCommand(commandId);
   }
 
-  async failRuntimeCommand(commandId: string, errorMessage: string): Promise<RuntimeCommandView | null> {
+  async failRuntimeCommand(
+    commandId: string,
+    errorMessage: string,
+  ): Promise<RuntimeCommandView | null> {
     await this.db
       .update(runtimeCommands)
       .set({
@@ -5164,7 +5993,10 @@ export class RuntimeStore {
       .select()
       .from(runtimeReconciliationRuns)
       .where(eq(runtimeReconciliationRuns.status, 'completed'))
-      .orderBy(desc(runtimeReconciliationRuns.completedAt), desc(runtimeReconciliationRuns.startedAt))
+      .orderBy(
+        desc(runtimeReconciliationRuns.completedAt),
+        desc(runtimeReconciliationRuns.startedAt),
+      )
       .limit(1);
 
     return row === undefined ? null : mapReconciliationRunRow(row);
@@ -5254,7 +6086,9 @@ export class RuntimeStore {
       .returning();
 
     if (inserted === undefined) {
-      throw new Error(`RuntimeStore.recordReconciliationFinding: finding "${input.dedupeKey}" was not persisted`);
+      throw new Error(
+        `RuntimeStore.recordReconciliationFinding: finding "${input.dedupeKey}" was not persisted`,
+      );
     }
 
     return mapReconciliationFindingRow(inserted);
@@ -5282,28 +6116,45 @@ export class RuntimeStore {
     reconciliationRunId?: string;
   }): Promise<RuntimeReconciliationFindingView[]> {
     const predicates = [
-      input.findingType !== undefined ? eq(runtimeReconciliationFindings.findingType, input.findingType) : undefined,
-      input.severity !== undefined ? eq(runtimeReconciliationFindings.severity, input.severity) : undefined,
-      input.status !== undefined ? eq(runtimeReconciliationFindings.status, input.status) : undefined,
-      input.venueId !== undefined ? eq(runtimeReconciliationFindings.venueId, input.venueId) : undefined,
-      input.mismatchId !== undefined ? eq(runtimeReconciliationFindings.mismatchId, input.mismatchId) : undefined,
+      input.findingType !== undefined
+        ? eq(runtimeReconciliationFindings.findingType, input.findingType)
+        : undefined,
+      input.severity !== undefined
+        ? eq(runtimeReconciliationFindings.severity, input.severity)
+        : undefined,
+      input.status !== undefined
+        ? eq(runtimeReconciliationFindings.status, input.status)
+        : undefined,
+      input.venueId !== undefined
+        ? eq(runtimeReconciliationFindings.venueId, input.venueId)
+        : undefined,
+      input.mismatchId !== undefined
+        ? eq(runtimeReconciliationFindings.mismatchId, input.mismatchId)
+        : undefined,
       input.reconciliationRunId !== undefined
         ? eq(runtimeReconciliationFindings.reconciliationRunId, input.reconciliationRunId)
         : undefined,
     ].filter((value): value is NonNullable<typeof value> => value !== undefined);
 
-    const rows = predicates.length === 0
-      ? await this.db
-        .select()
-        .from(runtimeReconciliationFindings)
-        .orderBy(desc(runtimeReconciliationFindings.detectedAt), desc(runtimeReconciliationFindings.createdAt))
-        .limit(input.limit)
-      : await this.db
-        .select()
-        .from(runtimeReconciliationFindings)
-        .where(and(...predicates))
-        .orderBy(desc(runtimeReconciliationFindings.detectedAt), desc(runtimeReconciliationFindings.createdAt))
-        .limit(input.limit);
+    const rows =
+      predicates.length === 0
+        ? await this.db
+            .select()
+            .from(runtimeReconciliationFindings)
+            .orderBy(
+              desc(runtimeReconciliationFindings.detectedAt),
+              desc(runtimeReconciliationFindings.createdAt),
+            )
+            .limit(input.limit)
+        : await this.db
+            .select()
+            .from(runtimeReconciliationFindings)
+            .where(and(...predicates))
+            .orderBy(
+              desc(runtimeReconciliationFindings.detectedAt),
+              desc(runtimeReconciliationFindings.createdAt),
+            )
+            .limit(input.limit);
 
     return rows.map((row) => mapReconciliationFindingRow(row));
   }
@@ -5318,7 +6169,9 @@ export class RuntimeStore {
 
     const [run, mismatch] = await Promise.all([
       this.getReconciliationRun(finding.reconciliationRunId),
-      finding.mismatchId === null ? Promise.resolve<RuntimeMismatchView | null>(null) : this.getMismatchById(finding.mismatchId),
+      finding.mismatchId === null
+        ? Promise.resolve<RuntimeMismatchView | null>(null)
+        : this.getMismatchById(finding.mismatchId),
     ]);
 
     return {
@@ -5393,13 +6246,17 @@ export class RuntimeStore {
       .returning();
 
     if (inserted === undefined) {
-      throw new Error(`RuntimeStore.createMismatchRemediation: remediation for mismatch "${input.mismatchId}" was not persisted`);
+      throw new Error(
+        `RuntimeStore.createMismatchRemediation: remediation for mismatch "${input.mismatchId}" was not persisted`,
+      );
     }
 
     return mapRemediationRow(this, inserted);
   }
 
-  async getMismatchRemediationById(remediationId: string): Promise<RuntimeMismatchRemediationView | null> {
+  async getMismatchRemediationById(
+    remediationId: string,
+  ): Promise<RuntimeMismatchRemediationView | null> {
     const [row] = await this.db
       .select()
       .from(runtimeMismatchRemediations)
@@ -5413,7 +6270,9 @@ export class RuntimeStore {
     return mapRemediationRow(this, row);
   }
 
-  async getMismatchRemediationByCommandId(commandId: string): Promise<RuntimeMismatchRemediationView | null> {
+  async getMismatchRemediationByCommandId(
+    commandId: string,
+  ): Promise<RuntimeMismatchRemediationView | null> {
     const [row] = await this.db
       .select()
       .from(runtimeMismatchRemediations)
@@ -5571,23 +6430,29 @@ export class RuntimeStore {
     riskAssessment: RiskAssessment;
     executionDisposition: string;
   }): Promise<void> {
-    const marketIdentity = readCanonicalMarketIdentityFromMetadata(input.intent.metadata, {
-      venueId: input.intent.venueId,
-      asset: input.intent.asset,
-      marketType: input.intent.metadata['instrumentType'],
-      provenance: 'derived',
-      capturedAtStage: 'strategy_intent',
-      source: 'runtime_strategy_intent_persistence',
-      notes: ['Strategy intents persist the best market identity available from opportunity planning time.'],
-    }) ?? createCanonicalMarketIdentity({
-      venueId: input.intent.venueId,
-      asset: input.intent.asset,
-      marketType: input.intent.metadata['instrumentType'],
-      provenance: 'derived',
-      capturedAtStage: 'strategy_intent',
-      source: 'runtime_strategy_intent_persistence',
-      notes: ['Strategy intents derived market identity because opportunity planning did not supply richer venue-native identifiers.'],
-    });
+    const marketIdentity =
+      readCanonicalMarketIdentityFromMetadata(input.intent.metadata, {
+        venueId: input.intent.venueId,
+        asset: input.intent.asset,
+        marketType: input.intent.metadata['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'strategy_intent',
+        source: 'runtime_strategy_intent_persistence',
+        notes: [
+          'Strategy intents persist the best market identity available from opportunity planning time.',
+        ],
+      }) ??
+      createCanonicalMarketIdentity({
+        venueId: input.intent.venueId,
+        asset: input.intent.asset,
+        marketType: input.intent.metadata['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'strategy_intent',
+        source: 'runtime_strategy_intent_persistence',
+        notes: [
+          'Strategy intents derived market identity because opportunity planning did not supply richer venue-native identifiers.',
+        ],
+      });
     const metadata = attachCanonicalMarketIdentityToMetadata(input.intent.metadata, marketIdentity);
 
     await this.db
@@ -5845,15 +6710,18 @@ export class RuntimeStore {
       source: 'runtime_fill_persistence',
       notes: ['Persisted fills inherit market identity from their source runtime orders.'],
     });
-    const fillMetadata = attachCanonicalMarketIdentityToMetadata({
-      fillId: fill.fillId,
-      orderId: fill.orderId,
-      filledSize: fill.filledSize,
-      fillPrice: fill.fillPrice,
-      fee: fill.fee,
-      feeAsset: fill.feeAsset,
-      filledAt: fill.filledAt.toISOString(),
-    }, marketIdentity);
+    const fillMetadata = attachCanonicalMarketIdentityToMetadata(
+      {
+        fillId: fill.fillId,
+        orderId: fill.orderId,
+        filledSize: fill.filledSize,
+        fillPrice: fill.fillPrice,
+        fee: fill.fee,
+        feeAsset: fill.feeAsset,
+        filledAt: fill.filledAt.toISOString(),
+      },
+      marketIdentity,
+    );
 
     await this.db
       .insert(fills)
@@ -5876,10 +6744,7 @@ export class RuntimeStore {
   }
 
   async getPortfolioSummary(): Promise<PortfolioSummaryView | null> {
-    const [row] = await this.db
-      .select()
-      .from(portfolioCurrent)
-      .limit(1);
+    const [row] = await this.db.select().from(portfolioCurrent).limit(1);
 
     if (row === undefined) {
       return null;
@@ -5940,6 +6805,989 @@ export class RuntimeStore {
     };
   }
 
+  private buildDefaultVaultCurrentRecord(): typeof vaultCurrent.$inferSelect {
+    const defaults = buildDefaultVaultConfig();
+    const defaultTimestamp = new Date(0);
+    return {
+      id: defaults.vaultId,
+      vaultName: defaults.vaultName,
+      strategyId: defaults.strategyId,
+      strategyName: defaults.strategyName,
+      managerName: defaults.managerName,
+      managerWalletAddress: defaults.managerWalletAddress,
+      baseAsset: defaults.baseAsset,
+      lockPeriodMonths: defaults.lockPeriodMonths,
+      rolling: defaults.rolling,
+      reassessmentCadenceMonths: defaults.reassessmentCadenceMonths,
+      targetApyFloorPct: defaults.targetApyFloorPct,
+      metadata: defaults.metadata,
+      createdAt: defaultTimestamp,
+      updatedAt: defaultTimestamp,
+    };
+  }
+
+  private buildDefaultSubmissionDossierRecord(
+    vaultRecord: typeof vaultCurrent.$inferSelect,
+  ): typeof vaultSubmissionProfiles.$inferSelect {
+    const defaults = buildDefaultSubmissionConfig();
+    const defaultTimestamp = new Date(0);
+    return {
+      id: defaults.id,
+      submissionName: defaults.submissionName,
+      track: defaults.track,
+      vaultId: vaultRecord.id,
+      strategyId: vaultRecord.strategyId,
+      buildWindowStart: defaults.buildWindowStart,
+      buildWindowEnd: defaults.buildWindowEnd,
+      cluster: defaults.cluster,
+      walletAddress: defaults.walletAddress,
+      vaultAddress: defaults.vaultAddress,
+      cexExecutionUsed: defaults.cexExecutionUsed,
+      cexVenues: defaults.cexVenues,
+      cexTradeHistoryProvided: defaults.cexTradeHistoryProvided,
+      cexReadOnlyApiKeyProvided: defaults.cexReadOnlyApiKeyProvided,
+      notes: defaults.notes,
+      metadata: defaults.metadata,
+      createdAt: defaultTimestamp,
+      updatedAt: defaultTimestamp,
+    };
+  }
+
+  private mapSubmissionEvidenceRow(
+    row: typeof vaultSubmissionEvidence.$inferSelect,
+    cluster: SubmissionCluster,
+  ): SubmissionEvidenceRecordView {
+    const evidenceType = normalizeSubmissionEvidenceType(row.evidenceType);
+    const reference = normalizeOptionalText(row.reference);
+    const url = normalizeOptionalText(row.url) ?? (
+      evidenceType === 'on_chain_transaction'
+        ? buildSolscanUrl('tx', reference, cluster)
+        : null
+    );
+
+    return {
+      evidenceId: row.id,
+      submissionId: row.submissionId,
+      evidenceType,
+      status: normalizeSubmissionEvidenceStatus(row.status),
+      source: normalizeSubmissionEvidenceSource(row.source),
+      label: row.label,
+      summary: normalizeOptionalText(row.summary),
+      reference,
+      url,
+      capturedAt: toIsoString(row.capturedAt),
+      withinBuildWindow: row.withinBuildWindow,
+      notes: normalizeOptionalText(row.notes),
+      metadata: asJsonObject(row.metadata),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private async getVaultCurrentRecord(): Promise<typeof vaultCurrent.$inferSelect> {
+    const [row] = await this.db.select().from(vaultCurrent).limit(1);
+
+    return row ?? this.buildDefaultVaultCurrentRecord();
+  }
+
+  private async getSubmissionDossierRecord(
+    vaultRecord: typeof vaultCurrent.$inferSelect,
+  ): Promise<typeof vaultSubmissionProfiles.$inferSelect> {
+    const [row] = await this.db
+      .select()
+      .from(vaultSubmissionProfiles)
+      .where(eq(vaultSubmissionProfiles.id, DEFAULT_SUBMISSION_DOSSIER_ID))
+      .limit(1);
+
+    return row ?? this.buildDefaultSubmissionDossierRecord(vaultRecord);
+  }
+
+  private async ensureSubmissionDossierRecord(
+    vaultRecord: typeof vaultCurrent.$inferSelect,
+  ): Promise<typeof vaultSubmissionProfiles.$inferSelect> {
+    const existing = await this.getSubmissionDossierRecord(vaultRecord);
+    if (existing.createdAt.getTime() !== 0) {
+      return existing;
+    }
+
+    const defaults = buildDefaultSubmissionConfig();
+    const [row] = await this.db
+      .insert(vaultSubmissionProfiles)
+      .values({
+        id: defaults.id,
+        submissionName: defaults.submissionName,
+        track: defaults.track,
+        vaultId: vaultRecord.id,
+        strategyId: vaultRecord.strategyId,
+        buildWindowStart: defaults.buildWindowStart,
+        buildWindowEnd: defaults.buildWindowEnd,
+        cluster: defaults.cluster,
+        walletAddress: defaults.walletAddress,
+        vaultAddress: defaults.vaultAddress,
+        cexExecutionUsed: defaults.cexExecutionUsed,
+        cexVenues: defaults.cexVenues,
+        cexTradeHistoryProvided: defaults.cexTradeHistoryProvided,
+        cexReadOnlyApiKeyProvided: defaults.cexReadOnlyApiKeyProvided,
+        notes: defaults.notes,
+        metadata: defaults.metadata,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: vaultSubmissionProfiles.id,
+        set: {
+          vaultId: vaultRecord.id,
+          strategyId: vaultRecord.strategyId,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.ensureSubmissionDossierRecord: submission dossier was not persisted');
+    }
+
+    return row;
+  }
+
+  private async getSubmissionEvidenceRows(
+    submissionId: string,
+  ): Promise<Array<typeof vaultSubmissionEvidence.$inferSelect>> {
+    return this.db
+      .select()
+      .from(vaultSubmissionEvidence)
+      .where(eq(vaultSubmissionEvidence.submissionId, submissionId))
+      .orderBy(desc(vaultSubmissionEvidence.capturedAt), desc(vaultSubmissionEvidence.createdAt));
+  }
+
+  private async ensureVaultCurrentRecord(): Promise<typeof vaultCurrent.$inferSelect> {
+    const defaults = buildDefaultVaultConfig();
+    const [row] = await this.db
+      .insert(vaultCurrent)
+      .values({
+        id: defaults.vaultId,
+        vaultName: defaults.vaultName,
+        strategyId: defaults.strategyId,
+        strategyName: defaults.strategyName,
+        managerName: defaults.managerName,
+        managerWalletAddress: defaults.managerWalletAddress,
+        baseAsset: defaults.baseAsset,
+        lockPeriodMonths: defaults.lockPeriodMonths,
+        rolling: defaults.rolling,
+        reassessmentCadenceMonths: defaults.reassessmentCadenceMonths,
+        targetApyFloorPct: defaults.targetApyFloorPct,
+        metadata: defaults.metadata,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: vaultCurrent.id,
+        set: {
+          vaultName: defaults.vaultName,
+          strategyId: defaults.strategyId,
+          strategyName: defaults.strategyName,
+          baseAsset: defaults.baseAsset,
+          lockPeriodMonths: defaults.lockPeriodMonths,
+          rolling: defaults.rolling,
+          reassessmentCadenceMonths: defaults.reassessmentCadenceMonths,
+          targetApyFloorPct: defaults.targetApyFloorPct,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.ensureVaultCurrentRecord: vault state was not persisted');
+    }
+
+    return row;
+  }
+
+  private async getVaultDepositorRecordsById(
+    depositorIds: string[],
+  ): Promise<Map<string, typeof vaultDepositors.$inferSelect>> {
+    if (depositorIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.db
+      .select()
+      .from(vaultDepositors)
+      .where(inArray(vaultDepositors.id, depositorIds));
+
+    return new Map(rows.map((row) => [row.id, row]));
+  }
+
+  private mapVaultDepositLotRow(
+    row: typeof vaultDepositLots.$inferSelect,
+    depositor: typeof vaultDepositors.$inferSelect | undefined,
+    now: Date,
+  ): VaultDepositLotView {
+    return {
+      depositLotId: row.id,
+      vaultId: row.vaultId,
+      depositorId: row.depositorId,
+      investorId: depositor?.investorId ?? 'unknown',
+      displayName: depositor?.displayName ?? 'Unknown depositor',
+      walletAddress: depositor?.walletAddress ?? 'unknown',
+      asset: row.asset,
+      depositedAmount: row.depositedAmount,
+      mintedShares: row.mintedShares,
+      sharePrice: row.sharePrice,
+      depositedAt: row.depositedAt.toISOString(),
+      lockExpiresAt: row.lockExpiresAt.toISOString(),
+      redeemedAt: toIsoString(row.redeemedAt),
+      locked: row.status !== 'redeemed' && row.lockExpiresAt.getTime() > now.getTime(),
+      status: row.status as VaultDepositLotStatus,
+      note: row.note ?? null,
+      metadata: asJsonObject(row.metadata),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private mapVaultRedemptionRequestRow(
+    row: typeof vaultRedemptionRequests.$inferSelect,
+    depositor: typeof vaultDepositors.$inferSelect | undefined,
+  ): VaultRedemptionRequestView {
+    return {
+      requestId: row.id,
+      vaultId: row.vaultId,
+      depositorId: row.depositorId,
+      investorId: depositor?.investorId ?? 'unknown',
+      displayName: depositor?.displayName ?? 'Unknown depositor',
+      walletAddress: depositor?.walletAddress ?? 'unknown',
+      requestedShares: row.requestedShares,
+      estimatedAssets: row.estimatedAssets,
+      sharePrice: row.sharePrice,
+      requestedAt: row.requestedAt.toISOString(),
+      eligibleAt: row.eligibleAt.toISOString(),
+      fulfilledAt: toIsoString(row.fulfilledAt),
+      status: row.status as VaultRedemptionRequestStatus,
+      note: row.note ?? null,
+      metadata: asJsonObject(row.metadata),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async getVaultSummary(): Promise<VaultSummaryView> {
+    const now = new Date();
+    const [vaultRecord, portfolio, strategyProfile, depositRows, redemptionRows, depositorRows] =
+      await Promise.all([
+        this.getVaultCurrentRecord(),
+        this.getPortfolioSummary(),
+        this.getCarryStrategyProfile(),
+        this.db
+          .select()
+          .from(vaultDepositLots)
+          .where(inArray(vaultDepositLots.status, ['active', 'redeeming'])),
+        this.db
+          .select()
+          .from(vaultRedemptionRequests)
+          .where(inArray(vaultRedemptionRequests.status, ['pending_lock', 'queued'])),
+        this.db.select().from(vaultDepositors),
+      ]);
+
+    const totalSharesOutstanding = depositRows.reduce(
+      (sum, row) => sum.plus(row.mintedShares),
+      new Decimal(0),
+    );
+    const lockedShares = depositRows.reduce(
+      (sum, row) =>
+        row.lockExpiresAt.getTime() > now.getTime() ? sum.plus(row.mintedShares) : sum,
+      new Decimal(0),
+    );
+    const pendingRedemptionShares = redemptionRows.reduce(
+      (sum, row) => sum.plus(row.requestedShares),
+      new Decimal(0),
+    );
+    const totalAssetsUsd =
+      portfolio === null
+        ? depositRows.reduce((sum, row) => sum.plus(row.depositedAmount), new Decimal(0))
+        : new Decimal(portfolio.totalNav);
+    const availableLiquidityUsd =
+      portfolio === null ? new Decimal(0) : new Decimal(portfolio.liquidityReserve);
+    const navPerShare = totalSharesOutstanding.gt(0)
+      ? totalAssetsUsd.div(totalSharesOutstanding)
+      : new Decimal(1);
+    const executionEnvironment = mapStrategyEnvironmentToVaultExecutionEnvironment(
+      strategyProfile.evidence.environment,
+    );
+
+    return {
+      vaultId: vaultRecord.id,
+      vaultName: vaultRecord.vaultName,
+      strategyId: vaultRecord.strategyId,
+      strategyName: vaultRecord.strategyName,
+      managerName: vaultRecord.managerName ?? null,
+      managerWalletAddress: vaultRecord.managerWalletAddress ?? null,
+      baseAsset: vaultRecord.baseAsset,
+      lockPeriodMonths: vaultRecord.lockPeriodMonths,
+      rolling: vaultRecord.rolling,
+      reassessmentCadenceMonths: vaultRecord.reassessmentCadenceMonths,
+      targetApyFloorPct: vaultRecord.targetApyFloorPct,
+      projectedApyPct: strategyProfile.apy.projectedApyPct,
+      realizedApyPct: strategyProfile.apy.realizedApyPct,
+      navPerShare: formatDecimal(navPerShare),
+      totalAssetsUsd: formatMoney(totalAssetsUsd),
+      availableLiquidityUsd: formatMoney(availableLiquidityUsd),
+      totalSharesOutstanding: formatDecimal(totalSharesOutstanding),
+      totalDepositors: depositorRows.length,
+      activeDepositLots: depositRows.length,
+      lockedShares: formatDecimal(lockedShares),
+      unlockedShares: formatDecimal(Decimal.max(totalSharesOutstanding.minus(lockedShares), 0)),
+      pendingRedemptionShares: formatDecimal(pendingRedemptionShares),
+      executionEnvironment,
+      supportedScope: strategyProfile.evidence.supportedScope,
+      blockedScope: strategyProfile.evidence.blockedScope,
+      updatedAt: vaultRecord.updatedAt.toISOString(),
+    };
+  }
+
+  async getSubmissionDossier(): Promise<SubmissionDossierView> {
+    const vaultRecord = await this.getVaultCurrentRecord();
+    const [strategyProfile, dossierRecord] = await Promise.all([
+      this.getCarryStrategyProfile(),
+      this.getSubmissionDossierRecord(vaultRecord),
+    ]);
+
+    const buildWindowStart = dossierRecord.buildWindowStart;
+    const buildWindowEnd = dossierRecord.buildWindowEnd;
+    const [executionRowsInWindow, evidenceRows] = await Promise.all([
+      this.db
+        .select()
+        .from(carryActionExecutions)
+        .where(
+          and(
+            gte(carryActionExecutions.createdAt, buildWindowStart),
+            lte(carryActionExecutions.createdAt, buildWindowEnd),
+          ),
+        )
+        .orderBy(desc(carryActionExecutions.createdAt)),
+      this.getSubmissionEvidenceRows(dossierRecord.id),
+    ]);
+
+    const realExecutionRowsInWindow = executionRowsInWindow.filter((row) => !row.simulated);
+    const latestRealExecutionRow = realExecutionRowsInWindow[0] ?? null;
+    const latestRealStepRow = latestRealExecutionRow === null
+      ? null
+      : await this.db
+        .select()
+        .from(carryExecutionSteps)
+        .where(eq(carryExecutionSteps.carryExecutionId, latestRealExecutionRow.id))
+        .orderBy(desc(carryExecutionSteps.createdAt))
+        .limit(10)
+        .then((rows) =>
+          rows.find((row) => normalizeOptionalText(row.executionReference) !== null) ?? rows[0] ?? null,
+        );
+
+    const walletAddress = normalizeOptionalText(dossierRecord.walletAddress);
+    const vaultAddress = normalizeOptionalText(dossierRecord.vaultAddress);
+    const track = normalizeSubmissionTrack(dossierRecord.track);
+    const cluster = dossierRecord.cluster === 'unknown'
+      ? mapVaultExecutionEnvironmentToSubmissionCluster(
+        mapStrategyEnvironmentToVaultExecutionEnvironment(strategyProfile.evidence.environment),
+      )
+      : normalizeSubmissionCluster(dossierRecord.cluster);
+    const evidence = evidenceRows.map((row) => this.mapSubmissionEvidenceRow(row, cluster));
+    const onChainEvidence = evidence.filter((item) =>
+      item.evidenceType === 'on_chain_transaction' && item.status !== 'rejected' && item.withinBuildWindow
+    );
+    const latestOnChainEvidence = onChainEvidence[0] ?? null;
+    const performanceEvidenceCount = evidence.filter((item) =>
+      item.evidenceType === 'performance_snapshot' && item.status !== 'rejected'
+    ).length;
+    const cexTradeHistoryEvidenceCount = evidence.filter((item) =>
+      item.evidenceType === 'cex_trade_history' && item.status !== 'rejected'
+    ).length;
+    const cexReadOnlyApiEvidenceCount = evidence.filter((item) =>
+      item.evidenceType === 'cex_read_only_api' && item.status !== 'rejected'
+    ).length;
+    const addressScope = resolveSubmissionAddressScope(walletAddress, vaultAddress);
+    const cexVenues = [...new Set(asStringArray(dossierRecord.cexVenues))];
+    const latestExecutionReference = normalizeOptionalText(
+      latestOnChainEvidence?.reference
+        ?? latestRealStepRow?.executionReference
+        ?? latestRealExecutionRow?.venueExecutionReference
+        ?? null,
+    );
+    const latestExecutionAt = latestOnChainEvidence?.capturedAt
+      ?? (
+        latestRealExecutionRow === null
+          ? null
+          : toIsoString(latestRealExecutionRow.completedAt ?? latestRealExecutionRow.createdAt)
+      );
+    const readiness = buildSubmissionReadiness({
+      addressScope,
+      cluster,
+      baseAsset: vaultRecord.baseAsset,
+      lockPeriodMonths: vaultRecord.lockPeriodMonths,
+      rolling: vaultRecord.rolling,
+      reassessmentCadenceMonths: vaultRecord.reassessmentCadenceMonths,
+      targetApyFloorPct: vaultRecord.targetApyFloorPct,
+      strategyEligibilityStatus: strategyProfile.eligibility.status,
+      strategyBlockedReasons: strategyProfile.eligibility.blockedReasons,
+      realizedApyPct: strategyProfile.apy.realizedApyPct,
+      realExecutionCountInWindow: realExecutionRowsInWindow.length,
+      onChainEvidenceCountInWindow: onChainEvidence.length,
+      performanceEvidenceCount,
+      cexExecutionUsed: dossierRecord.cexExecutionUsed,
+      cexTradeHistoryProvided: dossierRecord.cexTradeHistoryProvided,
+      cexReadOnlyApiKeyProvided: dossierRecord.cexReadOnlyApiKeyProvided,
+      cexTradeHistoryEvidenceCount,
+      cexReadOnlyApiEvidenceCount,
+    });
+
+    return {
+      submissionId: dossierRecord.id,
+      submissionName: dossierRecord.submissionName,
+      track,
+      strategyId: vaultRecord.strategyId,
+      strategyName: vaultRecord.strategyName,
+      vaultId: vaultRecord.id,
+      vaultName: vaultRecord.vaultName,
+      baseAsset: vaultRecord.baseAsset,
+      buildWindowStart: buildWindowStart.toISOString(),
+      buildWindowEnd: buildWindowEnd.toISOString(),
+      cluster,
+      addressScope,
+      walletAddress,
+      walletVerificationUrl: buildSolscanUrl('account', walletAddress, cluster),
+      vaultAddress,
+      vaultVerificationUrl: buildSolscanUrl('account', vaultAddress, cluster),
+      managerWalletAddress: normalizeOptionalText(vaultRecord.managerWalletAddress),
+      latestExecutionReference,
+      latestExecutionReferenceUrl: buildSolscanUrl('tx', latestExecutionReference, cluster),
+      latestExecutionAt,
+      realExecutionCountInWindow: realExecutionRowsInWindow.length,
+      simulatedExecutionCountInWindow: executionRowsInWindow.filter((row) => row.simulated).length,
+      realizedApyPct: strategyProfile.apy.realizedApyPct,
+      cexExecutionUsed: dossierRecord.cexExecutionUsed,
+      cexVenues,
+      cexTradeHistoryProvided: dossierRecord.cexTradeHistoryProvided,
+      cexReadOnlyApiKeyProvided: dossierRecord.cexReadOnlyApiKeyProvided,
+      supportedScope: strategyProfile.evidence.supportedScope,
+      blockedScope: strategyProfile.evidence.blockedScope,
+      notes: normalizeOptionalText(dossierRecord.notes),
+      metadata: asJsonObject(dossierRecord.metadata),
+      readiness,
+      createdAt: dossierRecord.createdAt.toISOString(),
+      updatedAt: dossierRecord.updatedAt.toISOString(),
+    };
+  }
+
+  async listSubmissionEvidence(): Promise<SubmissionEvidenceRecordView[]> {
+    const vaultRecord = await this.getVaultCurrentRecord();
+    const dossierRecord = await this.getSubmissionDossierRecord(vaultRecord);
+    const cluster = normalizeSubmissionCluster(dossierRecord.cluster);
+    const rows = await this.getSubmissionEvidenceRows(dossierRecord.id);
+    return rows.map((row) => this.mapSubmissionEvidenceRow(row, cluster));
+  }
+
+  async getSubmissionExportBundle(): Promise<SubmissionExportBundleView> {
+    const [dossier, evidence] = await Promise.all([
+      this.getSubmissionDossier(),
+      this.listSubmissionEvidence(),
+    ]);
+
+    return buildSubmissionExportBundle({ dossier, evidence });
+  }
+
+  async listVaultDepositors(limit = 100): Promise<VaultDepositorView[]> {
+    const now = new Date();
+    const [depositorRows, depositRows, redemptionRows] = await Promise.all([
+      this.db.select().from(vaultDepositors).orderBy(desc(vaultDepositors.updatedAt)).limit(limit),
+      this.db
+        .select()
+        .from(vaultDepositLots)
+        .where(inArray(vaultDepositLots.status, ['active', 'redeeming'])),
+      this.db
+        .select()
+        .from(vaultRedemptionRequests)
+        .where(inArray(vaultRedemptionRequests.status, ['pending_lock', 'queued'])),
+    ]);
+
+    return depositorRows.map((depositor) => {
+      const depositorLots = depositRows.filter((row) => row.depositorId === depositor.id);
+      const depositorRedemptions = redemptionRows.filter((row) => row.depositorId === depositor.id);
+      const totalDepositedUsdc = depositorLots.reduce(
+        (sum, row) => sum.plus(row.depositedAmount),
+        new Decimal(0),
+      );
+      const activeShares = depositorLots.reduce(
+        (sum, row) => sum.plus(row.mintedShares),
+        new Decimal(0),
+      );
+      const lockedShares = depositorLots.reduce(
+        (sum, row) =>
+          row.lockExpiresAt.getTime() > now.getTime() ? sum.plus(row.mintedShares) : sum,
+        new Decimal(0),
+      );
+      const pendingRedemptionShares = depositorRedemptions.reduce(
+        (sum, row) => sum.plus(row.requestedShares),
+        new Decimal(0),
+      );
+      const lastDepositAt = depositorLots.reduce<Date | null>(
+        (latest, row) =>
+          latest === null || row.depositedAt.getTime() > latest.getTime()
+            ? row.depositedAt
+            : latest,
+        null,
+      );
+
+      return {
+        depositorId: depositor.id,
+        investorId: depositor.investorId,
+        displayName: depositor.displayName,
+        walletAddress: depositor.walletAddress,
+        status: depositor.status as VaultDepositorStatus,
+        totalDepositedUsdc: formatMoney(totalDepositedUsdc),
+        activeShares: formatDecimal(activeShares),
+        lockedShares: formatDecimal(lockedShares),
+        unlockedShares: formatDecimal(Decimal.max(activeShares.minus(lockedShares), 0)),
+        pendingRedemptionShares: formatDecimal(pendingRedemptionShares),
+        lastDepositAt: toIsoString(lastDepositAt),
+        createdAt: depositor.createdAt.toISOString(),
+        updatedAt: depositor.updatedAt.toISOString(),
+      };
+    });
+  }
+
+  async listVaultDepositLots(limit = 100): Promise<VaultDepositLotView[]> {
+    const now = new Date();
+    const rows = await this.db
+      .select()
+      .from(vaultDepositLots)
+      .orderBy(desc(vaultDepositLots.depositedAt))
+      .limit(limit);
+    const depositorMap = await this.getVaultDepositorRecordsById(
+      rows.map((row) => row.depositorId),
+    );
+
+    return rows.map((row) =>
+      this.mapVaultDepositLotRow(row, depositorMap.get(row.depositorId), now),
+    );
+  }
+
+  async listVaultRedemptionRequests(limit = 100): Promise<VaultRedemptionRequestView[]> {
+    const rows = await this.db
+      .select()
+      .from(vaultRedemptionRequests)
+      .orderBy(desc(vaultRedemptionRequests.requestedAt))
+      .limit(limit);
+    const depositorMap = await this.getVaultDepositorRecordsById(
+      rows.map((row) => row.depositorId),
+    );
+
+    return rows.map((row) =>
+      this.mapVaultRedemptionRequestRow(row, depositorMap.get(row.depositorId)),
+    );
+  }
+
+  async recordVaultDeposit(input: RecordVaultDepositInput): Promise<VaultDepositLotView> {
+    const depositedAt = input.depositedAt === undefined ? new Date() : new Date(input.depositedAt);
+    if (Number.isNaN(depositedAt.getTime())) {
+      throw new Error('Vault deposit requires a valid depositedAt timestamp when provided.');
+    }
+
+    const amountUsdc = new Decimal(input.amountUsdc);
+    if (!amountUsdc.isFinite() || amountUsdc.lte(0)) {
+      throw new Error('Vault deposit amount must be greater than zero.');
+    }
+
+    const vaultRecord = await this.ensureVaultCurrentRecord();
+    const summary = await this.getVaultSummary();
+    const navPerShare = decimalOrZero(summary.navPerShare);
+    const effectiveSharePrice = navPerShare.gt(0) ? navPerShare : new Decimal(1);
+    const mintedShares = amountUsdc.div(effectiveSharePrice);
+    const lockExpiresAt = addMonths(depositedAt, vaultRecord.lockPeriodMonths);
+
+    let [depositor] = await this.db
+      .select()
+      .from(vaultDepositors)
+      .where(eq(vaultDepositors.walletAddress, input.walletAddress))
+      .limit(1);
+
+    if (depositor === undefined) {
+      const [createdDepositor] = await this.db
+        .insert(vaultDepositors)
+        .values({
+          investorId: input.investorId,
+          displayName: input.displayName,
+          walletAddress: input.walletAddress,
+          status: 'active',
+          metadata: input.metadata ?? {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      if (createdDepositor === undefined) {
+        throw new Error('RuntimeStore.recordVaultDeposit: depositor was not persisted');
+      }
+
+      depositor = createdDepositor;
+    } else {
+      await this.db
+        .update(vaultDepositors)
+        .set({
+          investorId: input.investorId,
+          displayName: input.displayName,
+          status: 'active',
+          metadata: input.metadata ?? depositor.metadata,
+          updatedAt: new Date(),
+        })
+        .where(eq(vaultDepositors.id, depositor.id));
+      depositor = {
+        ...depositor,
+        investorId: input.investorId,
+        displayName: input.displayName,
+        status: 'active',
+        metadata: input.metadata ?? depositor.metadata,
+        updatedAt: new Date(),
+      };
+    }
+
+    const [depositLot] = await this.db
+      .insert(vaultDepositLots)
+      .values({
+        vaultId: vaultRecord.id,
+        depositorId: depositor.id,
+        asset: vaultRecord.baseAsset,
+        depositedAmount: formatMoney(amountUsdc),
+        mintedShares: formatDecimal(mintedShares),
+        sharePrice: formatDecimal(effectiveSharePrice),
+        depositedAt,
+        lockExpiresAt,
+        redeemedAt: null,
+        status: 'active',
+        note: input.note ?? null,
+        metadata: input.metadata ?? {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (depositLot === undefined) {
+      throw new Error('RuntimeStore.recordVaultDeposit: deposit lot was not persisted');
+    }
+
+    await this.db
+      .update(vaultCurrent)
+      .set({ updatedAt: new Date() })
+      .where(eq(vaultCurrent.id, vaultRecord.id));
+
+    return this.mapVaultDepositLotRow(depositLot, depositor, new Date());
+  }
+
+  async requestVaultRedemption(
+    input: RequestVaultRedemptionInput,
+  ): Promise<VaultRedemptionRequestView> {
+    const requestedAt = input.requestedAt === undefined ? new Date() : new Date(input.requestedAt);
+    if (Number.isNaN(requestedAt.getTime())) {
+      throw new Error('Vault redemption requires a valid requestedAt timestamp when provided.');
+    }
+
+    const requestedShares = new Decimal(input.requestedShares);
+    if (!requestedShares.isFinite() || requestedShares.lte(0)) {
+      throw new Error('Vault redemption shares must be greater than zero.');
+    }
+
+    const vaultRecord = await this.ensureVaultCurrentRecord();
+    const [depositor] = await this.db
+      .select()
+      .from(vaultDepositors)
+      .where(eq(vaultDepositors.walletAddress, input.walletAddress))
+      .limit(1);
+
+    if (depositor === undefined) {
+      throw new Error(`Vault depositor '${input.walletAddress}' was not found.`);
+    }
+
+    const [depositRows, existingRequests, summary] = await Promise.all([
+      this.db
+        .select()
+        .from(vaultDepositLots)
+        .where(
+          and(
+            eq(vaultDepositLots.depositorId, depositor.id),
+            inArray(vaultDepositLots.status, ['active', 'redeeming']),
+          ),
+        )
+        .orderBy(asc(vaultDepositLots.lockExpiresAt), asc(vaultDepositLots.depositedAt)),
+      this.db
+        .select()
+        .from(vaultRedemptionRequests)
+        .where(
+          and(
+            eq(vaultRedemptionRequests.depositorId, depositor.id),
+            inArray(vaultRedemptionRequests.status, ['pending_lock', 'queued']),
+          ),
+        )
+        .orderBy(asc(vaultRedemptionRequests.requestedAt)),
+      this.getVaultSummary(),
+    ]);
+
+    const lotAvailability = depositRows.map((row) => ({
+      row,
+      availableShares: new Decimal(row.mintedShares),
+    }));
+
+    const reserveShares = (sharesToReserve: Decimal): void => {
+      let remaining = sharesToReserve;
+      for (const lot of lotAvailability) {
+        if (remaining.lte(0)) {
+          break;
+        }
+        if (lot.availableShares.lte(0)) {
+          continue;
+        }
+        const taken = Decimal.min(lot.availableShares, remaining);
+        lot.availableShares = lot.availableShares.minus(taken);
+        remaining = remaining.minus(taken);
+      }
+      if (remaining.gt(0)) {
+        throw new Error('Requested redemption exceeds available depositor shares.');
+      }
+    };
+
+    for (const request of existingRequests) {
+      reserveShares(new Decimal(request.requestedShares));
+    }
+
+    let remaining = requestedShares;
+    const allocations: Array<{
+      lotId: string;
+      allocatedShares: string;
+      eligibleAt: string;
+    }> = [];
+    let eligibleAt = requestedAt;
+
+    for (const lot of lotAvailability) {
+      if (remaining.lte(0)) {
+        break;
+      }
+      if (lot.availableShares.lte(0)) {
+        continue;
+      }
+      const taken = Decimal.min(lot.availableShares, remaining);
+      const lotEligibleAt =
+        lot.row.lockExpiresAt.getTime() > requestedAt.getTime()
+          ? lot.row.lockExpiresAt
+          : requestedAt;
+      allocations.push({
+        lotId: lot.row.id,
+        allocatedShares: formatDecimal(taken),
+        eligibleAt: lotEligibleAt.toISOString(),
+      });
+      if (lotEligibleAt.getTime() > eligibleAt.getTime()) {
+        eligibleAt = lotEligibleAt;
+      }
+      remaining = remaining.minus(taken);
+    }
+
+    if (remaining.gt(0)) {
+      throw new Error('Requested redemption exceeds available depositor shares.');
+    }
+
+    const sharePrice = decimalOrZero(summary.navPerShare);
+    const effectiveSharePrice = sharePrice.gt(0) ? sharePrice : new Decimal(1);
+    const estimatedAssets = requestedShares.times(effectiveSharePrice);
+    const status: VaultRedemptionRequestStatus =
+      eligibleAt.getTime() > requestedAt.getTime() ? 'pending_lock' : 'queued';
+
+    const [requestRow] = await this.db
+      .insert(vaultRedemptionRequests)
+      .values({
+        vaultId: vaultRecord.id,
+        depositorId: depositor.id,
+        requestedShares: formatDecimal(requestedShares),
+        estimatedAssets: formatMoney(estimatedAssets),
+        sharePrice: formatDecimal(effectiveSharePrice),
+        requestedAt,
+        eligibleAt,
+        fulfilledAt: null,
+        status,
+        note: input.note ?? null,
+        metadata: {
+          ...(input.metadata ?? {}),
+          allocations,
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (requestRow === undefined) {
+      throw new Error('RuntimeStore.requestVaultRedemption: redemption request was not persisted');
+    }
+
+    await this.db
+      .update(vaultCurrent)
+      .set({ updatedAt: new Date() })
+      .where(eq(vaultCurrent.id, vaultRecord.id));
+
+    return this.mapVaultRedemptionRequestRow(requestRow, depositor);
+  }
+
+  async upsertSubmissionDossier(
+    input: UpsertSubmissionDossierInput,
+  ): Promise<SubmissionDossierView> {
+    const vaultRecord = await this.ensureVaultCurrentRecord();
+    const existing = await this.getSubmissionDossierRecord(vaultRecord);
+    const nextBuildWindowStart = input.buildWindowStart === undefined
+      ? existing.buildWindowStart
+      : new Date(input.buildWindowStart);
+    const nextBuildWindowEnd = input.buildWindowEnd === undefined
+      ? existing.buildWindowEnd
+      : new Date(input.buildWindowEnd);
+
+    if (Number.isNaN(nextBuildWindowStart.getTime())) {
+      throw new Error('Submission dossier requires a valid buildWindowStart timestamp.');
+    }
+    if (Number.isNaN(nextBuildWindowEnd.getTime())) {
+      throw new Error('Submission dossier requires a valid buildWindowEnd timestamp.');
+    }
+    if (nextBuildWindowEnd.getTime() < nextBuildWindowStart.getTime()) {
+      throw new Error('Submission dossier build window end must be on or after build window start.');
+    }
+
+    const cexVenues = input.cexVenues === undefined
+      ? asStringArray(existing.cexVenues)
+      : [...new Set(asStringArray(input.cexVenues))];
+    const track = input.track ?? normalizeSubmissionTrack(existing.track);
+    const cluster = input.cluster ?? normalizeSubmissionCluster(existing.cluster);
+    const submissionName = normalizeOptionalText(input.submissionName) ?? existing.submissionName;
+    const walletAddress = input.walletAddress === undefined
+      ? normalizeOptionalText(existing.walletAddress)
+      : normalizeOptionalText(input.walletAddress);
+    const vaultAddress = input.vaultAddress === undefined
+      ? normalizeOptionalText(existing.vaultAddress)
+      : normalizeOptionalText(input.vaultAddress);
+    const notes = input.notes === undefined
+      ? normalizeOptionalText(existing.notes)
+      : normalizeOptionalText(input.notes);
+
+    const createdAt = existing.createdAt.getTime() === 0 ? new Date() : existing.createdAt;
+    const [row] = await this.db
+      .insert(vaultSubmissionProfiles)
+      .values({
+        id: DEFAULT_SUBMISSION_DOSSIER_ID,
+        submissionName,
+        track,
+        vaultId: vaultRecord.id,
+        strategyId: vaultRecord.strategyId,
+        buildWindowStart: nextBuildWindowStart,
+        buildWindowEnd: nextBuildWindowEnd,
+        cluster,
+        walletAddress,
+        vaultAddress,
+        cexExecutionUsed: input.cexExecutionUsed ?? existing.cexExecutionUsed,
+        cexVenues,
+        cexTradeHistoryProvided:
+          input.cexTradeHistoryProvided ?? existing.cexTradeHistoryProvided,
+        cexReadOnlyApiKeyProvided:
+          input.cexReadOnlyApiKeyProvided ?? existing.cexReadOnlyApiKeyProvided,
+        notes,
+        metadata: input.metadata ?? asJsonObject(existing.metadata),
+        createdAt,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: vaultSubmissionProfiles.id,
+        set: {
+          submissionName,
+          track,
+          vaultId: vaultRecord.id,
+          strategyId: vaultRecord.strategyId,
+          buildWindowStart: nextBuildWindowStart,
+          buildWindowEnd: nextBuildWindowEnd,
+          cluster,
+          walletAddress,
+          vaultAddress,
+          cexExecutionUsed: input.cexExecutionUsed ?? existing.cexExecutionUsed,
+          cexVenues,
+          cexTradeHistoryProvided:
+            input.cexTradeHistoryProvided ?? existing.cexTradeHistoryProvided,
+          cexReadOnlyApiKeyProvided:
+            input.cexReadOnlyApiKeyProvided ?? existing.cexReadOnlyApiKeyProvided,
+          notes,
+          metadata: input.metadata ?? asJsonObject(existing.metadata),
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.upsertSubmissionDossier: submission dossier was not persisted');
+    }
+
+    return this.getSubmissionDossier();
+  }
+
+  async recordSubmissionEvidence(
+    input: RecordSubmissionEvidenceInput,
+  ): Promise<SubmissionEvidenceRecordView> {
+    const vaultRecord = await this.ensureVaultCurrentRecord();
+    const dossierRecord = await this.ensureSubmissionDossierRecord(vaultRecord);
+    const evidenceType = normalizeSubmissionEvidenceType(input.evidenceType);
+    const label = normalizeOptionalText(input.label);
+
+    if (label === null) {
+      throw new Error('Submission evidence requires a non-empty label.');
+    }
+
+    const capturedAt = input.capturedAt === undefined || input.capturedAt === null
+      ? null
+      : new Date(input.capturedAt);
+    if (capturedAt !== null && Number.isNaN(capturedAt.getTime())) {
+      throw new Error('Submission evidence requires a valid capturedAt timestamp when provided.');
+    }
+
+    const withinBuildWindow = input.withinBuildWindow ?? (
+      capturedAt !== null &&
+      capturedAt.getTime() >= dossierRecord.buildWindowStart.getTime() &&
+      capturedAt.getTime() <= dossierRecord.buildWindowEnd.getTime()
+    );
+    const cluster = normalizeSubmissionCluster(dossierRecord.cluster);
+    const reference = sanitizeSubmissionEvidenceReference(
+      evidenceType,
+      normalizeOptionalText(input.reference),
+    );
+    const url = normalizeOptionalText(input.url) ?? (
+      evidenceType === 'on_chain_transaction'
+        ? buildSolscanUrl('tx', reference, cluster)
+        : null
+    );
+
+    const [row] = await this.db
+      .insert(vaultSubmissionEvidence)
+      .values({
+        submissionId: dossierRecord.id,
+        evidenceType,
+        status: normalizeSubmissionEvidenceStatus(input.status),
+        source: normalizeSubmissionEvidenceSource(input.source),
+        label,
+        summary: normalizeOptionalText(input.summary),
+        reference,
+        url,
+        capturedAt,
+        withinBuildWindow,
+        notes: normalizeOptionalText(input.notes),
+        metadata: input.metadata ?? {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.recordSubmissionEvidence: submission evidence was not persisted');
+    }
+
+    return this.mapSubmissionEvidenceRow(row, cluster);
+  }
+
   async getPnlSummary(): Promise<PnlSummaryView> {
     const [row] = await this.db
       .select()
@@ -5955,10 +7803,7 @@ export class RuntimeStore {
   }
 
   async getRiskSummary(): Promise<RiskSummaryView | null> {
-    const [row] = await this.db
-      .select()
-      .from(riskCurrent)
-      .limit(1);
+    const [row] = await this.db.select().from(riskCurrent).limit(1);
 
     if (row === undefined) {
       return null;
@@ -6015,9 +7860,7 @@ export class RuntimeStore {
       });
   }
 
-  async replaceRiskCurrentFromSnapshot(
-    row: typeof riskSnapshots.$inferSelect,
-  ): Promise<void> {
+  async replaceRiskCurrentFromSnapshot(row: typeof riskSnapshots.$inferSelect): Promise<void> {
     await this.db
       .insert(riskCurrent)
       .values({
@@ -6156,21 +7999,23 @@ export class RuntimeStore {
     }));
   }
 
-  async listFillHistory(): Promise<Array<{
-    venueId: string;
-    venueOrderId: string;
-    clientOrderId: string;
-    asset: string;
-    side: 'buy' | 'sell';
-    size: string;
-    price: string;
-    fee: string;
-    feeAsset: string | null;
-    reduceOnly: boolean;
-    filledAt: Date;
-    marketIdentity: CanonicalMarketIdentity | null;
-    metadata: Record<string, unknown>;
-  }>> {
+  async listFillHistory(): Promise<
+    Array<{
+      venueId: string;
+      venueOrderId: string;
+      clientOrderId: string;
+      asset: string;
+      side: 'buy' | 'sell';
+      size: string;
+      price: string;
+      fee: string;
+      feeAsset: string | null;
+      reduceOnly: boolean;
+      filledAt: Date;
+      marketIdentity: CanonicalMarketIdentity | null;
+      metadata: Record<string, unknown>;
+    }>
+  > {
     const rows = await this.db
       .select({
         venueId: orders.venueId,
@@ -6203,23 +8048,27 @@ export class RuntimeStore {
       feeAsset: row.feeAsset,
       reduceOnly: row.reduceOnly,
       filledAt: row.filledAt,
-      marketIdentity: readCanonicalMarketIdentityFromMetadata(asRecord(row.fillMetadata), {
-        venueId: row.venueId,
-        asset: row.asset,
-        marketType: asRecord(row.orderMetadata)['instrumentType'],
-        provenance: 'derived',
-        capturedAtStage: 'fill',
-        source: 'runtime_fill_history',
-        notes: ['Fill-history market identity falls back to persisted fill metadata and then source-order metadata.'],
-      }) ?? readCanonicalMarketIdentityFromMetadata(asRecord(row.orderMetadata), {
-        venueId: row.venueId,
-        asset: row.asset,
-        marketType: asRecord(row.orderMetadata)['instrumentType'],
-        provenance: 'derived',
-        capturedAtStage: 'fill',
-        source: 'runtime_fill_history',
-        notes: ['Fill-history market identity falls back to source-order metadata.'],
-      }),
+      marketIdentity:
+        readCanonicalMarketIdentityFromMetadata(asRecord(row.fillMetadata), {
+          venueId: row.venueId,
+          asset: row.asset,
+          marketType: asRecord(row.orderMetadata)['instrumentType'],
+          provenance: 'derived',
+          capturedAtStage: 'fill',
+          source: 'runtime_fill_history',
+          notes: [
+            'Fill-history market identity falls back to persisted fill metadata and then source-order metadata.',
+          ],
+        }) ??
+        readCanonicalMarketIdentityFromMetadata(asRecord(row.orderMetadata), {
+          venueId: row.venueId,
+          asset: row.asset,
+          marketType: asRecord(row.orderMetadata)['instrumentType'],
+          provenance: 'derived',
+          capturedAtStage: 'fill',
+          source: 'runtime_fill_history',
+          notes: ['Fill-history market identity falls back to source-order metadata.'],
+        }),
       metadata: asRecord(row.fillMetadata),
     }));
   }
@@ -6251,13 +8100,14 @@ export class RuntimeStore {
       return null;
     }
 
-    const watermark = latestOrder === null
-      ? latestFill
-      : latestFill === null
-        ? latestOrder
-        : latestOrder > latestFill
+    const watermark =
+      latestOrder === null
+        ? latestFill
+        : latestFill === null
           ? latestOrder
-          : latestFill;
+          : latestOrder > latestFill
+            ? latestOrder
+            : latestFill;
 
     return watermark?.toISOString() ?? null;
   }
@@ -6281,11 +8131,7 @@ export class RuntimeStore {
   }
 
   async listOrders(limit: number): Promise<OrderView[]> {
-    const rows = await this.db
-      .select()
-      .from(orders)
-      .orderBy(desc(orders.createdAt))
-      .limit(limit);
+    const rows = await this.db.select().from(orders).orderBy(desc(orders.createdAt)).limit(limit);
 
     return rows.map(mapOrderRow);
   }
@@ -6342,11 +8188,7 @@ export class RuntimeStore {
   }
 
   async getPosition(id: string): Promise<PositionView | null> {
-    const [row] = await this.db
-      .select()
-      .from(positions)
-      .where(eq(positions.id, id))
-      .limit(1);
+    const [row] = await this.db.select().from(positions).where(eq(positions.id, id)).limit(1);
 
     if (row === undefined) {
       return null;
@@ -6510,7 +8352,9 @@ export class RuntimeStore {
       });
       const mismatch = await this.getMismatchByDedupeKey(input.dedupeKey);
       if (mismatch === null) {
-        throw new Error(`RuntimeStore.upsertMismatch: mismatch "${input.dedupeKey}" was not persisted`);
+        throw new Error(
+          `RuntimeStore.upsertMismatch: mismatch "${input.dedupeKey}" was not persisted`,
+        );
       }
 
       return {
@@ -6539,16 +8383,16 @@ export class RuntimeStore {
         occurrenceCount: existing.occurrenceCount + 1,
         ...(shouldReopen
           ? {
-            reopenedAt: input.detectedAt,
-            reopenedBy: input.sourceComponent,
-            reopenSummary: input.summary,
-            linkedCommandId: null,
-            linkedRecoveryEventId: null,
-            recoveryStartedAt: null,
-            recoveryStartedBy: null,
-            recoverySummary: null,
-            lastStatusChangeAt: input.detectedAt,
-          }
+              reopenedAt: input.detectedAt,
+              reopenedBy: input.sourceComponent,
+              reopenSummary: input.summary,
+              linkedCommandId: null,
+              linkedRecoveryEventId: null,
+              recoveryStartedAt: null,
+              recoveryStartedBy: null,
+              recoverySummary: null,
+              lastStatusChangeAt: input.detectedAt,
+            }
           : {}),
         updatedAt: new Date(),
       })
@@ -6556,7 +8400,9 @@ export class RuntimeStore {
 
     const mismatch = await this.getMismatchByDedupeKey(input.dedupeKey);
     if (mismatch === null) {
-      throw new Error(`RuntimeStore.upsertMismatch: mismatch "${input.dedupeKey}" was not persisted`);
+      throw new Error(
+        `RuntimeStore.upsertMismatch: mismatch "${input.dedupeKey}" was not persisted`,
+      );
     }
 
     return {
@@ -6635,22 +8481,27 @@ export class RuntimeStore {
     const conditions = [
       filters.status !== undefined ? eq(runtimeMismatches.status, filters.status) : undefined,
       filters.severity !== undefined ? eq(runtimeMismatches.severity, filters.severity) : undefined,
-      filters.sourceKind !== undefined ? eq(runtimeMismatches.sourceKind, filters.sourceKind) : undefined,
+      filters.sourceKind !== undefined
+        ? eq(runtimeMismatches.sourceKind, filters.sourceKind)
+        : undefined,
       filters.category !== undefined ? eq(runtimeMismatches.category, filters.category) : undefined,
-    ].filter((condition): condition is Exclude<typeof condition, undefined> => condition !== undefined);
+    ].filter(
+      (condition): condition is Exclude<typeof condition, undefined> => condition !== undefined,
+    );
 
-    const rows = conditions.length === 0
-      ? await this.db
-        .select()
-        .from(runtimeMismatches)
-        .orderBy(desc(runtimeMismatches.lastDetectedAt))
-        .limit(limit)
-      : await this.db
-        .select()
-        .from(runtimeMismatches)
-        .where(and(...conditions))
-        .orderBy(desc(runtimeMismatches.lastDetectedAt))
-        .limit(limit);
+    const rows =
+      conditions.length === 0
+        ? await this.db
+            .select()
+            .from(runtimeMismatches)
+            .orderBy(desc(runtimeMismatches.lastDetectedAt))
+            .limit(limit)
+        : await this.db
+            .select()
+            .from(runtimeMismatches)
+            .where(and(...conditions))
+            .orderBy(desc(runtimeMismatches.lastDetectedAt))
+            .limit(limit);
 
     return rows.map((row) => mapMismatchRow(row));
   }
@@ -6703,21 +8554,26 @@ export class RuntimeStore {
     details?: Record<string, unknown>;
     occurredAt?: Date;
   }): Promise<RuntimeRecoveryEventView> {
-    const [inserted] = await this.db.insert(runtimeRecoveryEvents).values({
-      mismatchId: input.mismatchId ?? null,
-      commandId: input.commandId ?? null,
-      runId: input.runId ?? null,
-      eventType: input.eventType,
-      status: input.status,
-      sourceComponent: input.sourceComponent,
-      actorId: input.actorId ?? null,
-      message: input.message,
-      details: input.details ?? {},
-      occurredAt: input.occurredAt ?? new Date(),
-    }).returning();
+    const [inserted] = await this.db
+      .insert(runtimeRecoveryEvents)
+      .values({
+        mismatchId: input.mismatchId ?? null,
+        commandId: input.commandId ?? null,
+        runId: input.runId ?? null,
+        eventType: input.eventType,
+        status: input.status,
+        sourceComponent: input.sourceComponent,
+        actorId: input.actorId ?? null,
+        message: input.message,
+        details: input.details ?? {},
+        occurredAt: input.occurredAt ?? new Date(),
+      })
+      .returning();
 
     if (inserted === undefined) {
-      throw new Error(`RuntimeStore.recordRecoveryEvent: event "${input.eventType}" was not persisted`);
+      throw new Error(
+        `RuntimeStore.recordRecoveryEvent: event "${input.eventType}" was not persisted`,
+      );
     }
 
     return mapRecoveryEventRow(inserted);
@@ -6765,7 +8621,9 @@ export class RuntimeStore {
     const rows = await this.db
       .select()
       .from(runtimeRecoveryEvents)
-      .where(sql`${runtimeRecoveryEvents.status} in ('recovering', 'resolved', 'verified', 'reopened', 'completed', 'failed')`)
+      .where(
+        sql`${runtimeRecoveryEvents.status} in ('recovering', 'resolved', 'verified', 'reopened', 'completed', 'failed')`,
+      )
       .orderBy(desc(runtimeRecoveryEvents.occurredAt))
       .limit(limit);
 
@@ -6795,17 +8653,18 @@ export class RuntimeStore {
       return null;
     }
 
-    const [linkedCommand, recoveryEvents, remediationHistory, reconciliationFindings] = await Promise.all([
-      mismatch.linkedCommandId === null
-        ? Promise.resolve<RuntimeCommandView | null>(null)
-        : this.getRuntimeCommand(mismatch.linkedCommandId),
-      this.listRecoveryEventsForMismatch(mismatchId, recoveryEventLimit),
-      this.listMismatchRemediations(mismatchId),
-      this.listReconciliationFindings({
-        limit: recoveryEventLimit,
-        mismatchId,
-      }),
-    ]);
+    const [linkedCommand, recoveryEvents, remediationHistory, reconciliationFindings] =
+      await Promise.all([
+        mismatch.linkedCommandId === null
+          ? Promise.resolve<RuntimeCommandView | null>(null)
+          : this.getRuntimeCommand(mismatch.linkedCommandId),
+        this.listRecoveryEventsForMismatch(mismatchId, recoveryEventLimit),
+        this.listMismatchRemediations(mismatchId),
+        this.listReconciliationFindings({
+          limit: recoveryEventLimit,
+          mismatchId,
+        }),
+      ]);
 
     const latestRemediation = remediationHistory[0] ?? null;
     const latestReconciliationFinding = reconciliationFindings[0] ?? null;
@@ -6883,7 +8742,8 @@ export class RuntimeStore {
           minAllocationPct: target.minAllocationPct.toFixed(4),
           maxAllocationPct: target.maxAllocationPct.toFixed(4),
           deltaUsd: target.deltaUsd,
-          opportunityScore: target.opportunityScore === null ? null : target.opportunityScore.toFixed(4),
+          opportunityScore:
+            target.opportunityScore === null ? null : target.opportunityScore.toFixed(4),
           capacityUsd: target.capacityUsd,
           rationale: target.rationale as unknown as Record<string, unknown>[],
           metadata: target.metadata,
@@ -6985,9 +8845,7 @@ export class RuntimeStore {
     return rows.map(mapAllocatorRunRow);
   }
 
-  async getAllocatorDecision(
-    allocatorRunId: string,
-  ): Promise<AllocatorDecisionDetailView | null> {
+  async getAllocatorDecision(allocatorRunId: string): Promise<AllocatorDecisionDetailView | null> {
     const [runRow] = await this.db
       .select()
       .from(allocatorRuns)
@@ -7018,7 +8876,7 @@ export class RuntimeStore {
       recommendations: recommendationRows.map(mapAllocatorRecommendationRow),
       rationale: asAllocatorRationales(runRow.rationale),
       constraints: Array.isArray(runRow.constraints)
-        ? runRow.constraints as AllocatorDecisionDetailView['constraints']
+        ? (runRow.constraints as AllocatorDecisionDetailView['constraints'])
         : [],
     };
   }
@@ -7080,11 +8938,13 @@ export class RuntimeStore {
       status: input.proposal.status,
       completionState: 'open',
       outcomeClassification: 'pending',
-      interventionRecommendation: input.proposal.status === 'proposed'
-        ? 'operator_review_required'
-        : 'wait_for_inflight_children',
+      interventionRecommendation:
+        input.proposal.status === 'proposed'
+          ? 'operator_review_required'
+          : 'wait_for_inflight_children',
       totalChildCount: 0,
-      blockedChildCount: input.proposal.blockedReasons.length > 0 || !input.proposal.executable ? 1 : 0,
+      blockedChildCount:
+        input.proposal.blockedReasons.length > 0 || !input.proposal.executable ? 1 : 0,
       failedChildCount: 0,
       completedChildCount: 0,
       pendingChildCount: 0,
@@ -7128,10 +8988,12 @@ export class RuntimeStore {
       .limit(limit);
 
     return (
-      await Promise.all(rows.map(async (row): Promise<RebalanceBundleView | null> => {
-        const detail = await this.getRebalanceProposal(row['proposalId']);
-        return detail === null ? null : mapRebalanceBundleRow(row, detail.proposal);
-      }))
+      await Promise.all(
+        rows.map(async (row): Promise<RebalanceBundleView | null> => {
+          const detail = await this.getRebalanceProposal(row['proposalId']);
+          return detail === null ? null : mapRebalanceBundleRow(row, detail.proposal);
+        }),
+      )
     ).filter((bundle): bundle is RebalanceBundleView => bundle !== null);
   }
 
@@ -7159,7 +9021,10 @@ export class RuntimeStore {
 
     const bundleById = new Map(bundleRows.map((row) => [row.id, row] as const));
     const proposalById = new Map(proposalRows.map((row) => [row.id, row] as const));
-    const latestEventByEscalationId = new Map<string, typeof allocatorRebalanceBundleEscalationEvents.$inferSelect>();
+    const latestEventByEscalationId = new Map<
+      string,
+      typeof allocatorRebalanceBundleEscalationEvents.$inferSelect
+    >();
     const acknowledgedAtByEscalationId = new Map<string, string>();
     const inReviewAtByEscalationId = new Map<string, string>();
 
@@ -7190,13 +9055,19 @@ export class RuntimeStore {
         now,
       });
       const childRollup = asJsonObject(bundleRow.childRollup);
-      const childSleeves = ['carry', 'treasury'].filter((sleeve): sleeve is 'carry' | 'treasury' => {
-        const rollup = childRollup[sleeve];
-        return typeof rollup === 'object' && rollup !== null;
-      });
-      const latestEventSummary = latestEvent === undefined
-        ? escalationRow.handoffNote ?? escalationRow.reviewNote ?? escalationRow.resolutionNote ?? null
-        : latestEvent.note ?? `${latestEvent.eventType} -> ${latestEvent.toStatus}`;
+      const childSleeves = ['carry', 'treasury'].filter(
+        (sleeve): sleeve is 'carry' | 'treasury' => {
+          const rollup = childRollup[sleeve];
+          return typeof rollup === 'object' && rollup !== null;
+        },
+      );
+      const latestEventSummary =
+        latestEvent === undefined
+          ? (escalationRow.handoffNote ??
+            escalationRow.reviewNote ??
+            escalationRow.resolutionNote ??
+            null)
+          : (latestEvent.note ?? `${latestEvent.eventType} -> ${latestEvent.toStatus}`);
       const item: RebalanceEscalationQueueItemView = {
         escalationId: escalationRow.id,
         bundleId: bundleRow.id,
@@ -7208,16 +9079,22 @@ export class RuntimeStore {
         ownerId: escalationRow.ownerId ?? null,
         assignedBy: escalationRow.assignedBy ?? null,
         assignedAt: toIsoString(escalationRow.assignedAt),
-        acknowledgedAt: acknowledgedAtByEscalationId.get(escalationRow.id) ?? toIsoString(escalationRow.acknowledgedAt),
+        acknowledgedAt:
+          acknowledgedAtByEscalationId.get(escalationRow.id) ??
+          toIsoString(escalationRow.acknowledgedAt),
         inReviewAt: inReviewAtByEscalationId.get(escalationRow.id) ?? null,
         dueAt: toIsoString(escalationRow.dueAt),
-        latestActivityAt: latestEvent?.createdAt.toISOString() ?? escalationRow.updatedAt.toISOString(),
-        latestEventType: latestEvent?.eventType as RebalanceBundleEscalationEventType | null ?? null,
+        latestActivityAt:
+          latestEvent?.createdAt.toISOString() ?? escalationRow.updatedAt.toISOString(),
+        latestEventType:
+          (latestEvent?.eventType as RebalanceBundleEscalationEventType | null) ?? null,
         latestEventSummary,
         bundleStatus: bundleRow.status as RebalanceBundleStatus,
-        interventionRecommendation: bundleRow.interventionRecommendation as RebalanceBundleInterventionRecommendation,
+        interventionRecommendation:
+          bundleRow.interventionRecommendation as RebalanceBundleInterventionRecommendation,
         resolutionState: bundleRow.resolutionState as RebalanceBundleResolutionState,
-        outcomeClassification: bundleRow.outcomeClassification as RebalanceBundleOutcomeClassification,
+        outcomeClassification:
+          bundleRow.outcomeClassification as RebalanceBundleOutcomeClassification,
         failedChildCount: bundleRow.failedChildCount,
         blockedChildCount: bundleRow.blockedChildCount,
         pendingChildCount: bundleRow.pendingChildCount,
@@ -7260,45 +9137,48 @@ export class RuntimeStore {
   ): Promise<RebalanceEscalationQueueSummaryView> {
     const items = await this.listRebalanceEscalations({ limit: 200 });
 
-    return items.reduce<RebalanceEscalationQueueSummaryView>((summary, item) => {
-      summary.total += 1;
-      if (item.isOpen) {
-        summary.open += 1;
-      }
-      if (item.escalationStatus === 'acknowledged') {
-        summary.acknowledged += 1;
-      }
-      if (item.escalationStatus === 'in_review') {
-        summary.inReview += 1;
-      }
-      if (item.escalationStatus === 'resolved') {
-        summary.resolved += 1;
-      }
-      if (item.escalationQueueState === 'overdue') {
-        summary.overdue += 1;
-      }
-      if (item.escalationQueueState === 'due_soon') {
-        summary.dueSoon += 1;
-      }
-      if (item.ownerId === null && item.isOpen) {
-        summary.unassigned += 1;
-      }
-      if (actorId !== undefined && actorId !== null && item.ownerId === actorId && item.isOpen) {
-        summary.mine += 1;
-      }
+    return items.reduce<RebalanceEscalationQueueSummaryView>(
+      (summary, item) => {
+        summary.total += 1;
+        if (item.isOpen) {
+          summary.open += 1;
+        }
+        if (item.escalationStatus === 'acknowledged') {
+          summary.acknowledged += 1;
+        }
+        if (item.escalationStatus === 'in_review') {
+          summary.inReview += 1;
+        }
+        if (item.escalationStatus === 'resolved') {
+          summary.resolved += 1;
+        }
+        if (item.escalationQueueState === 'overdue') {
+          summary.overdue += 1;
+        }
+        if (item.escalationQueueState === 'due_soon') {
+          summary.dueSoon += 1;
+        }
+        if (item.ownerId === null && item.isOpen) {
+          summary.unassigned += 1;
+        }
+        if (actorId !== undefined && actorId !== null && item.ownerId === actorId && item.isOpen) {
+          summary.mine += 1;
+        }
 
-      return summary;
-    }, {
-      total: 0,
-      open: 0,
-      acknowledged: 0,
-      inReview: 0,
-      resolved: 0,
-      overdue: 0,
-      dueSoon: 0,
-      unassigned: 0,
-      mine: 0,
-    });
+        return summary;
+      },
+      {
+        total: 0,
+        open: 0,
+        acknowledged: 0,
+        inReview: 0,
+        resolved: 0,
+        overdue: 0,
+        dueSoon: 0,
+        unassigned: 0,
+        mine: 0,
+      },
+    );
   }
 
   async getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null> {
@@ -7355,9 +9235,12 @@ export class RuntimeStore {
     const snapshot = deriveRebalanceBundleSnapshot(graph);
     const updatedAt = new Date();
     let bundleRow = existingRow;
-    const resolvedRecommendation = existingRow === undefined
-      ? null
-      : recommendationForResolutionState(existingRow.resolutionState as RebalanceBundleResolutionState);
+    const resolvedRecommendation =
+      existingRow === undefined
+        ? null
+        : recommendationForResolutionState(
+            existingRow.resolutionState as RebalanceBundleResolutionState,
+          );
     const nextRecommendation = resolvedRecommendation ?? snapshot.interventionRecommendation;
 
     if (bundleRow === undefined) {
@@ -7443,13 +9326,14 @@ export class RuntimeStore {
       escalationHistory: [],
       escalationTransitions: [],
     };
-    const [recoveryActions, recoveryCandidates, resolutionActions, escalation, escalationHistory] = await Promise.all([
-      this.listRebalanceBundleRecoveryActions(bundle.id),
-      this.buildRebalanceBundleRecoveryCandidatesForBundle(detail),
-      this.listRebalanceBundleResolutionActions(bundle.id),
-      this.getRebalanceBundleEscalation(bundle.id),
-      this.listRebalanceBundleEscalationHistory(bundle.id),
-    ]);
+    const [recoveryActions, recoveryCandidates, resolutionActions, escalation, escalationHistory] =
+      await Promise.all([
+        this.listRebalanceBundleRecoveryActions(bundle.id),
+        this.buildRebalanceBundleRecoveryCandidatesForBundle(detail),
+        this.listRebalanceBundleResolutionActions(bundle.id),
+        this.getRebalanceBundleEscalation(bundle.id),
+        this.listRebalanceBundleEscalationHistory(bundle.id),
+      ]);
     const partialProgress = await this.buildBundlePartialProgress(detail, recoveryCandidates);
     const resolutionOptions = this.buildBundleResolutionOptions(detail, partialProgress);
     const escalationTransitions = this.buildBundleEscalationTransitions(detail, escalation);
@@ -7487,7 +9371,9 @@ export class RuntimeStore {
     return this.syncRebalanceBundleForProposal(row['proposalId']);
   }
 
-  async getRebalanceBundleForProposal(proposalId: string): Promise<RebalanceBundleDetailView | null> {
+  async getRebalanceBundleForProposal(
+    proposalId: string,
+  ): Promise<RebalanceBundleDetailView | null> {
     return this.syncRebalanceBundleForProposal(proposalId);
   }
 
@@ -7495,15 +9381,19 @@ export class RuntimeStore {
     bundle: RebalanceBundleDetailView,
   ): Promise<RebalanceBundleRecoveryCandidateView[]> {
     const [carryCandidates, treasuryCandidates] = await Promise.all([
-      Promise.all(bundle.graph.downstream.carry.actions.map(async (node) => this.buildCarryRecoveryCandidate(bundle, node))),
-      Promise.all(bundle.graph.downstream.treasury.actions.map(async (node) => this.buildTreasuryRecoveryCandidate(bundle, node))),
+      Promise.all(
+        bundle.graph.downstream.carry.actions.map(async (node) =>
+          this.buildCarryRecoveryCandidate(bundle, node),
+        ),
+      ),
+      Promise.all(
+        bundle.graph.downstream.treasury.actions.map(async (node) =>
+          this.buildTreasuryRecoveryCandidate(bundle, node),
+        ),
+      ),
     ]);
 
-    return [
-      ...carryCandidates,
-      ...treasuryCandidates,
-      this.buildProposalRecoveryCandidate(bundle),
-    ];
+    return [...carryCandidates, ...treasuryCandidates, this.buildProposalRecoveryCandidate(bundle)];
   }
 
   async listRebalanceBundleRecoveryActions(
@@ -7525,10 +9415,12 @@ export class RuntimeStore {
     const [row] = await this.db
       .select()
       .from(allocatorRebalanceBundleRecoveryActions)
-      .where(and(
-        eq(allocatorRebalanceBundleRecoveryActions.bundleId, bundleId),
-        eq(allocatorRebalanceBundleRecoveryActions.id, recoveryActionId),
-      ))
+      .where(
+        and(
+          eq(allocatorRebalanceBundleRecoveryActions.bundleId, bundleId),
+          eq(allocatorRebalanceBundleRecoveryActions.id, recoveryActionId),
+        ),
+      )
       .limit(1);
 
     return row === undefined ? null : mapRebalanceBundleRecoveryActionRow(row);
@@ -7566,15 +9458,17 @@ export class RuntimeStore {
       targetCommandType: 'execute_rebalance_proposal',
       approvalRequirement: bundle.graph.detail.proposal.approvalRequirement,
       eligibilityState: 'blocked',
-      blockedReasons: [this.buildBundleRecoveryBlockedReason(
-        'proposal_requeue_not_supported',
-        'safety',
-        'Proposal-level rebalance retry is not safely supported in this pass because it can duplicate downstream child work.',
-        'Inspect child actions directly and use child-scoped recovery actions when they are explicitly eligible.',
-        {
-          proposalId: bundle.bundle.proposalId,
-        },
-      )],
+      blockedReasons: [
+        this.buildBundleRecoveryBlockedReason(
+          'proposal_requeue_not_supported',
+          'safety',
+          'Proposal-level rebalance retry is not safely supported in this pass because it can duplicate downstream child work.',
+          'Inspect child actions directly and use child-scoped recovery actions when they are explicitly eligible.',
+          {
+            proposalId: bundle.bundle.proposalId,
+          },
+        ),
+      ],
       executionMode: bundle.bundle.executionMode,
       simulated: bundle.bundle.simulated,
       note: 'Bundle recovery currently supports explicit child action recovery only.',
@@ -7601,126 +9495,148 @@ export class RuntimeStore {
     ];
 
     if (!actionableBundleStatuses.includes(bundle.bundle.status)) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'bundle_not_actionable',
-        'bundle_state',
-        `Bundle status "${bundle.bundle.status}" does not permit recovery mutation requests.`,
-        'Wait for the bundle to reach a failed, blocked, partial, or intervention-required state before requesting recovery.',
-        {
-          bundleStatus: bundle.bundle.status,
-        },
-      ));
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'bundle_not_actionable',
+          'bundle_state',
+          `Bundle status "${bundle.bundle.status}" does not permit recovery mutation requests.`,
+          'Wait for the bundle to reach a failed, blocked, partial, or intervention-required state before requesting recovery.',
+          {
+            bundleStatus: bundle.bundle.status,
+          },
+        ),
+      );
     }
 
     const runtimeStatus = await this.getRuntimeStatus();
     if (
-      runtimeStatus.halted
-      || runtimeStatus.lifecycleState === 'paused'
-      || runtimeStatus.lifecycleState === 'stopped'
-      || runtimeStatus.lifecycleState === 'starting'
+      runtimeStatus.halted ||
+      runtimeStatus.lifecycleState === 'paused' ||
+      runtimeStatus.lifecycleState === 'stopped' ||
+      runtimeStatus.lifecycleState === 'starting'
     ) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'runtime_not_ready',
-        'runtime',
-        'Runtime is not in a state that permits child recovery execution.',
-        'Return runtime to ready state before requesting bundle recovery.',
-        {
-          lifecycleState: runtimeStatus.lifecycleState,
-          halted: runtimeStatus.halted,
-        },
-      ));
-    }
-
-    if (node.executions.some((execution) => execution.status === 'completed') || node.action.status === 'completed') {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_already_completed',
-        'target_child',
-        'Carry child already completed successfully and should not be retried.',
-        'Inspect the completed child execution history instead of requeueing it.',
-        {
-          carryActionId: node.action.id,
-        },
-      ));
-    }
-
-    if (node.action.status === 'queued' || node.action.status === 'executing') {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_has_inflight_command',
-        'target_child',
-        'Carry child is already queued or executing.',
-        'Wait for the in-flight carry child to settle before requesting another recovery action.',
-        {
-          carryActionId: node.action.id,
-          status: node.action.status,
-          linkedCommandId: node.action.linkedCommandId,
-        },
-      ));
-    }
-
-    if (node.action.status === 'cancelled') {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_not_retryable',
-        'target_child',
-        'Cancelled carry children are inspect-only in this pass.',
-        'Create a new allocator or carry evaluation if a replacement action is required.',
-        {
-          carryActionId: node.action.id,
-        },
-      ));
-    }
-
-    if (!node.action.executable || node.action.blockedReasons.length > 0) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_remains_blocked',
-        'safety',
-        'Carry child remains operationally blocked and cannot be requeued safely.',
-        'Resolve the carry child blocked reasons before requesting recovery.',
-        {
-          carryActionId: node.action.id,
-          blockedReasons: node.action.blockedReasons,
-        },
-      ));
-    }
-
-    const latestFailedExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
-      ?? node.executions.find((execution) => execution.status === 'failed')
-      ?? null;
-    const hasExecutionSideEffects = node.executions.some((execution) => execution.venueExecutionReference !== null)
-      || stepRows.some((row) =>
-        row.executionReference !== null
-        || row.venueOrderId !== null
-        || !['pending', 'failed'].includes(row.status),
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'runtime_not_ready',
+          'runtime',
+          'Runtime is not in a state that permits child recovery execution.',
+          'Return runtime to ready state before requesting bundle recovery.',
+          {
+            lifecycleState: runtimeStatus.lifecycleState,
+            halted: runtimeStatus.halted,
+          },
+        ),
       );
-    if (hasExecutionSideEffects) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'carry_execution_partial_progress_detected',
-        'safety',
-        'Carry child shows partial execution progress, so replaying it could duplicate fills or orders.',
-        'Inspect the carry execution detail and resolve the partial application manually before retrying.',
-        {
-          carryActionId: node.action.id,
-          latestExecutionId: latestFailedExecution?.id ?? null,
-        },
-      ));
     }
 
     if (
-      !['recommended', 'approved', 'failed'].includes(node.action.status)
-      && node.action.status !== 'completed'
-      && node.action.status !== 'cancelled'
-      && node.action.status !== 'queued'
-      && node.action.status !== 'executing'
+      node.executions.some((execution) => execution.status === 'completed') ||
+      node.action.status === 'completed'
     ) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_not_retryable',
-        'target_child',
-        `Carry child status "${node.action.status}" is not supported for bundle recovery.`,
-        'Inspect the child action directly before requesting recovery.',
-        {
-          carryActionId: node.action.id,
-          status: node.action.status,
-        },
-      ));
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_already_completed',
+          'target_child',
+          'Carry child already completed successfully and should not be retried.',
+          'Inspect the completed child execution history instead of requeueing it.',
+          {
+            carryActionId: node.action.id,
+          },
+        ),
+      );
+    }
+
+    if (node.action.status === 'queued' || node.action.status === 'executing') {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_has_inflight_command',
+          'target_child',
+          'Carry child is already queued or executing.',
+          'Wait for the in-flight carry child to settle before requesting another recovery action.',
+          {
+            carryActionId: node.action.id,
+            status: node.action.status,
+            linkedCommandId: node.action.linkedCommandId,
+          },
+        ),
+      );
+    }
+
+    if (node.action.status === 'cancelled') {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_not_retryable',
+          'target_child',
+          'Cancelled carry children are inspect-only in this pass.',
+          'Create a new allocator or carry evaluation if a replacement action is required.',
+          {
+            carryActionId: node.action.id,
+          },
+        ),
+      );
+    }
+
+    if (!node.action.executable || node.action.blockedReasons.length > 0) {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_remains_blocked',
+          'safety',
+          'Carry child remains operationally blocked and cannot be requeued safely.',
+          'Resolve the carry child blocked reasons before requesting recovery.',
+          {
+            carryActionId: node.action.id,
+            blockedReasons: node.action.blockedReasons,
+          },
+        ),
+      );
+    }
+
+    const latestFailedExecution =
+      node.executions.find((execution) => execution.id === node.action.latestExecutionId) ??
+      node.executions.find((execution) => execution.status === 'failed') ??
+      null;
+    const hasExecutionSideEffects =
+      node.executions.some((execution) => execution.venueExecutionReference !== null) ||
+      stepRows.some(
+        (row) =>
+          row.executionReference !== null ||
+          row.venueOrderId !== null ||
+          !['pending', 'failed'].includes(row.status),
+      );
+    if (hasExecutionSideEffects) {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'carry_execution_partial_progress_detected',
+          'safety',
+          'Carry child shows partial execution progress, so replaying it could duplicate fills or orders.',
+          'Inspect the carry execution detail and resolve the partial application manually before retrying.',
+          {
+            carryActionId: node.action.id,
+            latestExecutionId: latestFailedExecution?.id ?? null,
+          },
+        ),
+      );
+    }
+
+    if (
+      !['recommended', 'approved', 'failed'].includes(node.action.status) &&
+      node.action.status !== 'completed' &&
+      node.action.status !== 'cancelled' &&
+      node.action.status !== 'queued' &&
+      node.action.status !== 'executing'
+    ) {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_not_retryable',
+          'target_child',
+          `Carry child status "${node.action.status}" is not supported for bundle recovery.`,
+          'Inspect the child action directly before requesting recovery.',
+          {
+            carryActionId: node.action.id,
+            status: node.action.status,
+          },
+        ),
+      );
     }
 
     return {
@@ -7738,9 +9654,10 @@ export class RuntimeStore {
       blockedReasons,
       executionMode: node.action.executionMode,
       simulated: node.action.simulated,
-      note: latestFailedExecution === null
-        ? 'Carry child can be requeued from its persisted action record because no venue-side progress is recorded.'
-        : `Latest failed carry execution: ${latestFailedExecution.id}.`,
+      note:
+        latestFailedExecution === null
+          ? 'Carry child can be requeued from its persisted action record because no venue-side progress is recorded.'
+          : `Latest failed carry execution: ${latestFailedExecution.id}.`,
       createdAt: now,
       updatedAt: now,
     };
@@ -7760,121 +9677,147 @@ export class RuntimeStore {
     ];
 
     if (!actionableBundleStatuses.includes(bundle.bundle.status)) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'bundle_not_actionable',
-        'bundle_state',
-        `Bundle status "${bundle.bundle.status}" does not permit recovery mutation requests.`,
-        'Wait for the bundle to reach a failed, blocked, partial, or intervention-required state before requesting recovery.',
-        {
-          bundleStatus: bundle.bundle.status,
-        },
-      ));
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'bundle_not_actionable',
+          'bundle_state',
+          `Bundle status "${bundle.bundle.status}" does not permit recovery mutation requests.`,
+          'Wait for the bundle to reach a failed, blocked, partial, or intervention-required state before requesting recovery.',
+          {
+            bundleStatus: bundle.bundle.status,
+          },
+        ),
+      );
     }
 
     const runtimeStatus = await this.getRuntimeStatus();
     if (
-      runtimeStatus.halted
-      || runtimeStatus.lifecycleState === 'paused'
-      || runtimeStatus.lifecycleState === 'stopped'
-      || runtimeStatus.lifecycleState === 'starting'
+      runtimeStatus.halted ||
+      runtimeStatus.lifecycleState === 'paused' ||
+      runtimeStatus.lifecycleState === 'stopped' ||
+      runtimeStatus.lifecycleState === 'starting'
     ) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'runtime_not_ready',
-        'runtime',
-        'Runtime is not in a state that permits child recovery execution.',
-        'Return runtime to ready state before requesting bundle recovery.',
-        {
-          lifecycleState: runtimeStatus.lifecycleState,
-          halted: runtimeStatus.halted,
-        },
-      ));
-    }
-
-    if (node.executions.some((execution) => execution.status === 'completed') || node.action.status === 'completed') {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_already_completed',
-        'target_child',
-        'Treasury child already completed successfully and should not be retried.',
-        'Inspect the completed child execution history instead of requeueing it.',
-        {
-          treasuryActionId: node.action.id,
-        },
-      ));
-    }
-
-    if (node.action.status === 'queued' || node.action.status === 'executing') {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_has_inflight_command',
-        'target_child',
-        'Treasury child is already queued or executing.',
-        'Wait for the in-flight treasury child to settle before requesting another recovery action.',
-        {
-          treasuryActionId: node.action.id,
-          status: node.action.status,
-          linkedCommandId: node.action.linkedCommandId,
-        },
-      ));
-    }
-
-    if (node.action.status === 'cancelled') {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_not_retryable',
-        'target_child',
-        'Cancelled treasury children are inspect-only in this pass.',
-        'Create a new treasury or allocator evaluation if a replacement action is required.',
-        {
-          treasuryActionId: node.action.id,
-        },
-      ));
-    }
-
-    if (!node.action.executable || node.action.readiness === 'blocked' || node.action.blockedReasons.length > 0) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_remains_blocked',
-        'safety',
-        'Treasury child remains operationally blocked and cannot be requeued safely.',
-        'Resolve the treasury child blocked reasons before requesting recovery.',
-        {
-          treasuryActionId: node.action.id,
-          blockedReasons: node.action.blockedReasons,
-        },
-      ));
-    }
-
-    const latestFailedExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
-      ?? node.executions.find((execution) => execution.status === 'failed')
-      ?? null;
-    const hasSideEffects = node.executions.some((execution) => execution.venueExecutionReference !== null);
-    if (hasSideEffects) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'treasury_execution_side_effect_detected',
-        'safety',
-        'Treasury child shows venue-side execution evidence, so replaying it could duplicate external state changes.',
-        'Inspect the treasury execution detail before requesting recovery.',
-        {
-          treasuryActionId: node.action.id,
-          latestExecutionId: latestFailedExecution?.id ?? null,
-        },
-      ));
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'runtime_not_ready',
+          'runtime',
+          'Runtime is not in a state that permits child recovery execution.',
+          'Return runtime to ready state before requesting bundle recovery.',
+          {
+            lifecycleState: runtimeStatus.lifecycleState,
+            halted: runtimeStatus.halted,
+          },
+        ),
+      );
     }
 
     if (
-      !['recommended', 'approved', 'failed'].includes(node.action.status)
-      && node.action.status !== 'completed'
-      && node.action.status !== 'cancelled'
-      && node.action.status !== 'queued'
-      && node.action.status !== 'executing'
+      node.executions.some((execution) => execution.status === 'completed') ||
+      node.action.status === 'completed'
     ) {
-      blockedReasons.push(this.buildBundleRecoveryBlockedReason(
-        'target_child_not_retryable',
-        'target_child',
-        `Treasury child status "${node.action.status}" is not supported for bundle recovery.`,
-        'Inspect the child action directly before requesting recovery.',
-        {
-          treasuryActionId: node.action.id,
-          status: node.action.status,
-        },
-      ));
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_already_completed',
+          'target_child',
+          'Treasury child already completed successfully and should not be retried.',
+          'Inspect the completed child execution history instead of requeueing it.',
+          {
+            treasuryActionId: node.action.id,
+          },
+        ),
+      );
+    }
+
+    if (node.action.status === 'queued' || node.action.status === 'executing') {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_has_inflight_command',
+          'target_child',
+          'Treasury child is already queued or executing.',
+          'Wait for the in-flight treasury child to settle before requesting another recovery action.',
+          {
+            treasuryActionId: node.action.id,
+            status: node.action.status,
+            linkedCommandId: node.action.linkedCommandId,
+          },
+        ),
+      );
+    }
+
+    if (node.action.status === 'cancelled') {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_not_retryable',
+          'target_child',
+          'Cancelled treasury children are inspect-only in this pass.',
+          'Create a new treasury or allocator evaluation if a replacement action is required.',
+          {
+            treasuryActionId: node.action.id,
+          },
+        ),
+      );
+    }
+
+    if (
+      !node.action.executable ||
+      node.action.readiness === 'blocked' ||
+      node.action.blockedReasons.length > 0
+    ) {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_remains_blocked',
+          'safety',
+          'Treasury child remains operationally blocked and cannot be requeued safely.',
+          'Resolve the treasury child blocked reasons before requesting recovery.',
+          {
+            treasuryActionId: node.action.id,
+            blockedReasons: node.action.blockedReasons,
+          },
+        ),
+      );
+    }
+
+    const latestFailedExecution =
+      node.executions.find((execution) => execution.id === node.action.latestExecutionId) ??
+      node.executions.find((execution) => execution.status === 'failed') ??
+      null;
+    const hasSideEffects = node.executions.some(
+      (execution) => execution.venueExecutionReference !== null,
+    );
+    if (hasSideEffects) {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'treasury_execution_side_effect_detected',
+          'safety',
+          'Treasury child shows venue-side execution evidence, so replaying it could duplicate external state changes.',
+          'Inspect the treasury execution detail before requesting recovery.',
+          {
+            treasuryActionId: node.action.id,
+            latestExecutionId: latestFailedExecution?.id ?? null,
+          },
+        ),
+      );
+    }
+
+    if (
+      !['recommended', 'approved', 'failed'].includes(node.action.status) &&
+      node.action.status !== 'completed' &&
+      node.action.status !== 'cancelled' &&
+      node.action.status !== 'queued' &&
+      node.action.status !== 'executing'
+    ) {
+      blockedReasons.push(
+        this.buildBundleRecoveryBlockedReason(
+          'target_child_not_retryable',
+          'target_child',
+          `Treasury child status "${node.action.status}" is not supported for bundle recovery.`,
+          'Inspect the child action directly before requesting recovery.',
+          {
+            treasuryActionId: node.action.id,
+            status: node.action.status,
+          },
+        ),
+      );
     }
 
     return {
@@ -7892,9 +9835,10 @@ export class RuntimeStore {
       blockedReasons,
       executionMode: node.action.executionMode,
       simulated: node.action.simulated,
-      note: latestFailedExecution === null
-        ? 'Treasury child can be queued from its persisted action record when no external side effects were recorded.'
-        : `Latest failed treasury execution: ${latestFailedExecution.id}.`,
+      note:
+        latestFailedExecution === null
+          ? 'Treasury child can be queued from its persisted action record when no external side effects were recorded.'
+          : `Latest failed treasury execution: ${latestFailedExecution.id}.`,
       createdAt: now,
       updatedAt: now,
     };
@@ -7931,22 +9875,28 @@ export class RuntimeStore {
       .select()
       .from(carryExecutionSteps)
       .where(eq(carryExecutionSteps.carryActionId, node.action.id));
-    const latestExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
-      ?? node.executions.at(-1)
-      ?? null;
-    const completed = node.action.status === 'completed' || node.executions.some((execution) => execution.status === 'completed');
-    const progressRecorded = completed
-      || node.executions.some((execution) => execution.venueExecutionReference !== null)
-      || stepRows.some((row) =>
-        row.executionReference !== null
-        || row.venueOrderId !== null
-        || !['pending', 'failed'].includes(row.status),
+    const latestExecution =
+      node.executions.find((execution) => execution.id === node.action.latestExecutionId) ??
+      node.executions.at(-1) ??
+      null;
+    const completed =
+      node.action.status === 'completed' ||
+      node.executions.some((execution) => execution.status === 'completed');
+    const progressRecorded =
+      completed ||
+      node.executions.some((execution) => execution.venueExecutionReference !== null) ||
+      stepRows.some(
+        (row) =>
+          row.executionReference !== null ||
+          row.venueOrderId !== null ||
+          !['pending', 'failed'].includes(row.status),
       );
-    const retryability = recoveryCandidate?.eligibilityState === 'eligible'
-      ? 'retryable'
-      : completed
-        ? 'not_applicable'
-        : 'non_retryable';
+    const retryability =
+      recoveryCandidate?.eligibilityState === 'eligible'
+        ? 'retryable'
+        : completed
+          ? 'not_applicable'
+          : 'non_retryable';
 
     let progressState: RebalanceBundleChildInspectionView['progressState'] = 'pending';
     if (completed) {
@@ -7993,7 +9943,11 @@ export class RuntimeStore {
       retryability,
       applied: completed,
       progressRecorded,
-      blockedBeforeApplication: !progressRecorded && (!node.action.executable || node.action.blockedReasons.length > 0 || node.action.status === 'failed'),
+      blockedBeforeApplication:
+        !progressRecorded &&
+        (!node.action.executable ||
+          node.action.blockedReasons.length > 0 ||
+          node.action.status === 'failed'),
       retryCandidateId: recoveryCandidate?.id ?? null,
       retryBlockedReasons: recoveryCandidate?.blockedReasons ?? [],
       evidence,
@@ -8004,17 +9958,21 @@ export class RuntimeStore {
     node: RebalanceTreasuryActionNodeView,
     recoveryCandidate: RebalanceBundleRecoveryCandidateView | undefined,
   ): Promise<RebalanceBundleChildInspectionView> {
-    const latestExecution = node.executions.find((execution) => execution.id === node.action.latestExecutionId)
-      ?? node.executions.at(-1)
-      ?? null;
-    const completed = node.action.status === 'completed' || node.executions.some((execution) => execution.status === 'completed');
-    const progressRecorded = completed
-      || node.executions.some((execution) => execution.venueExecutionReference !== null);
-    const retryability = recoveryCandidate?.eligibilityState === 'eligible'
-      ? 'retryable'
-      : completed
-        ? 'not_applicable'
-        : 'non_retryable';
+    const latestExecution =
+      node.executions.find((execution) => execution.id === node.action.latestExecutionId) ??
+      node.executions.at(-1) ??
+      null;
+    const completed =
+      node.action.status === 'completed' ||
+      node.executions.some((execution) => execution.status === 'completed');
+    const progressRecorded =
+      completed || node.executions.some((execution) => execution.venueExecutionReference !== null);
+    const retryability =
+      recoveryCandidate?.eligibilityState === 'eligible'
+        ? 'retryable'
+        : completed
+          ? 'not_applicable'
+          : 'non_retryable';
 
     let progressState: RebalanceBundleChildInspectionView['progressState'] = 'pending';
     if (completed) {
@@ -8025,7 +9983,11 @@ export class RuntimeStore {
       progressState = 'partial_progress';
     } else if (recoveryCandidate?.eligibilityState === 'eligible') {
       progressState = 'retryable_failure';
-    } else if (!node.action.executable || node.action.readiness === 'blocked' || node.action.blockedReasons.length > 0) {
+    } else if (
+      !node.action.executable ||
+      node.action.readiness === 'blocked' ||
+      node.action.blockedReasons.length > 0
+    ) {
       progressState = 'blocked_before_progress';
     } else if (node.action.status === 'failed') {
       progressState = 'failed_without_progress';
@@ -8055,7 +10017,12 @@ export class RuntimeStore {
       retryability,
       applied: completed,
       progressRecorded,
-      blockedBeforeApplication: !progressRecorded && (!node.action.executable || node.action.readiness === 'blocked' || node.action.blockedReasons.length > 0 || node.action.status === 'failed'),
+      blockedBeforeApplication:
+        !progressRecorded &&
+        (!node.action.executable ||
+          node.action.readiness === 'blocked' ||
+          node.action.blockedReasons.length > 0 ||
+          node.action.status === 'failed'),
       retryCandidateId: recoveryCandidate?.id ?? null,
       retryBlockedReasons: recoveryCandidate?.blockedReasons ?? [],
       evidence,
@@ -8066,22 +10033,30 @@ export class RuntimeStore {
     bundle: RebalanceBundleDetailView,
     recoveryCandidates: RebalanceBundleRecoveryCandidateView[],
   ): Promise<RebalanceBundlePartialProgressView> {
-    const carryChildren = await Promise.all(bundle.graph.downstream.carry.actions.map(async (node) =>
-      this.buildCarryChildInspection(
-        node,
-        recoveryCandidates.find((candidate) =>
-          candidate.targetChildType === 'carry_action' && candidate.targetChildId === node.action.id,
+    const carryChildren = await Promise.all(
+      bundle.graph.downstream.carry.actions.map(async (node) =>
+        this.buildCarryChildInspection(
+          node,
+          recoveryCandidates.find(
+            (candidate) =>
+              candidate.targetChildType === 'carry_action' &&
+              candidate.targetChildId === node.action.id,
+          ),
         ),
-      )
-    ));
-    const treasuryChildren = await Promise.all(bundle.graph.downstream.treasury.actions.map(async (node) =>
-      this.buildTreasuryChildInspection(
-        node,
-        recoveryCandidates.find((candidate) =>
-          candidate.targetChildType === 'treasury_action' && candidate.targetChildId === node.action.id,
+      ),
+    );
+    const treasuryChildren = await Promise.all(
+      bundle.graph.downstream.treasury.actions.map(async (node) =>
+        this.buildTreasuryChildInspection(
+          node,
+          recoveryCandidates.find(
+            (candidate) =>
+              candidate.targetChildType === 'treasury_action' &&
+              candidate.targetChildId === node.action.id,
+          ),
         ),
-      )
-    ));
+      ),
+    );
     const children = [...carryChildren, ...treasuryChildren];
     const summariseSleeve = (
       sleeveId: 'carry' | 'treasury',
@@ -8093,8 +10068,10 @@ export class RuntimeStore {
         appliedChildren: items.filter((child) => child.applied).length,
         progressRecordedChildren: items.filter((child) => child.progressRecorded).length,
         retryableChildren: items.filter((child) => child.retryability === 'retryable').length,
-        nonRetryableChildren: items.filter((child) => child.retryability === 'non_retryable').length,
-        blockedBeforeApplicationChildren: items.filter((child) => child.blockedBeforeApplication).length,
+        nonRetryableChildren: items.filter((child) => child.retryability === 'non_retryable')
+          .length,
+        blockedBeforeApplicationChildren: items.filter((child) => child.blockedBeforeApplication)
+          .length,
       };
     };
 
@@ -8103,13 +10080,12 @@ export class RuntimeStore {
       appliedChildren: children.filter((child) => child.applied).length,
       progressRecordedChildren: children.filter((child) => child.progressRecorded).length,
       retryableChildren: children.filter((child) => child.retryability === 'retryable').length,
-      nonRetryableChildren: children.filter((child) => child.retryability === 'non_retryable').length,
-      blockedBeforeApplicationChildren: children.filter((child) => child.blockedBeforeApplication).length,
+      nonRetryableChildren: children.filter((child) => child.retryability === 'non_retryable')
+        .length,
+      blockedBeforeApplicationChildren: children.filter((child) => child.blockedBeforeApplication)
+        .length,
       inflightChildren: children.filter((child) => child.progressState === 'inflight').length,
-      sleeves: [
-        summariseSleeve('carry'),
-        summariseSleeve('treasury'),
-      ],
+      sleeves: [summariseSleeve('carry'), summariseSleeve('treasury')],
       children,
     };
   }
@@ -8134,50 +10110,58 @@ export class RuntimeStore {
     ): RebalanceBundleResolutionOptionView => {
       const blockedReasons: RebalanceBundleResolutionBlockedReason[] = [];
       if (!actionableBundleStatuses.includes(bundle.bundle.status)) {
-        blockedReasons.push(this.buildBundleResolutionBlockedReason(
-          'bundle_not_actionable',
-          'bundle_state',
-          `Bundle status "${bundle.bundle.status}" does not permit manual resolution.`,
-          'Only request manual resolution for failed, blocked, partial, or intervention-required bundles.',
-          { bundleStatus: bundle.bundle.status },
-        ));
+        blockedReasons.push(
+          this.buildBundleResolutionBlockedReason(
+            'bundle_not_actionable',
+            'bundle_state',
+            `Bundle status "${bundle.bundle.status}" does not permit manual resolution.`,
+            'Only request manual resolution for failed, blocked, partial, or intervention-required bundles.',
+            { bundleStatus: bundle.bundle.status },
+          ),
+        );
       }
       if (bundle.bundle.pendingChildCount > 0 || partialProgress.inflightChildren > 0) {
-        blockedReasons.push(this.buildBundleResolutionBlockedReason(
-          'bundle_has_inflight_children',
-          'safety',
-          'Bundle still has in-flight downstream children and cannot be manually closed yet.',
-          'Wait for in-flight children to settle before recording manual resolution.',
-          {
-            pendingChildCount: bundle.bundle.pendingChildCount,
-            inflightChildren: partialProgress.inflightChildren,
-          },
-        ));
+        blockedReasons.push(
+          this.buildBundleResolutionBlockedReason(
+            'bundle_has_inflight_children',
+            'safety',
+            'Bundle still has in-flight downstream children and cannot be manually closed yet.',
+            'Wait for in-flight children to settle before recording manual resolution.',
+            {
+              pendingChildCount: bundle.bundle.pendingChildCount,
+              inflightChildren: partialProgress.inflightChildren,
+            },
+          ),
+        );
       }
       if (
-        resolutionActionType === 'accept_partial_application'
-        && bundle.bundle.outcomeClassification !== 'partial_application'
+        resolutionActionType === 'accept_partial_application' &&
+        bundle.bundle.outcomeClassification !== 'partial_application'
       ) {
-        blockedReasons.push(this.buildBundleResolutionBlockedReason(
-          'bundle_not_partial_application',
-          'bundle_state',
-          'Accept-partial resolution is only available when the bundle outcome is partial application.',
-          'Use manual resolution or escalation for fully failed or fully blocked bundles.',
-          {
-            outcomeClassification: bundle.bundle.outcomeClassification,
-          },
-        ));
+        blockedReasons.push(
+          this.buildBundleResolutionBlockedReason(
+            'bundle_not_partial_application',
+            'bundle_state',
+            'Accept-partial resolution is only available when the bundle outcome is partial application.',
+            'Use manual resolution or escalation for fully failed or fully blocked bundles.',
+            {
+              outcomeClassification: bundle.bundle.outcomeClassification,
+            },
+          ),
+        );
       }
       if (bundle.bundle.resolutionState === targetResolutionState) {
-        blockedReasons.push(this.buildBundleResolutionBlockedReason(
-          'resolution_state_already_current',
-          'validation',
-          `Bundle is already marked as ${targetResolutionState}.`,
-          'Inspect the existing manual resolution history instead of repeating the same decision.',
-          {
-            resolutionState: bundle.bundle.resolutionState,
-          },
-        ));
+        blockedReasons.push(
+          this.buildBundleResolutionBlockedReason(
+            'resolution_state_already_current',
+            'validation',
+            `Bundle is already marked as ${targetResolutionState}.`,
+            'Inspect the existing manual resolution history instead of repeating the same decision.',
+            {
+              resolutionState: bundle.bundle.resolutionState,
+            },
+          ),
+        );
       }
 
       return {
@@ -8253,65 +10237,76 @@ export class RuntimeStore {
     ): RebalanceBundleEscalationTransitionView => {
       const blockedReasons: RebalanceBundleEscalationBlockedReason[] = [];
       if (bundle.bundle.resolutionState !== 'escalated') {
-        blockedReasons.push(this.buildBundleEscalationBlockedReason(
-          'bundle_not_escalated',
-          'bundle_state',
-          'Bundle is not currently in an escalated resolution state.',
-          'Only use escalation workflow actions on bundles that are explicitly escalated.',
-          { resolutionState: bundle.bundle.resolutionState },
-        ));
+        blockedReasons.push(
+          this.buildBundleEscalationBlockedReason(
+            'bundle_not_escalated',
+            'bundle_state',
+            'Bundle is not currently in an escalated resolution state.',
+            'Only use escalation workflow actions on bundles that are explicitly escalated.',
+            { resolutionState: bundle.bundle.resolutionState },
+          ),
+        );
       }
       if (escalation === null) {
-        blockedReasons.push(this.buildBundleEscalationBlockedReason(
-          'escalation_not_found',
-          'escalation_state',
-          'No escalation record exists for this bundle yet.',
-          'Escalate the bundle first or inspect the manual resolution history.',
-        ));
+        blockedReasons.push(
+          this.buildBundleEscalationBlockedReason(
+            'escalation_not_found',
+            'escalation_state',
+            'No escalation record exists for this bundle yet.',
+            'Escalate the bundle first or inspect the manual resolution history.',
+          ),
+        );
       } else {
         if (!escalation.isOpen) {
-          blockedReasons.push(this.buildBundleEscalationBlockedReason(
-            'escalation_already_resolved',
-            'escalation_state',
-            'This escalation is already resolved.',
-            'Inspect the resolved escalation history instead of applying more workflow transitions.',
-            { escalationStatus: escalation.status },
-          ));
+          blockedReasons.push(
+            this.buildBundleEscalationBlockedReason(
+              'escalation_already_resolved',
+              'escalation_state',
+              'This escalation is already resolved.',
+              'Inspect the resolved escalation history instead of applying more workflow transitions.',
+              { escalationStatus: escalation.status },
+            ),
+          );
         }
         if (
-          (transitionType === 'acknowledge' || transitionType === 'start_review' || transitionType === 'close')
-          && escalation.ownerId === null
+          (transitionType === 'acknowledge' ||
+            transitionType === 'start_review' ||
+            transitionType === 'close') &&
+          escalation.ownerId === null
         ) {
-          blockedReasons.push(this.buildBundleEscalationBlockedReason(
-            'escalation_owner_required',
-            'ownership',
-            'Escalation must have an assigned owner before acknowledgement, review, or close.',
-            'Assign the escalation to an operator before continuing.',
-          ));
+          blockedReasons.push(
+            this.buildBundleEscalationBlockedReason(
+              'escalation_owner_required',
+              'ownership',
+              'Escalation must have an assigned owner before acknowledgement, review, or close.',
+              'Assign the escalation to an operator before continuing.',
+            ),
+          );
+        }
+        if (transitionType === 'acknowledge' && escalation.status !== 'open') {
+          blockedReasons.push(
+            this.buildBundleEscalationBlockedReason(
+              'invalid_status_transition',
+              'escalation_state',
+              `Escalation cannot be acknowledged from status "${escalation.status}".`,
+              'Only acknowledge newly open escalations.',
+              { escalationStatus: escalation.status },
+            ),
+          );
         }
         if (
-          transitionType === 'acknowledge'
-          && escalation.status !== 'open'
+          transitionType === 'start_review' &&
+          !['open', 'acknowledged'].includes(escalation.status)
         ) {
-          blockedReasons.push(this.buildBundleEscalationBlockedReason(
-            'invalid_status_transition',
-            'escalation_state',
-            `Escalation cannot be acknowledged from status "${escalation.status}".`,
-            'Only acknowledge newly open escalations.',
-            { escalationStatus: escalation.status },
-          ));
-        }
-        if (
-          transitionType === 'start_review'
-          && !['open', 'acknowledged'].includes(escalation.status)
-        ) {
-          blockedReasons.push(this.buildBundleEscalationBlockedReason(
-            'invalid_status_transition',
-            'escalation_state',
-            `Escalation cannot enter review from status "${escalation.status}".`,
-            'Start review only after the escalation is open or acknowledged.',
-            { escalationStatus: escalation.status },
-          ));
+          blockedReasons.push(
+            this.buildBundleEscalationBlockedReason(
+              'invalid_status_transition',
+              'escalation_state',
+              `Escalation cannot enter review from status "${escalation.status}".`,
+              'Start review only after the escalation is open or acknowledged.',
+              { escalationStatus: escalation.status },
+            ),
+          );
         }
       }
 
@@ -8388,10 +10383,12 @@ export class RuntimeStore {
     const [row] = await this.db
       .select()
       .from(allocatorRebalanceBundleEscalations)
-      .where(and(
-        eq(allocatorRebalanceBundleEscalations.bundleId, bundleId),
-        sql`${allocatorRebalanceBundleEscalations.status} <> 'resolved'`,
-      ))
+      .where(
+        and(
+          eq(allocatorRebalanceBundleEscalations.bundleId, bundleId),
+          sql`${allocatorRebalanceBundleEscalations.status} <> 'resolved'`,
+        ),
+      )
       .orderBy(desc(allocatorRebalanceBundleEscalations.createdAt))
       .limit(1);
 
@@ -8543,7 +10540,9 @@ export class RuntimeStore {
       .returning();
 
     if (row === undefined) {
-      throw new Error('RuntimeStore.recordRebalanceBundleEscalationEvent: escalation event was not persisted');
+      throw new Error(
+        'RuntimeStore.recordRebalanceBundleEscalationEvent: escalation event was not persisted',
+      );
     }
 
     return mapRebalanceBundleEscalationEventRow(row);
@@ -8591,10 +10590,12 @@ export class RuntimeStore {
     const [row] = await this.db
       .select()
       .from(allocatorRebalanceBundleResolutionActions)
-      .where(and(
-        eq(allocatorRebalanceBundleResolutionActions.bundleId, bundleId),
-        eq(allocatorRebalanceBundleResolutionActions.id, resolutionActionId),
-      ))
+      .where(
+        and(
+          eq(allocatorRebalanceBundleResolutionActions.bundleId, bundleId),
+          eq(allocatorRebalanceBundleResolutionActions.id, resolutionActionId),
+        ),
+      )
       .limit(1);
 
     return row === undefined ? null : mapRebalanceBundleResolutionActionRow(row);
@@ -8650,7 +10651,9 @@ export class RuntimeStore {
       .returning();
 
     if (row === undefined) {
-      throw new Error('RuntimeStore.createRebalanceBundleResolutionAction: resolution action was not persisted');
+      throw new Error(
+        'RuntimeStore.createRebalanceBundleResolutionAction: resolution action was not persisted',
+      );
     }
 
     return mapRebalanceBundleResolutionActionRow(row);
@@ -8742,7 +10745,9 @@ export class RuntimeStore {
       .returning();
 
     if (row === undefined) {
-      throw new Error('RuntimeStore.createRebalanceBundleRecoveryAction: recovery action was not persisted');
+      throw new Error(
+        'RuntimeStore.createRebalanceBundleRecoveryAction: recovery action was not persisted',
+      );
     }
 
     return mapRebalanceBundleRecoveryActionRow(row);
@@ -8771,15 +10776,29 @@ export class RuntimeStore {
     await this.db
       .update(allocatorRebalanceBundleRecoveryActions)
       .set({
-        ...(patch.targetChildStatus !== undefined ? { targetChildStatus: patch.targetChildStatus } : {}),
-        ...(patch.targetChildSummary !== undefined ? { targetChildSummary: patch.targetChildSummary } : {}),
-        ...(patch.eligibilityState !== undefined ? { eligibilityState: patch.eligibilityState } : {}),
-        ...(patch.blockedReasons !== undefined ? { blockedReasons: patch.blockedReasons as unknown as Record<string, unknown>[] } : {}),
+        ...(patch.targetChildStatus !== undefined
+          ? { targetChildStatus: patch.targetChildStatus }
+          : {}),
+        ...(patch.targetChildSummary !== undefined
+          ? { targetChildSummary: patch.targetChildSummary }
+          : {}),
+        ...(patch.eligibilityState !== undefined
+          ? { eligibilityState: patch.eligibilityState }
+          : {}),
+        ...(patch.blockedReasons !== undefined
+          ? { blockedReasons: patch.blockedReasons as unknown as Record<string, unknown>[] }
+          : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
         ...(patch.linkedCommandId !== undefined ? { linkedCommandId: patch.linkedCommandId } : {}),
-        ...(patch.targetCommandType !== undefined ? { targetCommandType: patch.targetCommandType } : {}),
-        ...(patch.linkedCarryActionId !== undefined ? { linkedCarryActionId: patch.linkedCarryActionId } : {}),
-        ...(patch.linkedTreasuryActionId !== undefined ? { linkedTreasuryActionId: patch.linkedTreasuryActionId } : {}),
+        ...(patch.targetCommandType !== undefined
+          ? { targetCommandType: patch.targetCommandType }
+          : {}),
+        ...(patch.linkedCarryActionId !== undefined
+          ? { linkedCarryActionId: patch.linkedCarryActionId }
+          : {}),
+        ...(patch.linkedTreasuryActionId !== undefined
+          ? { linkedTreasuryActionId: patch.linkedTreasuryActionId }
+          : {}),
         ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
         ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
         ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
@@ -8812,13 +10831,22 @@ export class RuntimeStore {
     return row === undefined ? null : mapRebalanceBundleRecoveryActionRow(row);
   }
 
-  async getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null> {
+  async getRebalanceExecutionGraph(
+    proposalId: string,
+  ): Promise<RebalanceExecutionGraphView | null> {
     const detail = await this.getRebalanceProposal(proposalId);
     if (detail === null) {
       return null;
     }
 
-    const [allocatorDecision, carryActionRows, recoveryActionRows, resolutionActionRows, escalationRow, escalationEventRows] = await Promise.all([
+    const [
+      allocatorDecision,
+      carryActionRows,
+      recoveryActionRows,
+      resolutionActionRows,
+      escalationRow,
+      escalationEventRows,
+    ] = await Promise.all([
       this.getAllocatorDecision(detail.proposal.allocatorRunId),
       this.db
         .select()
@@ -8850,17 +10878,23 @@ export class RuntimeStore {
     ]);
 
     const carryNodes: RebalanceCarryActionNodeView[] = (
-      await Promise.all(carryActionRows.map(async (row): Promise<RebalanceCarryActionNodeView> => {
-        const action = mapCarryActionRow(row);
-        const executions = await this.listCarryExecutionsForAction(action.id);
-        return { action, executions };
-      }))
+      await Promise.all(
+        carryActionRows.map(async (row): Promise<RebalanceCarryActionNodeView> => {
+          const action = mapCarryActionRow(row);
+          const executions = await this.listCarryExecutionsForAction(action.id);
+          return { action, executions };
+        }),
+      )
     ).sort((left, right) => left.action.createdAt.localeCompare(right.action.createdAt));
 
-    const commandIds = Array.from(new Set([
-      ...(detail.proposal.linkedCommandId === null ? [] : [detail.proposal.linkedCommandId]),
-      ...detail.executions.flatMap((execution) => execution.commandId === null ? [] : [execution.commandId]),
-    ]));
+    const commandIds = Array.from(
+      new Set([
+        ...(detail.proposal.linkedCommandId === null ? [] : [detail.proposal.linkedCommandId]),
+        ...detail.executions.flatMap((execution) =>
+          execution.commandId === null ? [] : [execution.commandId],
+        ),
+      ]),
+    );
     const commands = (
       await Promise.all(commandIds.map(async (commandId) => this.getRuntimeCommand(commandId)))
     ).filter((command): command is RuntimeCommandView => command !== null);
@@ -8868,18 +10902,34 @@ export class RuntimeStore {
     const carryRollup = summariseRebalanceDownstreamRollup({
       actionCount: carryNodes.length,
       executionCount: carryNodes.reduce((sum, node) => sum + node.executions.length, 0),
-      blockedCount: carryNodes.filter((node) => node.action.blockedReasons.length > 0 || !node.action.executable).length,
+      blockedCount: carryNodes.filter(
+        (node) => node.action.blockedReasons.length > 0 || !node.action.executable,
+      ).length,
       failureCount: carryNodes.reduce(
-        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'failed').length,
+        (sum, node) =>
+          sum + node.executions.filter((execution) => execution.status === 'failed').length,
         0,
       ),
       completedCount: carryNodes.reduce(
-        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'completed').length,
+        (sum, node) =>
+          sum + node.executions.filter((execution) => execution.status === 'completed').length,
         0,
       ),
-      simulated: carryNodes.some((node) => node.action.simulated || node.executions.some((execution) => execution.simulated)),
-      live: carryNodes.some((node) => !node.action.simulated || node.executions.some((execution) => execution.executionMode === 'live' && !execution.simulated)),
-      references: carryNodes.flatMap((node) => node.executions.flatMap((execution) => execution.venueExecutionReference === null ? [] : [execution.venueExecutionReference])),
+      simulated: carryNodes.some(
+        (node) => node.action.simulated || node.executions.some((execution) => execution.simulated),
+      ),
+      live: carryNodes.some(
+        (node) =>
+          !node.action.simulated ||
+          node.executions.some(
+            (execution) => execution.executionMode === 'live' && !execution.simulated,
+          ),
+      ),
+      references: carryNodes.flatMap((node) =>
+        node.executions.flatMap((execution) =>
+          execution.venueExecutionReference === null ? [] : [execution.venueExecutionReference],
+        ),
+      ),
     });
 
     const treasuryActionRows = await this.db
@@ -8889,31 +10939,50 @@ export class RuntimeStore {
       .orderBy(desc(treasuryActions.createdAt));
 
     const treasuryNodes: RebalanceTreasuryActionNodeView[] = (
-      await Promise.all(treasuryActionRows.map(async (row): Promise<RebalanceTreasuryActionNodeView> => {
-        const action = mapTreasuryActionRow(row);
-        const executions = await this.listTreasuryExecutionsForAction(action.id);
-        return { action, executions };
-      }))
+      await Promise.all(
+        treasuryActionRows.map(async (row): Promise<RebalanceTreasuryActionNodeView> => {
+          const action = mapTreasuryActionRow(row);
+          const executions = await this.listTreasuryExecutionsForAction(action.id);
+          return { action, executions };
+        }),
+      )
     ).sort((left, right) => left.action.createdAt.localeCompare(right.action.createdAt));
     const treasuryRollup = summariseRebalanceDownstreamRollup({
       actionCount: treasuryNodes.length,
       executionCount: treasuryNodes.reduce((sum, node) => sum + node.executions.length, 0),
-      blockedCount: treasuryNodes.filter((node) => node.action.blockedReasons.length > 0 || !node.action.executable).length,
+      blockedCount: treasuryNodes.filter(
+        (node) => node.action.blockedReasons.length > 0 || !node.action.executable,
+      ).length,
       failureCount: treasuryNodes.reduce(
-        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'failed').length,
+        (sum, node) =>
+          sum + node.executions.filter((execution) => execution.status === 'failed').length,
         0,
       ),
       completedCount: treasuryNodes.reduce(
-        (sum, node) => sum + node.executions.filter((execution) => execution.status === 'completed').length,
+        (sum, node) =>
+          sum + node.executions.filter((execution) => execution.status === 'completed').length,
         0,
       ),
-      simulated: treasuryNodes.some((node) => node.action.simulated || node.executions.some((execution) => execution.simulated)),
-      live: treasuryNodes.some((node) => !node.action.simulated || node.executions.some((execution) => execution.executionMode === 'live' && !execution.simulated)),
-      references: treasuryNodes.flatMap((node) => node.executions.flatMap((execution) => execution.venueExecutionReference === null ? [] : [execution.venueExecutionReference])),
+      simulated: treasuryNodes.some(
+        (node) => node.action.simulated || node.executions.some((execution) => execution.simulated),
+      ),
+      live: treasuryNodes.some(
+        (node) =>
+          !node.action.simulated ||
+          node.executions.some(
+            (execution) => execution.executionMode === 'live' && !execution.simulated,
+          ),
+      ),
+      references: treasuryNodes.flatMap((node) =>
+        node.executions.flatMap((execution) =>
+          execution.venueExecutionReference === null ? [] : [execution.venueExecutionReference],
+        ),
+      ),
     });
     const recoveryActions = recoveryActionRows.map(mapRebalanceBundleRecoveryActionRow);
     const resolutionActions = resolutionActionRows.map(mapRebalanceBundleResolutionActionRow);
-    const escalation = escalationRow === undefined ? null : mapRebalanceBundleEscalationRow(escalationRow);
+    const escalation =
+      escalationRow === undefined ? null : mapRebalanceBundleEscalationRow(escalationRow);
     const escalationHistory = escalationEventRows.map(mapRebalanceBundleEscalationEventRow);
 
     const timeline = createRebalanceTimeline({
@@ -8939,17 +11008,19 @@ export class RuntimeStore {
           actions: treasuryNodes,
           rollup: {
             ...treasuryRollup,
-            summary: treasuryNodes.length > 0
-              ? treasuryRollup.summary
-              : detail.currentState?.latestProposalId === detail.proposal.id
-              ? 'Treasury participation is represented by the applied approved budget state; no downstream treasury action records are persisted for this proposal.'
-              : 'No downstream treasury actions are persisted for this proposal.',
+            summary:
+              treasuryNodes.length > 0
+                ? treasuryRollup.summary
+                : detail.currentState?.latestProposalId === detail.proposal.id
+                  ? 'Treasury participation is represented by the applied approved budget state; no downstream treasury action records are persisted for this proposal.'
+                  : 'No downstream treasury actions are persisted for this proposal.',
           },
-          note: treasuryNodes.length > 0
-            ? null
-            : detail.currentState?.latestProposalId === detail.proposal.id
-              ? 'Treasury sleeve impact is currently represented by approved rebalance budget-state application, not by proposal-linked treasury action records.'
-              : 'No proposal-linked treasury action records were persisted.',
+          note:
+            treasuryNodes.length > 0
+              ? null
+              : detail.currentState?.latestProposalId === detail.proposal.id
+                ? 'Treasury sleeve impact is currently represented by approved rebalance budget-state application, not by proposal-linked treasury action records.'
+                : 'No proposal-linked treasury action records were persisted.',
         },
       },
       recoveryActions,
@@ -9224,9 +11295,7 @@ export class RuntimeStore {
     );
   }
 
-  async persistVenueConnectorSnapshots(input: {
-    snapshots: VenueSnapshotView[];
-  }): Promise<void> {
+  async persistVenueConnectorSnapshots(input: { snapshots: VenueSnapshotView[] }): Promise<void> {
     if (input.snapshots.length === 0) {
       return;
     }
@@ -9281,7 +11350,9 @@ export class RuntimeStore {
         .returning();
 
       if (inserted === undefined) {
-        throw new Error('RuntimeStore.persistInternalDerivativeSnapshots: internal derivative snapshot was not persisted');
+        throw new Error(
+          'RuntimeStore.persistInternalDerivativeSnapshots: internal derivative snapshot was not persisted',
+        );
       }
 
       await this.db
@@ -9356,9 +11427,13 @@ export class RuntimeStore {
           executionPlan: {
             effects: intent.effects,
             plannedOrderCount: intent.plannedOrders.length,
-            strategyProfile: intent.strategyProfile ?? buildCarryStrategyProfile({
-              projectedApyPct: asDecimalLikeString(intent.details['netYieldPct'] ?? intent.details['expectedAnnualYieldPct']),
-            }),
+            strategyProfile:
+              intent.strategyProfile ??
+              buildCarryStrategyProfile({
+                projectedApyPct: asDecimalLikeString(
+                  intent.details['netYieldPct'] ?? intent.details['expectedAnnualYieldPct'],
+                ),
+              }),
           },
           actorId: input.actorId,
           createdAt: input.createdAt,
@@ -9373,23 +11448,29 @@ export class RuntimeStore {
       if (intent.plannedOrders.length > 0) {
         await this.db.insert(carryActionOrderIntents).values(
           intent.plannedOrders.map((order) => {
-            const marketIdentity = readCanonicalMarketIdentityFromMetadata(order.metadata, {
-              venueId: order.venueId,
-              asset: order.asset,
-              marketType: order.metadata['instrumentType'],
-              provenance: 'derived',
-              capturedAtStage: 'carry_planned_order',
-              source: 'carry_action_creation',
-              notes: ['Carry planned orders persist the best market identity already attached to the execution intent.'],
-            }) ?? createCanonicalMarketIdentity({
-              venueId: order.venueId,
-              asset: order.asset,
-              marketType: order.metadata['instrumentType'],
-              provenance: 'derived',
-              capturedAtStage: 'carry_planned_order',
-              source: 'carry_action_creation',
-              notes: ['Carry planned orders derived market identity because upstream intent metadata did not carry richer venue-native identifiers.'],
-            });
+            const marketIdentity =
+              readCanonicalMarketIdentityFromMetadata(order.metadata, {
+                venueId: order.venueId,
+                asset: order.asset,
+                marketType: order.metadata['instrumentType'],
+                provenance: 'derived',
+                capturedAtStage: 'carry_planned_order',
+                source: 'carry_action_creation',
+                notes: [
+                  'Carry planned orders persist the best market identity already attached to the execution intent.',
+                ],
+              }) ??
+              createCanonicalMarketIdentity({
+                venueId: order.venueId,
+                asset: order.asset,
+                marketType: order.metadata['instrumentType'],
+                provenance: 'derived',
+                capturedAtStage: 'carry_planned_order',
+                source: 'carry_action_creation',
+                notes: [
+                  'Carry planned orders derived market identity because upstream intent metadata did not carry richer venue-native identifiers.',
+                ],
+              });
 
             return {
               carryActionId: row.id,
@@ -9570,10 +11651,14 @@ export class RuntimeStore {
       .update(carryActionExecutions)
       .set({
         ...(patch.status !== undefined ? { status: patch.status } : {}),
-        ...(patch.blockedReasons !== undefined ? { blockedReasons: patch.blockedReasons as unknown as Record<string, unknown>[] } : {}),
+        ...(patch.blockedReasons !== undefined
+          ? { blockedReasons: patch.blockedReasons as unknown as Record<string, unknown>[] }
+          : {}),
         ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
         ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
-        ...(patch.venueExecutionReference !== undefined ? { venueExecutionReference: patch.venueExecutionReference } : {}),
+        ...(patch.venueExecutionReference !== undefined
+          ? { venueExecutionReference: patch.venueExecutionReference }
+          : {}),
         ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
         ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
         ...(patch.completedAt !== undefined ? { completedAt: patch.completedAt } : {}),
@@ -9615,23 +11700,29 @@ export class RuntimeStore {
     metadata?: Record<string, unknown>;
     completedAt?: Date | null;
   }): Promise<CarryExecutionStepView> {
-    const marketIdentity = readCanonicalMarketIdentityFromMetadata(input.metadata ?? {}, {
-      venueId: input.venueId,
-      asset: input.asset,
-      marketType: input.metadata?.['instrumentType'],
-      provenance: 'derived',
-      capturedAtStage: 'carry_execution_step',
-      source: 'carry_execution_step_creation',
-      notes: ['Carry execution steps persist the best market identity already attached to the planned order or execution result.'],
-    }) ?? createCanonicalMarketIdentity({
-      venueId: input.venueId,
-      asset: input.asset,
-      marketType: input.metadata?.['instrumentType'],
-      provenance: 'derived',
-      capturedAtStage: 'carry_execution_step',
-      source: 'carry_execution_step_creation',
-      notes: ['Carry execution steps derived market identity because no richer upstream metadata was available.'],
-    });
+    const marketIdentity =
+      readCanonicalMarketIdentityFromMetadata(input.metadata ?? {}, {
+        venueId: input.venueId,
+        asset: input.asset,
+        marketType: input.metadata?.['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'carry_execution_step',
+        source: 'carry_execution_step_creation',
+        notes: [
+          'Carry execution steps persist the best market identity already attached to the planned order or execution result.',
+        ],
+      }) ??
+      createCanonicalMarketIdentity({
+        venueId: input.venueId,
+        asset: input.asset,
+        marketType: input.metadata?.['instrumentType'],
+        provenance: 'derived',
+        capturedAtStage: 'carry_execution_step',
+        source: 'carry_execution_step_creation',
+        notes: [
+          'Carry execution steps derived market identity because no richer upstream metadata was available.',
+        ],
+      });
     const [row] = await this.db
       .insert(carryExecutionSteps)
       .values({
@@ -9698,11 +11789,15 @@ export class RuntimeStore {
       .set({
         ...(patch.clientOrderId !== undefined ? { clientOrderId: patch.clientOrderId } : {}),
         ...(patch.venueOrderId !== undefined ? { venueOrderId: patch.venueOrderId } : {}),
-        ...(patch.executionReference !== undefined ? { executionReference: patch.executionReference } : {}),
+        ...(patch.executionReference !== undefined
+          ? { executionReference: patch.executionReference }
+          : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
         ...(patch.simulated !== undefined ? { simulated: patch.simulated } : {}),
         ...(patch.filledSize !== undefined ? { filledSize: patch.filledSize } : {}),
-        ...(patch.averageFillPrice !== undefined ? { averageFillPrice: patch.averageFillPrice } : {}),
+        ...(patch.averageFillPrice !== undefined
+          ? { averageFillPrice: patch.averageFillPrice }
+          : {}),
         ...(patch.outcomeSummary !== undefined ? { outcomeSummary: patch.outcomeSummary } : {}),
         ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
         ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
@@ -9745,7 +11840,9 @@ export class RuntimeStore {
   }): Promise<void> {
     const now = new Date();
     const capabilitiesByVenueId = new Map(
-      (input.venueCapabilities ?? []).map((capability) => [capability.venueId, capability] as const),
+      (input.venueCapabilities ?? []).map(
+        (capability) => [capability.venueId, capability] as const,
+      ),
     );
     await this.db.insert(treasuryRuns).values({
       treasuryRunId: input.treasuryRunId,
@@ -9939,27 +12036,32 @@ export class RuntimeStore {
       return null;
     }
 
-    const [latestCommand, executionRows, venue, summary, policy, linkedRebalanceProposal] = await Promise.all([
-      row.linkedCommandId === null
-        ? Promise.resolve<RuntimeCommandView | null>(null)
-        : this.getRuntimeCommand(row.linkedCommandId),
-      this.db
-        .select()
-        .from(treasuryActionExecutions)
-        .where(eq(treasuryActionExecutions.treasuryActionId, row.id))
-        .orderBy(desc(treasuryActionExecutions.createdAt)),
-      row.venueId === null ? Promise.resolve<TreasuryVenueView | null>(null) : this.getTreasuryVenueView(row.venueId),
-      this.getTreasurySummary(),
-      this.getTreasuryPolicy(),
-      row.linkedRebalanceProposalId === null
-        ? Promise.resolve<RebalanceProposalView | null>(null)
-        : this.db
+    const [latestCommand, executionRows, venue, summary, policy, linkedRebalanceProposal] =
+      await Promise.all([
+        row.linkedCommandId === null
+          ? Promise.resolve<RuntimeCommandView | null>(null)
+          : this.getRuntimeCommand(row.linkedCommandId),
+        this.db
           .select()
-          .from(allocatorRebalanceProposals)
-          .where(eq(allocatorRebalanceProposals.id, row.linkedRebalanceProposalId))
-          .limit(1)
-          .then((proposalRows) => proposalRows[0] === undefined ? null : mapRebalanceProposalRow(proposalRows[0])),
-    ]);
+          .from(treasuryActionExecutions)
+          .where(eq(treasuryActionExecutions.treasuryActionId, row.id))
+          .orderBy(desc(treasuryActionExecutions.createdAt)),
+        row.venueId === null
+          ? Promise.resolve<TreasuryVenueView | null>(null)
+          : this.getTreasuryVenueView(row.venueId),
+        this.getTreasurySummary(),
+        this.getTreasuryPolicy(),
+        row.linkedRebalanceProposalId === null
+          ? Promise.resolve<RebalanceProposalView | null>(null)
+          : this.db
+              .select()
+              .from(allocatorRebalanceProposals)
+              .where(eq(allocatorRebalanceProposals.id, row.linkedRebalanceProposalId))
+              .limit(1)
+              .then((proposalRows) =>
+                proposalRows[0] === undefined ? null : mapRebalanceProposalRow(proposalRows[0]),
+              ),
+      ]);
     const action = mapTreasuryActionRow(row);
     const executions = executionRows.map(mapTreasuryExecutionRow);
 
@@ -10005,7 +12107,9 @@ export class RuntimeStore {
     return row === undefined ? null : mapTreasuryExecutionRow(row);
   }
 
-  async getTreasuryExecutionDetail(executionId: string): Promise<TreasuryExecutionDetailView | null> {
+  async getTreasuryExecutionDetail(
+    executionId: string,
+  ): Promise<TreasuryExecutionDetailView | null> {
     const [row] = await this.db
       .select()
       .from(treasuryActionExecutions)
@@ -10025,16 +12129,18 @@ export class RuntimeStore {
       action,
       command: row.commandId === null ? null : await this.getRuntimeCommand(row.commandId),
       linkedRebalanceProposal: actionDetail?.linkedRebalanceProposal ?? null,
-      executionKind: action?.actionType === 'rebalance_treasury_budget'
-        ? 'budget_state_application'
-        : 'venue_execution',
-      venue: action?.venueId === null || action?.venueId === undefined
-        ? null
-        : await this.getTreasuryVenueView(action.venueId),
-      timeline: actionDetail?.timeline.filter((entry) => (
-        entry.linkedExecutionId === null
-        || entry.linkedExecutionId === execution.id
-      )) ?? [],
+      executionKind:
+        action?.actionType === 'rebalance_treasury_budget'
+          ? 'budget_state_application'
+          : 'venue_execution',
+      venue:
+        action?.venueId === null || action?.venueId === undefined
+          ? null
+          : await this.getTreasuryVenueView(action.venueId),
+      timeline:
+        actionDetail?.timeline.filter(
+          (entry) => entry.linkedExecutionId === null || entry.linkedExecutionId === execution.id,
+        ) ?? [],
     };
   }
 
@@ -10065,24 +12171,26 @@ export class RuntimeStore {
 
     return venues.map((venue) => {
       const inventoryView = inventoryByVenueId.get(venue.venueId);
-      const promotion = inventoryView === undefined
-        ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
-          venueId: venue.venueId,
-          venueName: venue.venueName,
-          connectorType: 'treasury_adapter',
-          sleeveApplicability: ['treasury'],
-          truthMode: venue.simulationState === 'simulated' ? 'simulated' : 'real',
-          executionSupport: venue.executionSupported,
-          readOnlySupport: venue.readOnly,
-          healthy: venue.healthy,
-          healthState: venue.healthy ? 'healthy' : 'degraded',
-          degradedReason: venue.healthy ? null : 'treasury_venue_snapshot_reported_unhealthy',
-          lastSnapshotAt: venue.lastSnapshotAt,
-          missingPrerequisites: venue.missingPrerequisites,
-        }))
-        : promotionSummaryMap.get(venue.venueId) ?? buildDefaultPromotionSummary(
-          buildConnectorReadinessEvidence(inventoryView),
-        );
+      const promotion =
+        inventoryView === undefined
+          ? buildDefaultPromotionSummary(
+              buildFallbackConnectorReadinessEvidence({
+                venueId: venue.venueId,
+                venueName: venue.venueName,
+                connectorType: 'treasury_adapter',
+                sleeveApplicability: ['treasury'],
+                truthMode: venue.simulationState === 'simulated' ? 'simulated' : 'real',
+                executionSupport: venue.executionSupported,
+                readOnlySupport: venue.readOnly,
+                healthy: venue.healthy,
+                healthState: venue.healthy ? 'healthy' : 'degraded',
+                degradedReason: venue.healthy ? null : 'treasury_venue_snapshot_reported_unhealthy',
+                lastSnapshotAt: venue.lastSnapshotAt,
+                missingPrerequisites: venue.missingPrerequisites,
+              }),
+            )
+          : (promotionSummaryMap.get(venue.venueId) ??
+            buildDefaultPromotionSummary(buildConnectorReadinessEvidence(inventoryView)));
 
       return {
         ...venue,
@@ -10110,11 +12218,13 @@ export class RuntimeStore {
       this.db
         .select()
         .from(treasuryActionExecutions)
-        .where(sql`${treasuryActionExecutions.treasuryActionId} IN (
+        .where(
+          sql`${treasuryActionExecutions.treasuryActionId} IN (
           SELECT ${treasuryActions.id}
           FROM ${treasuryActions}
           WHERE ${treasuryActions.venueId} = ${venueId}
-        )`)
+        )`,
+        )
         .orderBy(desc(treasuryActionExecutions.createdAt))
         .limit(10),
     ]);
@@ -10142,10 +12252,12 @@ export class RuntimeStore {
     const [row] = await this.db
       .select()
       .from(treasuryVenueSnapshots)
-      .where(and(
-        eq(treasuryVenueSnapshots.treasuryRunId, latestRun.treasuryRunId),
-        eq(treasuryVenueSnapshots.venueId, venueId),
-      ))
+      .where(
+        and(
+          eq(treasuryVenueSnapshots.treasuryRunId, latestRun.treasuryRunId),
+          eq(treasuryVenueSnapshots.venueId, venueId),
+        ),
+      )
       .limit(1);
 
     if (row === undefined) {
@@ -10155,24 +12267,26 @@ export class RuntimeStore {
     const venue = mapTreasuryVenueRow(row);
     const inventory = await this.listVenueInventoryCore(500);
     const inventoryView = inventory.find((item) => item.venueId === venueId);
-    const promotion = inventoryView === undefined
-      ? buildDefaultPromotionSummary(buildFallbackConnectorReadinessEvidence({
-        venueId: venue.venueId,
-        venueName: venue.venueName,
-        connectorType: 'treasury_adapter',
-        sleeveApplicability: ['treasury'],
-        truthMode: venue.simulationState === 'simulated' ? 'simulated' : 'real',
-        executionSupport: venue.executionSupported,
-        readOnlySupport: venue.readOnly,
-        healthy: venue.healthy,
-        healthState: venue.healthy ? 'healthy' : 'degraded',
-        degradedReason: venue.healthy ? null : 'treasury_venue_snapshot_reported_unhealthy',
-        lastSnapshotAt: venue.lastSnapshotAt,
-        missingPrerequisites: venue.missingPrerequisites,
-      }))
-      : (await this.buildPromotionSummaryMap([inventoryView])).get(venueId) ?? buildDefaultPromotionSummary(
-        buildConnectorReadinessEvidence(inventoryView),
-      );
+    const promotion =
+      inventoryView === undefined
+        ? buildDefaultPromotionSummary(
+            buildFallbackConnectorReadinessEvidence({
+              venueId: venue.venueId,
+              venueName: venue.venueName,
+              connectorType: 'treasury_adapter',
+              sleeveApplicability: ['treasury'],
+              truthMode: venue.simulationState === 'simulated' ? 'simulated' : 'real',
+              executionSupport: venue.executionSupported,
+              readOnlySupport: venue.readOnly,
+              healthy: venue.healthy,
+              healthState: venue.healthy ? 'healthy' : 'degraded',
+              degradedReason: venue.healthy ? null : 'treasury_venue_snapshot_reported_unhealthy',
+              lastSnapshotAt: venue.lastSnapshotAt,
+              missingPrerequisites: venue.missingPrerequisites,
+            }),
+          )
+        : ((await this.buildPromotionSummaryMap([inventoryView])).get(venueId) ??
+          buildDefaultPromotionSummary(buildConnectorReadinessEvidence(inventoryView)));
 
     return {
       ...venue,
@@ -10181,7 +12295,10 @@ export class RuntimeStore {
     };
   }
 
-  async approveTreasuryAction(actionId: string, actorId: string): Promise<TreasuryActionView | null> {
+  async approveTreasuryAction(
+    actionId: string,
+    actorId: string,
+  ): Promise<TreasuryActionView | null> {
     await this.db
       .update(treasuryActions)
       .set({
@@ -10465,20 +12582,472 @@ export class RuntimeStore {
   }
 
   async getPortfolioCurrentRow(): Promise<typeof portfolioCurrent.$inferSelect | null> {
-    const [row] = await this.db
-      .select()
-      .from(portfolioCurrent)
-      .limit(1);
+    const [row] = await this.db.select().from(portfolioCurrent).limit(1);
 
     return row ?? null;
   }
 
   async getRiskCurrentRow(): Promise<typeof riskCurrent.$inferSelect | null> {
+    const [row] = await this.db.select().from(riskCurrent).limit(1);
+
+    return row ?? null;
+  }
+
+  // =============================================================================
+  // Realized APY Tracking Methods
+  // =============================================================================
+
+  async persistRealizedTradePnl(
+    trade: {
+      tradeId: string;
+      positionId?: string;
+      sleeveId: string;
+      venueId: string;
+      asset: string;
+      side: 'long' | 'short';
+      instrumentType: 'spot' | 'perpetual';
+      entryPrice: string;
+      exitPrice: string;
+      size: string;
+      notionalUsd: string;
+      grossPnl: string;
+      fundingPnl: string;
+      feeCost: string;
+      netPnl: string;
+      holdingPeriodDays: string;
+      openedAt: Date;
+      closedAt: Date;
+      executionReference?: string;
+      confirmed: boolean;
+      confirmedAt?: Date;
+    },
+  ): Promise<void> {
+    await this.db.insert(realizedTradePnl).values({
+      tradeId: trade.tradeId,
+      positionId: trade.positionId ?? null,
+      sleeveId: trade.sleeveId,
+      venueId: trade.venueId,
+      asset: trade.asset,
+      side: trade.side,
+      instrumentType: trade.instrumentType,
+      entryPrice: trade.entryPrice,
+      exitPrice: trade.exitPrice,
+      size: trade.size,
+      notionalUsd: trade.notionalUsd,
+      grossPnl: trade.grossPnl,
+      fundingPnl: trade.fundingPnl,
+      feeCost: trade.feeCost,
+      netPnl: trade.netPnl,
+      holdingPeriodDays: trade.holdingPeriodDays,
+      openedAt: trade.openedAt,
+      closedAt: trade.closedAt,
+      executionReference: trade.executionReference ?? null,
+      confirmed: trade.confirmed,
+      confirmedAt: trade.confirmedAt ?? null,
+      metadata: {},
+    });
+
+    // Update APY current after persisting trade
+    await this.updateApyCurrent(trade.sleeveId, 'apex-usdc-delta-neutral-carry');
+  }
+
+  async updateApyCurrent(sleeveId: string, strategyId: string): Promise<void> {
+    // Fetch all confirmed trades for this sleeve
+    const trades = await this.db
+      .select()
+      .from(realizedTradePnl)
+      .where(and(
+        eq(realizedTradePnl.sleeveId, sleeveId),
+        eq(realizedTradePnl.confirmed, true),
+      ))
+      .orderBy(asc(realizedTradePnl.closedAt));
+
+    if (trades.length === 0) {
+      // No trades yet - ensure we have an APY current record with insufficient_data
+      const existing = await this.db
+        .select()
+        .from(apyCurrent)
+        .where(eq(apyCurrent.sleeveId, sleeveId))
+        .then((rows) => rows[0] ?? null);
+
+      if (existing === null) {
+        await this.db.insert(apyCurrent).values({
+          id: sleeveId,
+          sleeveId,
+          strategyId,
+          targetApyPct: '10.00',
+          calculationBasis: 'insufficient_data',
+        });
+      }
+      return;
+    }
+
+    // Calculate metrics
+    const totalPnl = trades.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'] as string)), new Decimal(0));
+    const totalFundingPnl = trades.reduce((sum, t) => sum['plus'](new Decimal(t['fundingPnl'] as string)), new Decimal(0));
+    const totalFees = trades.reduce((sum, t) => sum['plus'](new Decimal(t['feeCost'] as string)), new Decimal(0));
+    
+    const winningTrades = trades.filter(t => new Decimal(t['netPnl'] as string).gt(0));
+    const winRate = new Decimal(winningTrades.length).div(trades.length).times(100);
+    const avgPnl = totalPnl['div'](trades.length);
+
+    // Get capital estimate from portfolio
+    const portfolioRow = await this.getPortfolioCurrentRow();
+    const totalCapitalUsd = portfolioRow?.totalNav ?? '100000';
+
+    // Calculate APYs
+    const firstTrade = trades[0];
+    const lastTrade = trades[trades.length - 1];
+    const now = new Date();
+    
+    if (firstTrade === undefined || lastTrade === undefined) {
+      return;
+    }
+    
+    const days = Math.max(
+      (lastTrade['closedAt'].getTime() - firstTrade['openedAt'].getTime()) / (1_000 * 60 * 60 * 24),
+      1,
+    );
+
+    const lifetimeApy = totalPnl['div'](totalCapitalUsd).times(365 / days).times(100)['toFixed'](4);
+
+    // Calculate 7d and 30d rolling APYs
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const trades7d = trades.filter(t => t['closedAt'] >= sevenDaysAgo);
+    const trades30d = trades.filter(t => t['closedAt'] >= thirtyDaysAgo);
+
+    const pnl7d = trades7d.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'] as string)), new Decimal(0));
+    const pnl30d = trades30d.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'] as string)), new Decimal(0));
+
+    const apy7d = trades7d.length > 0
+      ? pnl7d['div'](totalCapitalUsd).times(365 / 7).times(100)['toFixed'](4)
+      : null;
+    const apy30d = trades30d.length > 0
+      ? pnl30d['div'](totalCapitalUsd).times(365 / 30).times(100)['toFixed'](4)
+      : null;
+
+    // Determine target status
+    const targetApy = new Decimal('10.00');
+    const currentApy = apy30d ?? apy7d ?? lifetimeApy;
+    const targetMet = new Decimal(currentApy).gte(targetApy);
+    const targetGap = new Decimal(currentApy).minus(targetApy)['toFixed'](4);
+
+    // Upsert APY current
+    const existing = await this.db
+      .select()
+      .from(apyCurrent)
+      .where(eq(apyCurrent.sleeveId, sleeveId))
+      .then((rows) => rows[0] ?? null);
+
+    if (existing !== null) {
+      await this.db
+        .update(apyCurrent)
+        .set({
+          realizedApy7d: apy7d,
+          realizedApy30d: apy30d,
+          realizedApyLifetime: lifetimeApy,
+          targetApyPct: '10.00',
+          projectedApyPct: currentApy,
+          targetMet,
+          targetGapPct: targetGap,
+          totalTradesClosed: trades.length,
+          totalPnlUsd: totalPnl['toFixed'](),
+          totalFundingPnlUsd: totalFundingPnl['toFixed'](),
+          totalFeesUsd: totalFees['toFixed'](),
+          avgTradePnlUsd: avgPnl['toFixed'](),
+          winRatePct: winRate['toFixed'](2),
+          firstTradeAt: firstTrade['openedAt'],
+          calculationBasis: 'live_trades',
+          updatedAt: now,
+        })
+        .where(eq(apyCurrent.sleeveId, sleeveId));
+    } else {
+      await this.db.insert(apyCurrent).values({
+        id: sleeveId,
+        sleeveId,
+        strategyId,
+        realizedApy7d: apy7d,
+        realizedApy30d: apy30d,
+        realizedApyLifetime: lifetimeApy,
+        targetApyPct: '10.00',
+        projectedApyPct: currentApy,
+        targetMet,
+        targetGapPct: targetGap,
+        totalTradesClosed: trades.length,
+        totalPnlUsd: totalPnl['toFixed'](),
+        totalFundingPnlUsd: totalFundingPnl['toFixed'](),
+        totalFeesUsd: totalFees['toFixed'](),
+        avgTradePnlUsd: avgPnl['toFixed'](),
+        winRatePct: winRate['toFixed'](2),
+        firstTradeAt: firstTrade['openedAt'],
+        calculationBasis: 'live_trades',
+      });
+    }
+  }
+
+  async getApyCurrent(sleeveId: string): Promise<typeof apyCurrent.$inferSelect | null> {
     const [row] = await this.db
       .select()
-      .from(riskCurrent)
+      .from(apyCurrent)
+      .where(eq(apyCurrent.sleeveId, sleeveId))
       .limit(1);
 
     return row ?? null;
+  }
+
+  async getRealizedTrades(sleeveId: string, limit = 100): Promise<typeof realizedTradePnl.$inferSelect[]> {
+    return this.db
+      .select()
+      .from(realizedTradePnl)
+      .where(eq(realizedTradePnl.sleeveId, sleeveId))
+      .orderBy(desc(realizedTradePnl.closedAt))
+      .limit(limit);
+  }
+
+  // =============================================================================
+  // CEX Verification Methods
+  // =============================================================================
+
+  async listCexVerificationSessions(sleeveId?: string): Promise<Array<{
+    id: string;
+    sleeveId: string;
+    platform: string;
+    status: string;
+    totalTrades: number;
+    totalVolumeUsd: string | null;
+    realizedPnl: string | null;
+    calculatedApy: string | null;
+    createdAt: string;
+    validatedAt: string | null;
+  }>> {
+    // This is a stub implementation - the actual DB schema was created in packages/db/src/schema/cex-imports.ts
+    // Full implementation would query the cexVerificationSessions table
+    return [];
+  }
+
+  async getCexVerificationSession(sessionId: string): Promise<{
+    id: string;
+    sleeveId: string;
+    platform: string;
+    status: string;
+    totalTrades: number;
+    totalVolumeUsd: string | null;
+    realizedPnl: string | null;
+    calculatedApy: string | null;
+    fileHash: string | null;
+    createdAt: string;
+    validatedAt: string | null;
+    trades: Array<{
+      id: string;
+      tradeId: string;
+      asset: string;
+      side: string;
+      quantity: string;
+      price: string;
+      fee: string | null;
+      realizedPnl: string | null;
+      tradeTime: string;
+    }>;
+  } | null> {
+    // Stub implementation
+    return null;
+  }
+
+  async createCexVerificationSession(input: {
+    operatorId: string;
+    sleeveId: string;
+    platform: 'binance' | 'okx' | 'bybit' | 'coinbase' | undefined;
+    csvContent: string;
+    fileName: string;
+  }): Promise<{
+    id: string;
+    sleeveId: string;
+    platform: string;
+    status: string;
+    totalTrades: number;
+    errors: Array<{ row: number; message: string }>;
+  }> {
+    // Import the cex-verification package functions
+    const { parseCexCsv, detectPlatform } = await import('@sentinel-apex/cex-verification');
+    
+    // Auto-detect platform if not specified
+    const detectedPlatform = detectPlatform(input.csvContent);
+    const platform = input.platform ?? detectedPlatform ?? 'binance';
+    
+    // Parse the CSV
+    const parseResult = parseCexCsv(input.csvContent, { platform: platform as 'binance' | 'okx' | 'bybit' | 'coinbase' });
+    
+    // Generate session ID
+    const sessionId = `cex_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    
+    return {
+      id: sessionId,
+      sleeveId: input.sleeveId,
+      platform,
+      status: parseResult.errors.length > 0 ? 'pending_review' : 'pending',
+      totalTrades: parseResult.trades.length,
+      errors: parseResult.errors.map((e: { row: number; message: string }) => ({ row: e.row, message: e.message })),
+    };
+  }
+
+  async validateCexCsv(input: {
+    csvContent: string;
+    platform: 'binance' | 'okx' | 'bybit' | 'coinbase' | undefined;
+  }): Promise<{
+    valid: boolean;
+    detectedPlatform: string | undefined;
+    errors: Array<{ row: number; message: string }>;
+    preview: Array<{
+      tradeId: string;
+      symbol: string;
+      side: string;
+      quantity: string;
+      price: string;
+      tradeTime: string;
+    }> | undefined;
+  }> {
+    const { parseCexCsv, detectPlatform, validateCsvFormat } = await import('@sentinel-apex/cex-verification');
+    
+    // Detect platform
+    const detectedPlatform = detectPlatform(input.csvContent);
+    const platform = input.platform ?? detectedPlatform ?? 'binance';
+    
+    // Validate format
+    const validation = validateCsvFormat(input.csvContent, platform as 'binance' | 'okx' | 'bybit' | 'coinbase');
+    
+    if (!validation.valid) {
+      return {
+        valid: false,
+        detectedPlatform: detectedPlatform ?? undefined,
+        errors: [{ row: 0, message: validation.error ?? 'Invalid CSV format' }],
+        preview: undefined,
+      };
+    }
+    
+    // Parse for preview
+    const parseResult = parseCexCsv(input.csvContent, { platform: platform as 'binance' | 'okx' | 'bybit' | 'coinbase' });
+    
+    return {
+      valid: parseResult.errors.length === 0,
+      detectedPlatform: detectedPlatform ?? undefined,
+      errors: parseResult.errors.map((e: { row: number; message: string }) => ({ row: e.row, message: e.message })),
+      preview: parseResult.trades.slice(0, 5).map((t: { tradeId: string; symbol: string; side: string; quantity: string; price: string; tradeTime: Date }) => ({
+        tradeId: t.tradeId,
+        symbol: t.symbol,
+        side: t.side,
+        quantity: t.quantity,
+        price: t.price,
+        tradeTime: t.tradeTime.toISOString(),
+      })),
+    };
+  }
+
+  async calculateCexPnl(sessionId: string, input: {
+    method: 'fifo' | 'lifo' | 'avg';
+    includeFees: boolean;
+  }): Promise<PortfolioPnlResult> {
+    const { calculatePortfolioPnl, groupTradesByAsset } = await import('@sentinel-apex/cex-verification');
+    
+    // In a real implementation, we would fetch trades from the database
+    // For now, return a placeholder result
+    return {
+      summary: {
+        totalTrades: 0,
+        totalPnl: '0',
+        totalFees: '0',
+        netPnl: '0',
+        profitableTrades: 0,
+        losingTrades: 0,
+        winRate: '0',
+        largestWin: '0',
+        largestLoss: '0',
+        averageWin: '0',
+        averageLoss: '0',
+        profitFactor: '0',
+        tradingDays: 0,
+        firstTradeAt: null,
+        lastTradeAt: null,
+      },
+      assets: [],
+    };
+  }
+
+  async generateCexSubmissionReport(sessionId: string, input: {
+    method: 'fifo' | 'lifo' | 'avg';
+    includeFees: boolean;
+  }): Promise<{
+    sessionId: string;
+    generatedAt: string;
+    portfolioSummary: {
+      totalTrades: number;
+      totalPnl: string;
+      totalFees: string;
+      winRate: string;
+      profitableAssets: number;
+      losingAssets: number;
+    };
+    assetReports: Array<{
+      asset: string;
+      totalTrades: number;
+      realizedPnl: string;
+      winRate: string;
+    }>;
+    hackathonEligibility: {
+      hasSufficientTrades: boolean;
+      hasPositivePnl: boolean;
+      meetsMinimumPeriod: boolean;
+    };
+  }> {
+    // Calculate PnL first
+    const pnlResult = await this.calculateCexPnl(sessionId, input);
+    
+    const totalPnl = parseFloat(pnlResult.summary.netPnl);
+    const totalTrades = pnlResult.summary.totalTrades;
+    const profitableAssets = pnlResult.assets.filter((a: typeof pnlResult.assets[0]) => parseFloat(a.summary.realizedPnl) > 0).length;
+    const losingAssets = pnlResult.assets.filter((a: typeof pnlResult.assets[0]) => parseFloat(a.summary.realizedPnl) < 0).length;
+    
+    return {
+      sessionId,
+      generatedAt: new Date().toISOString(),
+      portfolioSummary: {
+        totalTrades,
+        totalPnl: pnlResult.summary.totalPnl,
+        totalFees: pnlResult.summary.totalFees,
+        winRate: pnlResult.summary.winRate,
+        profitableAssets,
+        losingAssets,
+      },
+      assetReports: pnlResult.assets.map((a: typeof pnlResult.assets[0]) => ({
+        asset: a.asset,
+        totalTrades: a.summary.totalTrades,
+        realizedPnl: a.summary.realizedPnl,
+        winRate: a.summary.winRate,
+      })),
+      hackathonEligibility: {
+        hasSufficientTrades: totalTrades >= 10,
+        hasPositivePnl: totalPnl > 0,
+        meetsMinimumPeriod: pnlResult.summary.tradingDays >= 30,
+      },
+    };
+  }
+
+  async updateCexVerificationStatus(sessionId: string, input: {
+    operatorId: string;
+    status: 'validated' | 'rejected';
+    notes: string | undefined;
+  }): Promise<{ id: string; status: string; validatedAt: string | null }> {
+    // Stub implementation
+    return {
+      id: sessionId,
+      status: input.status,
+      validatedAt: input.status === 'validated' ? new Date().toISOString() : null,
+    };
+  }
+
+  async deleteCexVerificationSession(sessionId: string): Promise<void> {
+    // Stub implementation - would delete from database
+    return Promise.resolve();
   }
 }

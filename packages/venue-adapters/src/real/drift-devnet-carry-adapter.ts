@@ -69,16 +69,16 @@ const QUOTE_PRECISION_BN = QUOTE_PRECISION as BN;
 const SUPPORTED_EXECUTION_SCOPE = [
   'devnet only',
   'carry sleeve only',
-  'reduce-only BTC-PERP market orders',
+  'BTC-PERP market orders that can open, add to, or reduce a single live perp position',
   'real Solana transaction signatures persisted as execution references',
 ] as const;
 
 const UNSUPPORTED_EXECUTION_SCOPE = [
   'mainnet-beta execution',
-  'carry increase-exposure execution',
   'spot orders',
   'limit or post-only orders',
   'non-BTC perp markets',
+  'crossing an opposite-side BTC-PERP position with a non-reduce-only order',
   'silent fallback to simulated execution',
 ] as const;
 
@@ -292,6 +292,10 @@ function parsePerpSide(baseAssetAmount: BN): 'long' | 'short' | 'flat' {
   return 'flat';
 }
 
+function positionSideFromOrderSide(side: 'buy' | 'sell'): 'long' | 'short' {
+  return side === 'buy' ? 'long' : 'short';
+}
+
 function derivePerpMarkPrice(positionValueUsd: string | null, baseAssetAmount: string | null): string {
   if (positionValueUsd === null || baseAssetAmount === null) {
     return '0';
@@ -382,7 +386,7 @@ export class DriftDevnetCarryAdapter implements VenueAdapter {
       venueId: this.venueId,
       venueMode: 'live',
       executionSupported: true,
-      supportsIncreaseExposure: false,
+      supportsIncreaseExposure: true,
       supportsReduceExposure: true,
       readOnly: false,
       approvedForLiveUse: false,
@@ -560,7 +564,7 @@ export class DriftDevnetCarryAdapter implements VenueAdapter {
           connectorDepth: 'execution_capable',
           provenanceNotes: [
             'This connector shares the same Drift-native account truth depth as the read-only adapter.',
-            'Real execution remains restricted to BTC-PERP reduce-only market orders on devnet.',
+            'Real execution remains restricted to BTC-PERP market orders on devnet.',
             'Promotion approval, current evidence eligibility, runtime live mode, and backend authorization all gate execution.',
           ],
         },
@@ -712,25 +716,35 @@ export class DriftDevnetCarryAdapter implements VenueAdapter {
       return this.toCachedOrderResult(cachedSubmission);
     }
 
+    const reduceOnly = params.reduceOnly === true;
     const activePosition = await this.getActiveSupportedPosition();
-    if (activePosition === null) {
-      throw new Error(
-        'Drift devnet execution is limited to reducing an existing BTC-PERP position, but no open BTC-PERP position was found.',
-      );
-    }
-
     const requestedSize = new Decimal(params.size);
-    if (
-      (activePosition.side === 'long' && params.side !== 'sell')
-      || (activePosition.side === 'short' && params.side !== 'buy')
+    if (reduceOnly) {
+      if (activePosition === null) {
+        throw new Error(
+          'Drift devnet reduce-only execution requires an existing BTC-PERP position, but no open BTC-PERP position was found.',
+        );
+      }
+
+      if (
+        (activePosition.side === 'long' && params.side !== 'sell')
+        || (activePosition.side === 'short' && params.side !== 'buy')
+      ) {
+        throw new Error(
+          `Drift devnet reduce-only execution can only reduce the current ${activePosition.side} BTC-PERP position.`,
+        );
+      }
+      if (requestedSize.gt(activePosition.size)) {
+        throw new Error(
+          `Requested reduction size ${params.size} BTC exceeds the live BTC-PERP position size ${activePosition.size.toFixed(9)} BTC.`,
+        );
+      }
+    } else if (
+      activePosition !== null
+      && activePosition.side !== positionSideFromOrderSide(params.side)
     ) {
       throw new Error(
-        `Drift devnet execution can only reduce the current ${activePosition.side} BTC-PERP position.`,
-      );
-    }
-    if (requestedSize.gt(activePosition.size)) {
-      throw new Error(
-        `Requested reduction size ${params.size} BTC exceeds the live BTC-PERP position size ${activePosition.size.toFixed(9)} BTC.`,
+        `Drift devnet execution cannot cross the current ${activePosition.side} BTC-PERP position with a non-reduce-only ${params.side} order; reduce that position first.`,
       );
     }
 
@@ -744,7 +758,7 @@ export class DriftDevnetCarryAdapter implements VenueAdapter {
           marketIndex: this.supportedMarket.marketIndex,
           direction: params.side === 'buy' ? PositionDirection.LONG : PositionDirection.SHORT,
           baseAssetAmount: toBn(params.size, BASE_PRECISION_BN, 'order size'),
-          reduceOnly: true,
+          reduceOnly,
         }),
         undefined,
         this.subaccountId,
@@ -773,7 +787,7 @@ export class DriftDevnetCarryAdapter implements VenueAdapter {
       };
     } catch (error) {
       throw new Error(
-        `Drift devnet execution failed while submitting a BTC-PERP reduce-only market order: ${error instanceof Error ? error.message : String(error)}`,
+        `Drift devnet execution failed while submitting a BTC-PERP market order: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -784,8 +798,8 @@ export class DriftDevnetCarryAdapter implements VenueAdapter {
       venueOrderId,
       cancelled: false,
       reason: cachedOrder === undefined
-        ? 'Unknown Drift execution reference. This connector only persists submission references for reduce-only market orders.'
-        : 'Drift devnet carry execution intentionally does not expose a cancel path for the supported reduce-only market-order scope.',
+        ? 'Unknown Drift execution reference. This connector only persists submission references for BTC-PERP market orders.'
+        : 'Drift devnet carry execution intentionally does not expose a cancel path for the supported BTC-PERP market-order scope.',
     };
   }
 
@@ -837,9 +851,6 @@ export class DriftDevnetCarryAdapter implements VenueAdapter {
 
     if (params.type !== 'market') {
       throw new Error('Drift devnet execution only supports market orders in this phase.');
-    }
-    if (params.reduceOnly !== true) {
-      throw new Error('Drift devnet execution only supports reduce-only orders in this phase.');
     }
     if (params.postOnly === true) {
       throw new Error('Drift devnet execution does not support post-only orders in this phase.');

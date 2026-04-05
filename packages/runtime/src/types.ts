@@ -650,12 +650,13 @@ export interface RebalanceBundleResolutionActionView {
   updatedAt: string;
 }
 
-export type RebalanceBundleEscalationStatus =
-  | 'open'
-  | 'acknowledged'
-  | 'in_review'
+export type RebalanceBundleEscalationStatus = 'open' | 'acknowledged' | 'in_review' | 'resolved';
+export type RebalanceEscalationQueueState =
+  | 'overdue'
+  | 'due_soon'
+  | 'unassigned'
+  | 'on_track'
   | 'resolved';
-export type RebalanceEscalationQueueState = 'overdue' | 'due_soon' | 'unassigned' | 'on_track' | 'resolved';
 export type RebalanceBundleEscalationEventType =
   | 'created'
   | 'assigned'
@@ -999,10 +1000,7 @@ export interface RebalanceBundleDetailView {
   escalationTransitions: RebalanceBundleEscalationTransitionView[];
 }
 
-export type ConnectorCapabilityClass =
-  | 'simulated_only'
-  | 'real_readonly'
-  | 'execution_capable';
+export type ConnectorCapabilityClass = 'simulated_only' | 'real_readonly' | 'execution_capable';
 
 export type ConnectorPromotionStatus =
   | 'not_requested'
@@ -1021,7 +1019,11 @@ export type ConnectorEffectivePosture =
   | 'suspended';
 
 export type ConnectorPromotionTargetPosture = 'approved_for_live';
-export type ConnectorReadOnlyValidationState = 'not_applicable' | 'complete' | 'partial' | 'insufficient';
+export type ConnectorReadOnlyValidationState =
+  | 'not_applicable'
+  | 'complete'
+  | 'partial'
+  | 'insufficient';
 export type ConnectorPromotionEventType = 'requested' | 'approved' | 'rejected' | 'suspended';
 export type ConnectorPostTradeConfirmationStatus = 'not_required' | 'confirmed' | 'blocked';
 export type CarryStrategyProfileView = CarryStrategyProfile;
@@ -1075,8 +1077,7 @@ export interface CarryExecutionPostTradeConfirmationView {
   blockedReason: string | null;
 }
 
-export interface ConnectorPostTradeConfirmationEntryView
-  extends CarryExecutionPostTradeConfirmationView {
+export interface ConnectorPostTradeConfirmationEntryView extends CarryExecutionPostTradeConfirmationView {
   stepId: string;
   carryExecutionId: string;
   carryActionId: string;
@@ -1537,7 +1538,11 @@ export interface TreasuryVenueDetailView {
 export type VenueTruthMode = 'simulated' | 'real';
 export type VenueTruthSleeve = 'carry' | 'treasury';
 export type VenueTruthProfile = 'minimal' | 'generic_wallet' | 'capacity_only' | 'derivative_aware';
-export type VenueOnboardingState = 'simulated' | 'read_only' | 'ready_for_review' | 'approved_for_live';
+export type VenueOnboardingState =
+  | 'simulated'
+  | 'read_only'
+  | 'ready_for_review'
+  | 'approved_for_live';
 export type VenueHealthState = 'healthy' | 'degraded' | 'unavailable';
 export type VenueSnapshotFreshness = 'fresh' | 'stale' | 'missing';
 
@@ -1602,13 +1607,8 @@ export type InternalDerivativeMarketIdentityKeyType =
   | 'market_symbol'
   | 'asset_market_type'
   | 'unsupported';
-export type InternalDerivativeMarketIdentityComparisonMode =
-  | 'exact'
-  | 'partial'
-  | 'unsupported';
-export type InternalDerivativeHealthComparisonMode =
-  | 'status_band_only'
-  | 'unsupported';
+export type InternalDerivativeMarketIdentityComparisonMode = 'exact' | 'partial' | 'unsupported';
+export type InternalDerivativeHealthComparisonMode = 'status_band_only' | 'unsupported';
 export type InternalDerivativeAccountLocatorMode =
   | 'user_account_address'
   | 'authority_subaccount'
@@ -2045,10 +2045,317 @@ export interface PortfolioSummaryView {
 
 export interface PortfolioSnapshotView extends PortfolioSummaryView {}
 
+export type VaultExecutionEnvironment =
+  | 'simulation'
+  | 'devnet'
+  | 'mainnet'
+  | 'backtest'
+  | 'unknown';
+export type SubmissionTrack = 'build_a_bear_main_track' | 'drift_side_track';
+export type SubmissionCluster = 'devnet' | 'mainnet-beta' | 'unknown';
+export type SubmissionAddressScope = 'wallet' | 'vault' | 'both' | 'unconfigured';
+export type SubmissionCheckStatus = 'pass' | 'warning' | 'fail';
+export type SubmissionReadinessStatus = 'ready' | 'partial' | 'blocked';
+export type SubmissionEvidenceType =
+  | 'on_chain_transaction'
+  | 'performance_snapshot'
+  | 'cex_trade_history'
+  | 'cex_read_only_api'
+  | 'document';
+export type SubmissionEvidenceStatus = 'recorded' | 'verified' | 'rejected';
+export type SubmissionEvidenceSource =
+  | 'runtime'
+  | 'solscan'
+  | 'exchange_export'
+  | 'exchange_api'
+  | 'manual';
+export type VaultDepositorStatus = 'active' | 'inactive';
+export type VaultDepositLotStatus = 'active' | 'redeeming' | 'redeemed';
+export type VaultRedemptionRequestStatus =
+  | 'pending_lock'
+  | 'queued'
+  | 'fulfilled'
+  | 'cancelled'
+  | 'rejected';
+
+export interface VaultSummaryView {
+  vaultId: string;
+  vaultName: string;
+  strategyId: string;
+  strategyName: string;
+  managerName: string | null;
+  managerWalletAddress: string | null;
+  baseAsset: string;
+  lockPeriodMonths: number;
+  rolling: boolean;
+  reassessmentCadenceMonths: number;
+  targetApyFloorPct: string;
+  projectedApyPct: string | null;
+  realizedApyPct: string | null;
+  navPerShare: string;
+  totalAssetsUsd: string;
+  availableLiquidityUsd: string;
+  totalSharesOutstanding: string;
+  totalDepositors: number;
+  activeDepositLots: number;
+  lockedShares: string;
+  unlockedShares: string;
+  pendingRedemptionShares: string;
+  executionEnvironment: VaultExecutionEnvironment;
+  supportedScope: string[];
+  blockedScope: string[];
+  updatedAt: string;
+}
+
+export interface VaultDepositorView {
+  depositorId: string;
+  investorId: string;
+  displayName: string;
+  walletAddress: string;
+  status: VaultDepositorStatus;
+  totalDepositedUsdc: string;
+  activeShares: string;
+  lockedShares: string;
+  unlockedShares: string;
+  pendingRedemptionShares: string;
+  lastDepositAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VaultDepositLotView {
+  depositLotId: string;
+  vaultId: string;
+  depositorId: string;
+  investorId: string;
+  displayName: string;
+  walletAddress: string;
+  asset: string;
+  depositedAmount: string;
+  mintedShares: string;
+  sharePrice: string;
+  depositedAt: string;
+  lockExpiresAt: string;
+  redeemedAt: string | null;
+  locked: boolean;
+  status: VaultDepositLotStatus;
+  note: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VaultRedemptionRequestView {
+  requestId: string;
+  vaultId: string;
+  depositorId: string;
+  investorId: string;
+  displayName: string;
+  walletAddress: string;
+  requestedShares: string;
+  estimatedAssets: string;
+  sharePrice: string;
+  requestedAt: string;
+  eligibleAt: string;
+  fulfilledAt: string | null;
+  status: VaultRedemptionRequestStatus;
+  note: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecordVaultDepositInput {
+  investorId: string;
+  displayName: string;
+  walletAddress: string;
+  amountUsdc: string;
+  depositedAt?: string;
+  note?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RequestVaultRedemptionInput {
+  walletAddress: string;
+  requestedShares: string;
+  requestedAt?: string;
+  note?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SubmissionReadinessCheckView {
+  key: string;
+  status: SubmissionCheckStatus;
+  summary: string;
+  blockedReason: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface SubmissionReadinessView {
+  status: SubmissionReadinessStatus;
+  summary: string;
+  blockedReasons: string[];
+  warnings: string[];
+  checks: SubmissionReadinessCheckView[];
+}
+
+export interface SubmissionDossierView {
+  submissionId: string;
+  submissionName: string;
+  track: SubmissionTrack;
+  strategyId: string;
+  strategyName: string;
+  vaultId: string;
+  vaultName: string;
+  baseAsset: string;
+  buildWindowStart: string;
+  buildWindowEnd: string;
+  cluster: SubmissionCluster;
+  addressScope: SubmissionAddressScope;
+  walletAddress: string | null;
+  walletVerificationUrl: string | null;
+  vaultAddress: string | null;
+  vaultVerificationUrl: string | null;
+  managerWalletAddress: string | null;
+  latestExecutionReference: string | null;
+  latestExecutionReferenceUrl: string | null;
+  latestExecutionAt: string | null;
+  realExecutionCountInWindow: number;
+  simulatedExecutionCountInWindow: number;
+  realizedApyPct: string | null;
+  cexExecutionUsed: boolean;
+  cexVenues: string[];
+  cexTradeHistoryProvided: boolean;
+  cexReadOnlyApiKeyProvided: boolean;
+  supportedScope: string[];
+  blockedScope: string[];
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  readiness: SubmissionReadinessView;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubmissionEvidenceRecordView {
+  evidenceId: string;
+  submissionId: string;
+  evidenceType: SubmissionEvidenceType;
+  status: SubmissionEvidenceStatus;
+  source: SubmissionEvidenceSource;
+  label: string;
+  summary: string | null;
+  reference: string | null;
+  url: string | null;
+  capturedAt: string | null;
+  withinBuildWindow: boolean;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubmissionExportArtifactView {
+  key: string;
+  label: string;
+  required: boolean;
+  status: SubmissionCheckStatus;
+  summary: string;
+  blockedReason: string | null;
+  evidenceCount: number;
+  evidenceTypes: SubmissionEvidenceType[];
+}
+
+export interface SubmissionExportBundleView {
+  generatedAt: string;
+  dossier: SubmissionDossierView;
+  evidence: SubmissionEvidenceRecordView[];
+  artifactChecklist: SubmissionExportArtifactView[];
+  judgeSummary: string;
+  blockedReasons: string[];
+  verificationLinks: string[];
+}
+
+export interface UpsertSubmissionDossierInput {
+  submissionName?: string;
+  track?: SubmissionTrack;
+  walletAddress?: string | null;
+  vaultAddress?: string | null;
+  cluster?: SubmissionCluster;
+  buildWindowStart?: string;
+  buildWindowEnd?: string;
+  cexExecutionUsed?: boolean;
+  cexVenues?: string[];
+  cexTradeHistoryProvided?: boolean;
+  cexReadOnlyApiKeyProvided?: boolean;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RecordSubmissionEvidenceInput {
+  evidenceType: SubmissionEvidenceType;
+  status?: SubmissionEvidenceStatus;
+  source?: SubmissionEvidenceSource;
+  label: string;
+  summary?: string | null;
+  reference?: string | null;
+  url?: string | null;
+  capturedAt?: string | null;
+  withinBuildWindow?: boolean;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export interface PnlSummaryView {
   dailyPnl: string;
   cumulativePnl: string;
   lastSnapshotAt: string | null;
+}
+
+// CEX Verification Types
+export interface PortfolioPnlResult {
+  summary: {
+    totalTrades: number;
+    totalPnl: string;
+    totalFees: string;
+    netPnl: string;
+    profitableTrades: number;
+    losingTrades: number;
+    winRate: string;
+    largestWin: string;
+    largestLoss: string;
+    averageWin: string;
+    averageLoss: string;
+    profitFactor: string;
+    tradingDays: number;
+    firstTradeAt: string | null;
+    lastTradeAt: string | null;
+  };
+  assets: Array<{
+    asset: string;
+    summary: {
+      totalTrades: number;
+      buyVolume: string;
+      sellVolume: string;
+      realizedPnl: string;
+      totalFees: string;
+      profitableTrades: number;
+      losingTrades: number;
+      winRate: string;
+      largestWin: string;
+      largestLoss: string;
+    };
+    trades: Array<{
+      tradeId: string;
+      symbol: string;
+      side: 'buy' | 'sell';
+      quantity: string;
+      price: string;
+      fee: string | undefined;
+      realizedPnl: string | undefined;
+      costBasis: string | undefined;
+      tradeTime: string;
+    }>;
+  }>;
 }
 
 export interface RiskSummaryView {
@@ -2158,6 +2465,13 @@ export interface RuntimeIntentRecord {
 export interface RuntimeReadApi {
   getPortfolioSummary(): Promise<PortfolioSummaryView | null>;
   listPortfolioSnapshots(limit?: number): Promise<PortfolioSnapshotView[]>;
+  getVaultSummary(): Promise<VaultSummaryView>;
+  getSubmissionDossier(): Promise<SubmissionDossierView>;
+  listSubmissionEvidence(): Promise<SubmissionEvidenceRecordView[]>;
+  getSubmissionExportBundle(): Promise<SubmissionExportBundleView>;
+  listVaultDepositors(limit?: number): Promise<VaultDepositorView[]>;
+  listVaultDepositLots(limit?: number): Promise<VaultDepositLotView[]>;
+  listVaultRedemptionRequests(limit?: number): Promise<VaultRedemptionRequestView[]>;
   getPnlSummary(): Promise<PnlSummaryView>;
   getRiskSummary(): Promise<RiskSummaryView | null>;
   listRiskBreaches(limit?: number): Promise<RiskBreachView[]>;
@@ -2198,7 +2512,9 @@ export interface RuntimeReadApi {
   listRebalanceBundles(limit?: number): Promise<RebalanceBundleView[]>;
   getRebalanceBundle(bundleId: string): Promise<RebalanceBundleDetailView | null>;
   getRebalanceBundleForProposal(proposalId: string): Promise<RebalanceBundleDetailView | null>;
-  listRebalanceBundleRecoveryActions(bundleId: string): Promise<RebalanceBundleRecoveryActionView[]>;
+  listRebalanceBundleRecoveryActions(
+    bundleId: string,
+  ): Promise<RebalanceBundleRecoveryActionView[]>;
   getRebalanceBundleRecoveryAction(
     bundleId: string,
     recoveryActionId: string,
@@ -2206,7 +2522,9 @@ export interface RuntimeReadApi {
   listRebalanceBundleRecoveryCandidates(
     bundleId: string,
   ): Promise<RebalanceBundleRecoveryCandidateView[]>;
-  listRebalanceBundleResolutionActions(bundleId: string): Promise<RebalanceBundleResolutionActionView[]>;
+  listRebalanceBundleResolutionActions(
+    bundleId: string,
+  ): Promise<RebalanceBundleResolutionActionView[]>;
   getRebalanceBundleResolutionAction(
     bundleId: string,
     resolutionActionId: string,
@@ -2215,12 +2533,18 @@ export interface RuntimeReadApi {
     bundleId: string,
   ): Promise<RebalanceBundleResolutionOptionView[]>;
   getRebalanceBundleEscalation(bundleId: string): Promise<RebalanceBundleEscalationView | null>;
-  listRebalanceBundleEscalationHistory(bundleId: string): Promise<RebalanceBundleEscalationEventView[]>;
+  listRebalanceBundleEscalationHistory(
+    bundleId: string,
+  ): Promise<RebalanceBundleEscalationEventView[]>;
   listRebalanceBundleEscalationTransitions(
     bundleId: string,
   ): Promise<RebalanceBundleEscalationTransitionView[]>;
-  listRebalanceEscalations(filters?: RebalanceEscalationQueueFilters): Promise<RebalanceEscalationQueueItemView[]>;
-  getRebalanceEscalationSummary(actorId?: string | null): Promise<RebalanceEscalationQueueSummaryView>;
+  listRebalanceEscalations(
+    filters?: RebalanceEscalationQueueFilters,
+  ): Promise<RebalanceEscalationQueueItemView[]>;
+  getRebalanceEscalationSummary(
+    actorId?: string | null,
+  ): Promise<RebalanceEscalationQueueSummaryView>;
   getRebalanceProposal(proposalId: string): Promise<RebalanceProposalDetailView | null>;
   getRebalanceExecutionGraph(proposalId: string): Promise<RebalanceExecutionGraphView | null>;
   getRebalanceTimeline(proposalId: string): Promise<RebalanceExecutionTimelineEntry[]>;

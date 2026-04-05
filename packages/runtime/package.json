@@ -16,6 +16,7 @@
   "dependencies": {
     "@sentinel-apex/allocator": "workspace:*",
     "@sentinel-apex/carry": "workspace:*",
+    "@sentinel-apex/cex-verification": "workspace:*",
     "@sentinel-apex/config": "workspace:*",
     "@sentinel-apex/db": "workspace:*",
     "@sentinel-apex/domain": "workspace:*",

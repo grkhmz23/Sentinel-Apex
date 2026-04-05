@@ -107,6 +107,12 @@ export type { DriftReadonlyTruthAdapterConfig } from './real/drift-readonly-trut
 export { DriftReadonlyTruthAdapter } from './real/drift-readonly-truth-adapter.js';
 export type { DriftDevnetCarryAdapterConfig } from './real/drift-devnet-carry-adapter.js';
 export { DriftDevnetCarryAdapter } from './real/drift-devnet-carry-adapter.js';
+export type { DriftMainnetCarryAdapterConfig } from './real/drift-mainnet-carry-adapter.js';
+export { DriftMainnetCarryAdapter } from './real/drift-mainnet-carry-adapter.js';
+export type { DriftSpotAdapterConfig } from './real/drift-spot-adapter.js';
+export { DriftSpotAdapter } from './real/drift-spot-adapter.js';
+export type { DriftMultiAssetCarryAdapterConfig } from './real/drift-multi-asset-carry-adapter.js';
+export { DriftMultiAssetCarryAdapter, DEFAULT_SUPPORTED_ASSETS } from './real/drift-multi-asset-carry-adapter.js';
 export type { SolanaRpcReadonlyTruthAdapterConfig } from './real/solana-rpc-readonly-truth-adapter.js';
 export { SolanaRpcReadonlyTruthAdapter } from './real/solana-rpc-readonly-truth-adapter.js';
 

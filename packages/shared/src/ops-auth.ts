@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 export const OPS_OPERATOR_ROLES = ['viewer', 'operator', 'admin'] as const;
 

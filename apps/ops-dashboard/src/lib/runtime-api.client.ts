@@ -487,3 +487,393 @@ export async function postMismatchAction(
       });
   }
 }
+
+// =============================================================================
+// CEX Verification API
+// =============================================================================
+
+export async function listCexVerificationSessions(sleeveId?: string): Promise<
+  Array<{
+    id: string;
+    sleeveId: string;
+    platform: string;
+    status: string;
+    totalTrades: number;
+    totalVolumeUsd: string | null;
+    realizedPnl: string | null;
+    calculatedApy: string | null;
+    createdAt: string;
+    validatedAt: string | null;
+  }>
+> {
+  const query = sleeveId ? `?sleeveId=${encodeURIComponent(sleeveId)}` : '';
+  const response = await fetch(`/api/cex-verification/sessions${query}`, {
+    headers: { 'content-type': 'application/json' },
+  });
+
+  const payload = (await response.json()) as {
+    data?: Array<{
+      id: string;
+      sleeveId: string;
+      platform: string;
+      status: string;
+      totalTrades: number;
+      totalVolumeUsd: string | null;
+      realizedPnl: string | null;
+      calculatedApy: string | null;
+      createdAt: string;
+      validatedAt: string | null;
+    }>;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Failed to list CEX sessions: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function getCexVerificationSession(sessionId: string): Promise<{
+  id: string;
+  sleeveId: string;
+  platform: string;
+  status: string;
+  totalTrades: number;
+  totalVolumeUsd: string | null;
+  realizedPnl: string | null;
+  calculatedApy: string | null;
+  fileHash: string | null;
+  createdAt: string;
+  validatedAt: string | null;
+  trades: Array<{
+    id: string;
+    tradeId: string;
+    asset: string;
+    side: string;
+    quantity: string;
+    price: string;
+    fee: string | null;
+    realizedPnl: string | null;
+    tradeTime: string;
+  }>;
+} | null> {
+  const response = await fetch(`/api/cex-verification/sessions/${encodeURIComponent(sessionId)}`, {
+    headers: { 'content-type': 'application/json' },
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      id: string;
+      sleeveId: string;
+      platform: string;
+      status: string;
+      totalTrades: number;
+      totalVolumeUsd: string | null;
+      realizedPnl: string | null;
+      calculatedApy: string | null;
+      fileHash: string | null;
+      createdAt: string;
+      validatedAt: string | null;
+      trades: Array<{
+        id: string;
+        tradeId: string;
+        asset: string;
+        side: string;
+        quantity: string;
+        price: string;
+        fee: string | null;
+        realizedPnl: string | null;
+        tradeTime: string;
+      }>;
+    };
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Failed to get CEX session: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function validateCexCsv(
+  csvContent: string,
+  platform?: 'binance' | 'okx' | 'bybit' | 'coinbase',
+): Promise<{
+  valid: boolean;
+  detectedPlatform: string | undefined;
+  errors: Array<{ row: number; message: string }>;
+  preview: Array<{
+    tradeId: string;
+    symbol: string;
+    side: string;
+    quantity: string;
+    price: string;
+    tradeTime: string;
+  }> | undefined;
+}> {
+  const response = await fetch('/api/cex-verification/validate-csv', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ csvContent, platform }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: {
+      valid: boolean;
+      detectedPlatform: string | undefined;
+      errors: Array<{ row: number; message: string }>;
+      preview: Array<{
+        tradeId: string;
+        symbol: string;
+        side: string;
+        quantity: string;
+        price: string;
+        tradeTime: string;
+      }> | undefined;
+    };
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `CSV validation failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function createCexVerificationSession(input: {
+  sleeveId: string;
+  platform: 'binance' | 'okx' | 'bybit' | 'coinbase';
+  csvContent: string;
+  fileName?: string;
+}): Promise<{
+  id: string;
+  sleeveId: string;
+  platform: string;
+  status: string;
+  totalTrades: number;
+  errors: Array<{ row: number; message: string }>;
+}> {
+  const response = await fetch('/api/cex-verification/sessions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+
+  const payload = (await response.json()) as {
+    data?: {
+      id: string;
+      sleeveId: string;
+      platform: string;
+      status: string;
+      totalTrades: number;
+      errors: Array<{ row: number; message: string }>;
+    };
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Failed to create CEX session: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function calculateCexPnl(
+  sessionId: string,
+  options: { method?: 'fifo' | 'lifo' | 'avg'; includeFees?: boolean } = {},
+): Promise<{
+  summary: {
+    totalTrades: number;
+    totalPnl: string;
+    totalFees: string;
+    netPnl: string;
+    profitableTrades: number;
+    losingTrades: number;
+    winRate: string;
+    largestWin: string;
+    largestLoss: string;
+    averageWin: string;
+    averageLoss: string;
+    profitFactor: string;
+    tradingDays: number;
+    firstTradeAt: string | null;
+    lastTradeAt: string | null;
+  };
+  assets: Array<{
+    asset: string;
+    summary: {
+      totalTrades: number;
+      buyVolume: string;
+      sellVolume: string;
+      realizedPnl: string;
+      totalFees: string;
+      profitableTrades: number;
+      losingTrades: number;
+      winRate: string;
+      largestWin: string;
+      largestLoss: string;
+    };
+    trades: Array<{
+      tradeId: string;
+      symbol: string;
+      side: 'buy' | 'sell';
+      quantity: string;
+      price: string;
+      fee: string | undefined;
+      realizedPnl: string | undefined;
+      costBasis: string | undefined;
+      tradeTime: string;
+    }>;
+  }>;
+}> {
+  const response = await fetch(`/api/cex-verification/sessions/${encodeURIComponent(sessionId)}/calculate-pnl`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      method: options.method ?? 'fifo',
+      includeFees: options.includeFees ?? true,
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    data?: {
+      summary: {
+        totalTrades: number;
+        totalPnl: string;
+        totalFees: string;
+        netPnl: string;
+        profitableTrades: number;
+        losingTrades: number;
+        winRate: string;
+        largestWin: string;
+        largestLoss: string;
+        averageWin: string;
+        averageLoss: string;
+        profitFactor: string;
+        tradingDays: number;
+        firstTradeAt: string | null;
+        lastTradeAt: string | null;
+      };
+      assets: Array<{
+        asset: string;
+        summary: {
+          totalTrades: number;
+          buyVolume: string;
+          sellVolume: string;
+          realizedPnl: string;
+          totalFees: string;
+          profitableTrades: number;
+          losingTrades: number;
+          winRate: string;
+          largestWin: string;
+          largestLoss: string;
+        };
+        trades: Array<{
+          tradeId: string;
+          symbol: string;
+          side: 'buy' | 'sell';
+          quantity: string;
+          price: string;
+          fee: string | undefined;
+          realizedPnl: string | undefined;
+          costBasis: string | undefined;
+          tradeTime: string;
+        }>;
+      }>;
+    };
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `PnL calculation failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function generateCexSubmissionReport(
+  sessionId: string,
+  options: { method?: 'fifo' | 'lifo' | 'avg'; includeFees?: boolean } = {},
+): Promise<{
+  sessionId: string;
+  generatedAt: string;
+  portfolioSummary: {
+    totalTrades: number;
+    totalPnl: string;
+    totalFees: string;
+    winRate: string;
+    profitableAssets: number;
+    losingAssets: number;
+  };
+  assetReports: Array<{
+    asset: string;
+    totalTrades: number;
+    realizedPnl: string;
+    winRate: string;
+  }>;
+  hackathonEligibility: {
+    hasSufficientTrades: boolean;
+    hasPositivePnl: boolean;
+    meetsMinimumPeriod: boolean;
+  };
+}> {
+  const query = new URLSearchParams();
+  if (options.method) query.set('method', options.method);
+  if (options.includeFees !== undefined) query.set('includeFees', String(options.includeFees));
+
+  const response = await fetch(
+    `/api/cex-verification/sessions/${encodeURIComponent(sessionId)}/submission-report?${query.toString()}`,
+    { headers: { 'content-type': 'application/json' } },
+  );
+
+  const payload = (await response.json()) as {
+    data?: {
+      sessionId: string;
+      generatedAt: string;
+      portfolioSummary: {
+        totalTrades: number;
+        totalPnl: string;
+        totalFees: string;
+        winRate: string;
+        profitableAssets: number;
+        losingAssets: number;
+      };
+      assetReports: Array<{
+        asset: string;
+        totalTrades: number;
+        realizedPnl: string;
+        winRate: string;
+      }>;
+      hackathonEligibility: {
+        hasSufficientTrades: boolean;
+        hasPositivePnl: boolean;
+        meetsMinimumPeriod: boolean;
+      };
+    };
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Failed to generate report: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+export async function deleteCexVerificationSession(sessionId: string): Promise<void> {
+  const response = await fetch(`/api/cex-verification/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok && response.status !== 204) {
+    const payload = (await response.json()) as { error?: { message?: string } };
+    throw new Error(payload.error?.message ?? `Failed to delete session: ${response.status}`);
+  }
+}

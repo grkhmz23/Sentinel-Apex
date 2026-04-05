@@ -2,6 +2,7 @@ import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { allocatorRoutes } from './allocator.js';
 import { carryRoutes } from './carry.js';
+import { cexVerificationRoutes } from './cex-verification.js';
 import { controlRoutes } from './control.js';
 import { eventRoutes } from './events.js';
 import { healthRoutes } from './health.js';
@@ -11,11 +12,12 @@ import { portfolioRoutes } from './portfolio.js';
 import { positionRoutes } from './positions.js';
 import { riskRoutes } from './risk.js';
 import { runtimeRoutes } from './runtime.js';
+import { submissionRoutes } from './submission.js';
 import { treasuryRoutes } from './treasury.js';
+import { vaultRoutes } from './vault.js';
 import { venueRoutes } from './venues.js';
 
 import type { FastifyInstance } from 'fastify';
-
 
 /**
  * Registers all route groups on the Fastify instance.
@@ -25,6 +27,14 @@ import type { FastifyInstance } from 'fastify';
  *   GET  /api/v1/portfolio                     — portfolio state (auth)
  *   GET  /api/v1/portfolio/snapshots           — historical snapshots (auth)
  *   GET  /api/v1/portfolio/pnl                 — PnL summary (auth)
+ *   GET  /api/v1/submission                    — hackathon submission dossier (auth)
+ *   POST /api/v1/submission                    — update submission dossier (auth)
+ *   GET  /api/v1/vault                         — protocol vault summary (auth)
+ *   GET  /api/v1/vault/depositors              — depositor share/lock state (auth)
+ *   GET  /api/v1/vault/deposits                — vault deposit lots (auth)
+ *   GET  /api/v1/vault/redemptions             — vault redemption requests (auth)
+ *   POST /api/v1/vault/deposits                — record vault deposit lot (auth)
+ *   POST /api/v1/vault/redemptions             — request vault redemption (auth)
  *   GET  /api/v1/risk/summary                  — risk metrics (auth)
  *   GET  /api/v1/risk/limits                   — risk limits (auth)
  *   GET  /api/v1/risk/breaches                 — risk breaches (auth)
@@ -99,6 +109,8 @@ export async function registerRoutes(
   // Authenticated API routes
   await allocatorRoutes(app, controlPlane);
   await portfolioRoutes(app, controlPlane);
+  await submissionRoutes(app, controlPlane);
+  await vaultRoutes(app, controlPlane);
   await riskRoutes(app, controlPlane);
   await orderRoutes(app, controlPlane);
   await positionRoutes(app, controlPlane);
@@ -108,5 +120,6 @@ export async function registerRoutes(
   await treasuryRoutes(app, controlPlane);
   await carryRoutes(app, controlPlane);
   await venueRoutes(app, controlPlane);
+  await cexVerificationRoutes(app, controlPlane);
   await controlRoutes(app, controlPlane);
 }

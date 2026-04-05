@@ -49,7 +49,7 @@ export const DEFAULT_CARRY_CONFIG: CarryConfig = {
   estimatedMakerFeePct: '0.02',
 
   approvedVenues: [],
-  approvedAssets: [],
+  approvedAssets: ['BTC', 'ETH', 'SOL'], // Multi-asset support for hackathon
 
   maxConcurrentOpportunities: 5,
 
