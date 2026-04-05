@@ -48,7 +48,10 @@ async function getConnection(): Promise<DatabaseConnection> {
   if (connectionPromise === null) {
     connectionPromise = (async () => {
       const connection = await createDatabaseConnection(getDatabaseUrl());
-      await applyMigrations(connection);
+      // Skip migrations in production/Vercel - they should be applied during build or manually
+      if (process.env['NODE_ENV'] !== 'production') {
+        await applyMigrations(connection);
+      }
       return connection;
     })();
   }
