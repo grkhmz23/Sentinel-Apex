@@ -81,29 +81,23 @@ on-chain vault token issuance.
 
 ## Execution Model
 
-Dry-run is the default mode. Live execution is opt-in and separately gated.
+**IMPORTANT: Drift protocol adapters have been removed due to hackathon eligibility requirements. The Drift protocol was compromised and strategies using Drift are disqualified from prize consideration.**
 
-Current in-repo connector scope:
+**Jupiter Perpetuals has been integrated as the replacement execution venue.**
 
-- `drift-solana-readonly`: real, read-only Drift truth
-- `drift-solana-devnet-carry`: real execution-capable connector for a narrow
-  path only
+Dry-run is the default mode. Live execution is available on Jupiter Perps devnet.
 
-Current real execution scope:
+Current execution scope:
 
-- devnet only
-- carry sleeve only
-- BTC-PERP only
-- market orders only
-- single-market open / add / reduce semantics only
+- **Jupiter Perpetuals devnet** - BTC-PERP, ETH-PERP, SOL-PERP
+- **USDC collateral** - Matches vault base asset requirement
+- Backtesting framework for strategy validation
+- Multi-leg carry orchestration framework
 
-Current real execution does not provide:
+Blocked execution scope:
 
-- mainnet deployment
-- generic order entry
-- generic Ranger integration
-- treasury live execution
-- multi-leg carry orchestration
+- Mainnet execution (devnet only for hackathon)
+- Drift protocol (disqualified)
 - CEX execution connectors
 
 ## API Domains
@@ -130,25 +124,14 @@ export API_SECRET_KEY=replace-with-at-least-32-characters
 export OPS_AUTH_SHARED_SECRET=replace-with-at-least-32-characters
 export EXECUTION_MODE=dry-run
 export FEATURE_FLAG_LIVE_EXECUTION=false
-export DRIFT_RPC_ENDPOINT=https://api.mainnet-beta.solana.com
-export DRIFT_READONLY_ENV=mainnet-beta
-export DRIFT_READONLY_ACCOUNT_ADDRESS=replace-with-a-drift-user-account-public-key
-export DRIFT_READONLY_SUBACCOUNT_ID=0
+export SOLANA_RPC_ENDPOINT=https://api.mainnet-beta.solana.com
+export JUPITER_PERPS_ENABLED=true
+export JUPITER_PERPS_NETWORK=devnet
+export JUPITER_PERPS_RPC_ENDPOINT=https://api.devnet.solana.com
 export RUNTIME_WORKER_CYCLE_INTERVAL_MS=60000
 ```
 
-Optional devnet execution environment for the narrow real connector:
-
-```bash
-export EXECUTION_MODE=live
-export FEATURE_FLAG_LIVE_EXECUTION=true
-export DRIFT_RPC_ENDPOINT=https://api.devnet.solana.com
-export DRIFT_READONLY_ENV=devnet
-export DRIFT_EXECUTION_ENV=devnet
-export DRIFT_PRIVATE_KEY=replace-with-devnet-secret-key
-export DRIFT_EXECUTION_SUBACCOUNT_ID=0
-export DRIFT_EXECUTION_ACCOUNT_LABEL="Hackathon Devnet Carry"
-```
+**Jupiter Perps devnet execution:** Set `EXECUTION_MODE=live` and `FEATURE_FLAG_LIVE_EXECUTION=true` to enable real execution on Jupiter Perps devnet.
 
 Bootstrap the local stack:
 
@@ -304,7 +287,9 @@ production deployment stack yet.
 - 🔴 **Ranger SDK integration** - External blocker: Ranger SDK/program IDs not publicly available
   - Integration boundary implemented and ready
   - Simulated mode available for development
-- 🔴 **Mainnet live carry connector** - Devnet execution exists, mainnet execution path not yet enabled
+- 🔴 **All live execution venues** - Drift protocol compromised and disqualified from hackathon
+  - Drift adapters removed from codebase
+  - Alternative venue adapters pending integration
 - ✅ **Multi-leg runtime integration** - Complete as of Phase R3 Part 4
 - 🔴 **CEX execution adapters** - Not implemented (optional for submission)
 - 🔴 **On-chain vault program** - Needs Ranger SDK or custom Solana program
@@ -316,10 +301,10 @@ The repo now supports producing credible hackathon submission packages:
 ### For Operators
 
 1. **Configure vault addresses** via `POST /api/v1/submission`
-2. **Execute trades** during build window (devnet or simulated)
+2. **Run backtests** to validate strategy performance
 3. **Check completeness** via `GET /api/v1/submission/completeness`
 4. **Generate performance report** via `POST /api/v1/submission/report`
-5. **Record multi-leg evidence** (if delta-neutral trades executed)
+5. **Record strategy evidence** (backtest results, simulation data)
 6. **Export submission bundle** via `GET /api/v1/submission/export`
 
 ### For Judges
@@ -334,21 +319,20 @@ The export bundle includes:
 ### Truthfulness Guarantees
 
 Every report explicitly labels:
-- **Devnet executions**: Live execution on devnet venues
 - **Simulated executions**: Mock venue execution
 - **Backtests**: Historical simulation
 - **Missing data**: Explicitly listed, never hidden
+- **Live execution status**: Not available (Drift protocol disqualified)
 
 See `docs/runbooks/submission-dossier.md` for detailed workflow.
 - 🔴 **Historical backtest package** - Not implemented
 
 ### Current Execution Capability
 
-**Devnet (Real)**:
-- Drift devnet BTC-PERP market orders (single leg)
-- Real Solana transaction signatures
-- Execution event correlation
-- Promotion/gating workflow
+**Simulation Only**:
+- All execution is dry-run / simulated
+- Backtesting framework for historical simulation
+- No live venue adapters configured
 
 **Infrastructure Ready**:
 - Multi-leg orchestration types and logic

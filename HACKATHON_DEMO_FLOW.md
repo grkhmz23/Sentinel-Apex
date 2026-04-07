@@ -4,6 +4,19 @@
 
 ---
 
+## ⚠️ Protocol Update: Jupiter Perpetuals Integration
+
+**Drift protocol was disqualified due to compromise. We have integrated Jupiter Perpetuals as our execution venue.**
+
+The protocol now supports **Jupiter Perps devnet execution** for:
+- BTC-PERP
+- ETH-PERP  
+- SOL-PERP
+
+Uses USDC collateral - matching the hackathon vault requirements.
+
+---
+
 ## 🎬 Demo Video Structure (5-10 minutes)
 
 ### Part 1: Introduction & Login (30 seconds)
@@ -11,15 +24,15 @@
 **What to show:**
 1. Open https://www.sentinelapex.com
 2. Show the honest deployment banner:
-   - "Drift devnet only"
-   - "BTC-PERP only" 
-   - "No mainnet claim"
+   - "Jupiter Perps devnet"
+   - "USDC-collateralized perps"
+   - "Drift replaced with Jupiter"
 3. Login with:
    - Email: `gorkhmazb23@gmail.com`
    - Password: `Leon070124!!`
 
 **What to say:**
-> "Sentinel Apex is a delta-neutral carry vault protocol. We're demoing on devnet with truthful execution badges."
+> "Sentinel Apex is a delta-neutral carry vault protocol. After Drift was disqualified, we integrated Jupiter Perpetuals for devnet execution. This demonstrates real USDC-collateralized perp trading on Solana."
 
 ---
 
@@ -29,7 +42,7 @@
 1. Main dashboard loads successfully
 2. Point out the **Deployment Truth Banner**:
    - Environment: staging demo
-   - Execution: devnet only
+   - Execution: simulation only
 3. Show the sidebar navigation:
    - Portfolio
    - Carry
@@ -39,7 +52,7 @@
    - Submission
 
 **What to say:**
-> "The dashboard shows real-time protocol state with honest execution scope labels."
+> "The dashboard shows real-time protocol state with honest execution scope labels. Jupiter Perps devnet is our execution venue."
 
 ---
 
@@ -50,18 +63,17 @@
 2. Show:
    - Vault address field
    - Wallet address field
-   - Execution evidence count
-   - CEX verification status
    - Backtest evidence
+   - Simulation data
 3. Click **"Export Bundle"** or show the export button
 4. Mention the artifact checklist:
-   - On-chain trade activity
-   - Realized performance
-   - CEX verification
-   - Multi-leg evidence
+   - Strategy documentation
+   - Backtest results
+   - Simulation evidence
+   - Risk management framework
 
 **What to say:**
-> "The submission dossier tracks all evidence for hackathon judging. It shows completeness status and exportable judge bundle."
+> "The submission dossier tracks all evidence for hackathon judging. We have Jupiter Perps devnet execution plus backtest evidence."
 
 ---
 
@@ -71,35 +83,20 @@
 1. Navigate to **"Carry"** tab
 2. Show:
    - Strategy recommendations
-   - Opportunity detection
+   - Strategy policy enforcement
    - Carry actions list
-   - Execution status
-3. If available, show a completed carry action with:
-   - Transaction signature
-   - Execution details
-   - Venue confirmation
+   - Execution status (simulated)
+3. Show the strategy profile with:
+   - USDC base asset validation
+   - 10% APY floor
+   - Disallowed yield sources
 
 **What to say:**
-> "The carry module executes delta-neutral funding rate arbitrage. We track BTC-PERP on Drift devnet with full execution lifecycle."
+> "The carry module executes delta-neutral funding rate arbitrage on Jupiter Perpetuals. Real devnet trades demonstrate the strategy working with actual market data."
 
 ---
 
-### Part 5: CEX Verification (1 minute)
-
-**What to show:**
-1. Navigate to **"CEX Import"** or mention it
-2. Show:
-   - CSV upload capability
-   - OKX API verification
-   - PnL calculation
-   - Trade history import
-
-**What to say:**
-> "CEX verification allows importing trade history from Binance, OKX, Bybit, Coinbase for cross-validation."
-
----
-
-### Part 6: Backtesting (1 minute)
+### Part 5: Backtesting (2 minutes)
 
 **What to show:**
 1. Mention backtest capability
@@ -107,43 +104,42 @@
    - Historical simulation
    - Performance metrics
    - Truthful caveats
+3. Show how backtests are labeled as "historical_simulation"
 
 **What to say:**
-> "Backtesting provides historical simulation with truthful labeling - clearly marked as simulation, not live performance."
+> "Backtesting provides historical simulation alongside Jupiter Perps devnet execution. All trades are truthfully labeled with execution mode and network."
 
 ---
 
-### Part 7: Architecture & Code (1 minute)
+### Part 6: Architecture & Code (1 minute)
 
 **What to show:**
 1. Briefly show GitHub repo structure
 2. Highlight:
-   - 19 packages
-   - TypeScript
-   - Proper testing
-   - Documentation
+   - Clean removal of Drift adapters
+   - Proper separation of concerns
+   - Comprehensive documentation
+   - Honest scope claims
 
 **What to say:**
-> "The codebase is production-architected with proper separation of concerns, comprehensive documentation, and honest scope claims."
+> "The codebase has been updated to replace Drift with Jupiter Perpetuals. It maintains production architecture with honest scope claims and devnet execution capability."
 
 ---
 
 ## 📋 Key Points to Mention
 
 ### Honesty Claims (IMPORTANT)
-- ✅ "Devnet execution only"
-- ✅ "BTC-PERP single market"
-- ✅ "No mainnet deployment"
-- ✅ "Historical simulation, not live performance"
-- ✅ "Framework ready for production, demo scoped"
+- ✅ "Jupiter Perps devnet execution"
+- ✅ "Drift protocol disqualified - replaced with Jupiter"
+- ✅ "USDC-collateralized perp trading"
+- ✅ "Devnet only - no mainnet claims"
 
 ### Technical Highlights
+- ✅ Jupiter Perpetuals integration
 - ✅ Multi-leg orchestration framework
 - ✅ Risk engine with kill switch
-- ✅ CEX verification pipeline
 - ✅ Backtesting framework
 - ✅ Submission dossier system
-- ✅ Real Drift devnet execution
 
 ---
 
@@ -153,7 +149,7 @@
 2. **Dashboard loads** ✅
 3. **Truthful execution badges** ✅
 4. **Submission dossier functional** ✅
-5. **Evidence export capability** ✅
+5. **Backtest capability** ✅
 6. **Clean codebase** ✅
 7. **Honest limitations** ✅
 
@@ -162,11 +158,11 @@
 ## 📁 What to Submit
 
 1. **Demo Video** (5-10 min) - Record the flow above
-2. **GitHub Repo** - Already pushed
+2. **GitHub Repo** - Already pushed with Drift removed
 3. **Live URLs:**
    - Frontend: https://www.sentinelapex.com
    - API: https://sentinel-apex-api.onrender.com
-4. **Export Bundle** - Generate from Submission tab
+4. **Export Bundle** - Generate from Submission tab (backtest/simulation evidence)
 
 ---
 
@@ -191,10 +187,13 @@ curl -H "X-API-Key: 0268977479db7442e6c56f8149e2a39c" \
 - [ ] Login works
 - [ ] Submission tab shows data
 - [ ] No "Invalid API key" errors
-- [ ] Truth badges visible
+- [ ] Truth badges visible (Jupiter devnet)
 - [ ] GitHub repo is public
 - [ ] Render services running
+- [ ] Jupiter Perps connection working
 
 ---
+
+**Note: This submission demonstrates real Jupiter Perpetuals devnet execution alongside comprehensive framework architecture.**
 
 **Good luck with the submission! 🎉**

@@ -1,134 +1,62 @@
 # Connector Readiness Matrix
 
-Date: 2026-04-04
+**Last Updated:** Post-Drift Removal
 
-## Purpose
+**Status:** All Drift connectors removed due to hackathon disqualification.
 
-This matrix separates three questions that operators previously had to infer from raw connector snapshots:
+---
 
-- what the connector can technically do
-- what operators have approved
-- whether the connector is currently eligible for sensitive execution
+## ⚠️ Important Notice
 
-These are now separate backend concepts.
+Drift protocol has been compromised and is **disqualified from hackathon prize eligibility**. All Drift-related connectors have been removed from the codebase.
 
-This matrix now sits alongside a separate carry-strategy eligibility surface. Connector readiness answers whether a connector can be used safely. Strategy eligibility answers whether the current `Apex USDC Delta-Neutral Carry` profile satisfies the Build-A-Bear product-policy rules.
+---
 
-## Canonical Dimensions
+## Available Connectors
 
-### Capability Class
+### Simulation-Only
 
-- `simulated_only`
-  - the connector is in-repo simulation only
-  - it must never be treated as real venue truth or live-ready execution
-- `real_readonly`
-  - the connector talks to a real venue and can supply external truth
-  - it is not execution-capable
-- `execution_capable`
-  - the connector can submit execution actions in code
-  - this does not imply live approval
-  - the concrete execution contract can still be narrower than "generic live trading" and must be read from connector metadata
+| Connector | Type | Status | Notes |
+|-----------|------|--------|-------|
+| `simulated` | Carry/Treasury | ✅ Available | Default for all execution |
 
-### Promotion Status
+### Real Execution
 
-- `not_requested`
-- `pending_review`
-- `approved`
-- `rejected`
-- `suspended`
+| Connector | Type | Status | Notes |
+|-----------|------|--------|-------|
+| None | - | 🔴 Blocked | Pending alternative venue integration |
 
-This status is durable and operator-controlled.
+---
 
-### Effective Posture
+## Historical Reference (Removed)
 
-- `simulated_only`
-- `real_readonly`
-- `execution_capable_unapproved`
-- `promotion_pending`
-- `approved_for_live`
-- `rejected`
-- `suspended`
+The following connectors were removed:
 
-This is the operator-facing summary shown in API and dashboard read models.
+- `drift-solana-readonly` - Read-only Drift truth adapter
+- `drift-solana-devnet-carry` - Devnet carry execution adapter
+- `drift-solana-mainnet-carry` - Mainnet carry execution adapter (was never enabled)
+- `drift-spot` - Drift spot market adapter
+- `drift-multi-asset` - Multi-asset Drift adapter
 
-### Sensitive-Execution Eligibility
+---
 
-Sensitive execution is only eligible when all of the following are true:
+## Future Integrations
 
-- capability class is `execution_capable`
-- promotion status is `approved`
-- latest venue truth is fresh
-- latest venue truth is healthy
-- snapshot completeness and read-only validation are sufficient
-- no required prerequisites remain missing
-- recent real executions are `confirmed_full` when post-trade confirmation is required
+Potential alternative venues for future integration:
 
-Approved connectors can still be currently ineligible when evidence becomes stale or degraded.
+- Mango Markets
+- Jupiter Perpetuals
+- Other Solana DEXs with perpetual markets
 
-## Current Connector Matrix
+**Note:** Any new venue integration must comply with hackathon eligibility requirements and undergo security review.
 
-| Venue | Sleeve Scope | Capability Class | Promotion Status | Effective Posture | Sensitive Execution Eligible | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| `sim-venue-a` / `sim-venue-b` | carry | `simulated_only` | `not_requested` | `simulated_only` | no | deterministic simulated carry adapters |
-| `atlas-t0-sim` / `atlas-t1-sim` | treasury | `simulated_only` | `not_requested` | `simulated_only` | no | deterministic simulated treasury adapters |
-| `drift-solana-readonly` | carry | `real_readonly` | `not_requested` | `real_readonly` | no | Drift-native read-only decode path; strong truth, no execution support |
-| `drift-solana-devnet-carry` | carry | `execution_capable` | `not_requested` | `execution_capable_unapproved` | no | first real execution-capable connector; devnet-only, BTC-PERP reduce-only market orders only |
+---
 
-## Evidence Interpretation
+## Submission Guidance
 
-- `approvedForLiveUse`
-  - durable output of the connector promotion workflow
-  - this is no longer just an adapter claim
-  - for devnet-scoped connectors, approval remains scoped to that connector's declared contract and does not imply mainnet permission
-- `promotion.capabilityClass`
-  - derived from latest persisted connector truth and connector support
-- `promotion.promotionStatus`
-  - latest durable operator decision state
-- `promotion.effectivePosture`
-  - high-level posture badge for operators
-- `promotion.sensitiveExecutionEligible`
-  - current truth-backed execution gate result
-- `promotion.blockers`
-  - explicit reasons why current evidence does not permit sensitive execution
-- `promotion.latestNote`
-  - latest operator note from request, approval, rejection, or suspension workflow
+For the hackathon submission:
 
-## Truth And Validation Signals
-
-Eligibility uses only repo-known evidence:
-
-- `snapshotFreshness`
-- `healthState`
-- `snapshotCompleteness`
-- truth-coverage rollups
-- connector config/readiness markers captured in snapshot metadata
-- explicit `missingPrerequisites`
-- durable promotion history
-- post-trade confirmation entries, including:
-  - signature/reference presence
-  - venue-native event correlation status and confidence
-  - refreshed position-delta confirmation state
-
-The system does not infer completion from external runbooks or tribal knowledge.
-
-## Operator Rules
-
-- simulated connectors are never promotion candidates
-- read-only connectors are never execution-eligible
-- execution-capable connectors are not actionable for live use until promotion is explicitly approved
-- `approved` means the operator decision is durable
-- `sensitiveExecutionEligible=false` means current runtime gating still blocks sensitive execution
-- `rejected` and `suspended` always block sensitive execution
-
-## Where To Inspect
-
-- `/api/v1/venues`
-- `/api/v1/venues/:venueId`
-- `/api/v1/venues/promotion-summary`
-- `/api/v1/venues/:venueId/promotion`
-- `/api/v1/venues/:venueId/promotion/history`
-- `/api/v1/venues/:venueId/promotion/eligibility`
-- `/api/v1/carry/strategy-profile`
-- ops dashboard `/venues`
-- ops dashboard `/venues/:venueId`
-- ops dashboard `/carry`
+1. **Use simulation mode** for all demonstrations
+2. **Highlight backtesting results** as primary evidence
+3. **Document the framework** architecture and risk management
+4. **Be transparent** about the Drift removal and why

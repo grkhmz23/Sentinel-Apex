@@ -88,8 +88,6 @@ export async function healthRoutes(
         executionBadge: profile.executionBadge,
         executionMode: profile.executionMode,
         liveExecutionEnabled: profile.liveExecutionEnabled,
-        driftExecutionEnv: profile.driftExecutionEnv,
-        driftReadonlyEnv: profile.driftReadonlyEnv,
         readinessTruth: profile.readinessTruth,
         supportedExecutionScope: profile.supportedExecutionScope,
         blockedExecutionScope: profile.blockedExecutionScope,

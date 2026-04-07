@@ -1,174 +1,63 @@
 # Devnet Execution Path
 
-Date: 2026-04-04
+**Status:** DISABLED
 
-## Purpose
+---
 
-This runbook documents the only real execution path supported in Phase 6.0.
+## ⚠️ Important Notice
 
-Supported path:
+The devnet execution path via Drift protocol has been **removed** due to hackathon eligibility requirements. The Drift protocol was compromised and strategies using Drift are disqualified from prize consideration.
 
-- connector: `drift-solana-devnet-carry`
-- cluster: devnet
-- sleeve: carry
-- strategy profile: `Apex USDC Delta-Neutral Carry`
-- vault base asset: `USDC`
-- tenor: 3-month rolling lock with reassessment every 3 months
-- target APY floor: `10%`
-- action: operator-approved `increase_carry_exposure` or `reduce_carry_exposure`
-- order scope: BTC-PERP market orders that can open, add to, or reduce a single live perp position
-- confirmation contract:
-  - persisted Solana transaction signature
-  - strongly correlated Drift `OrderActionRecord` fill evidence
-  - valid post-trade position delta from refreshed venue truth
+---
 
-## Required Environment
+## Current State
 
-Use a dedicated devnet environment. Do not reuse a mainnet read-only shell.
+- **All live execution is disabled**
+- **Only simulation mode is available**
+- **Backtesting framework is the primary validation method**
 
-```bash
-export EXECUTION_MODE=live
-export FEATURE_FLAG_LIVE_EXECUTION=true
+---
 
-export DRIFT_RPC_ENDPOINT=https://api.devnet.solana.com
-export DRIFT_READONLY_ENV=devnet
+## What Was Removed
 
-export DRIFT_EXECUTION_ENV=devnet
-export DRIFT_PRIVATE_KEY=replace-with-devnet-secret-key
-export DRIFT_EXECUTION_SUBACCOUNT_ID=0
-export DRIFT_EXECUTION_ACCOUNT_LABEL="Hackathon Devnet Carry"
-```
+The following components were removed from the codebase:
 
-Also required:
+1. `DriftDevnetCarryAdapter` - Devnet carry execution adapter
+2. `DriftReadonlyTruthAdapter` - Drift truth adapter
+3. `DriftMainnetCarryAdapter` - Mainnet carry adapter
+4. `DriftSpotAdapter` - Spot market adapter
+5. `DriftMultiAssetCarryAdapter` - Multi-asset adapter
+6. `DriftExecutionEventSubscriber` - Event subscriber
 
-- local Postgres migrated
-- API and runtime worker running
-- dashboard operator account available
+All related environment variables were also removed:
+- `DRIFT_RPC_ENDPOINT`
+- `DRIFT_PRIVATE_KEY`
+- `DRIFT_READONLY_ENV`
+- `DRIFT_READONLY_ACCOUNT_ADDRESS`
+- `DRIFT_EXECUTION_ENV`
+- All other `DRIFT_*` variables
 
-## Wallet And Account Prerequisites
+---
 
-Before requesting promotion or execution:
+## Alternative Approaches
 
-- fund the devnet authority wallet with SOL for fees
-- create or reuse the Drift devnet subaccount for `DRIFT_PRIVATE_KEY`
-- deposit collateral to that Drift devnet account
-- open a small BTC-PERP position out-of-band on Drift devnet
+For hackathon submission:
 
-Important:
+1. **Use backtesting** to demonstrate strategy performance
+2. **Use simulation mode** to show framework functionality
+3. **Document the architecture** and risk management approach
+4. **Be transparent** about the Drift situation
 
-- Phase 6.0 now supports opening or adding a single BTC-PERP perp leg through Sentinel Apex
-- the repo still does not support multi-leg carry orchestration or spot-leg execution
+---
 
-## Promotion Workflow
+## Future Development
 
-1. Start the API, runtime worker, and ops dashboard.
-2. Open `/venues/drift-solana-devnet-carry`.
-3. Confirm the venue detail shows:
-   - real truth
-   - execution-capable devnet posture
-   - `execution_capable_unapproved` effective posture before review
-   - no missing prerequisites
-   - fresh and healthy evidence
-4. Request promotion as an `operator`.
-5. Approve promotion as an `admin`.
-6. Re-check `/api/v1/venues/drift-solana-devnet-carry/promotion/eligibility` or the dashboard evidence panel before executing.
+Alternative venue adapters may be integrated post-hackathon:
+- Mango Markets
+- Jupiter Perpetuals
+- Other Solana-based venues
 
-## Supported Execution Flow
-
-This phase reuses the existing carry command rail. It does not add a generic order ticket.
-
-Supported operator flow:
-
-1. Produce or select an `increase_carry_exposure` or `reduce_carry_exposure` carry action.
-2. Approve that carry action through the existing carry workflow.
-3. Let the runtime worker execute the queued `execute_carry_action` command.
-4. Inspect `/carry/executions/:executionId` for:
-   - execution status
-   - execution mode
-   - step-level execution reference
-   - aggregate execution reference
-   - event correlation status and confidence
-   - evidence basis (`event_and_position`, `event_only`, `position_only`, or blocked conflict states)
-
-Expected real reference:
-
-- a Solana transaction signature persisted as the venue execution reference
-
-Expected full confirmation:
-
-- `confirmed_full`
-- strong Drift fill correlation
-- valid full position delta in the expected direction
-
-Expected strategy-profile truth:
-
-- `/api/v1/carry/strategy-profile` shows `vaultBaseAsset=USDC`
-- tenor stays `3 months / rolling / 3-month reassessment`
-- projected APY is labeled as projected
-- realized APY is `unknown` unless separately evidenced
-- eligibility fails closed if policy metadata drifts from the allowed Build-A-Bear profile
-
-## Unsupported Flow
-
-The following remain unsupported and must not be used in demos:
-
-- treasury-native real execution
-- mainnet execution
-- generic live Ranger vault deployment
-- multi-leg carry orchestration
-- spot orders
-- non-BTC perp orders
-- limit/post-only orders
-- silent fallback from real to simulated
-
-## Safe Demo Flow
-
-Use this sequence for hackathon demos:
-
-1. Configure only devnet env values.
-2. Optionally seed a small BTC-PERP position on Drift devnet outside Sentinel Apex if you want to demo reduction first.
-3. Verify venue truth and promotion evidence on `/venues/drift-solana-devnet-carry`.
-4. Request and approve promotion through the existing workflow.
-5. Approve a carry increase or reduction action through the existing action flow.
-6. Show the resulting carry execution detail with the persisted Solana signature.
-7. Show that the same flow blocks again if promotion is suspended or evidence degrades.
-
-## Rollback And Failure Handling
-
-If execution is blocked:
-
-- inspect venue promotion status
-- inspect current eligibility blockers
-- inspect carry action and carry execution blocked reasons
-- correct config or truth freshness issues before retrying
-
-If execution submitted but downstream truth is delayed:
-
-- use the persisted Solana signature only as one leg of evidence
-- wait for Drift event ingestion plus the next truth refresh and reconciliation cycle
-- do not assume fill completion from submission alone
-- readiness remains blocked for states such as:
-  - `pending_event`
-  - `pending_position_delta`
-  - `confirmed_partial_event_only`
-  - `confirmed_partial_position_only`
-  - `conflicting_event`
-  - `conflicting_event_vs_position`
-
-If the connector should no longer be used:
-
-- suspend promotion
-- set `FEATURE_FLAG_LIVE_EXECUTION=false`
-- return `EXECUTION_MODE` to `dry-run`
-
-## Validation
-
-Recommended targeted validation for this path:
-
-```bash
-pnpm --filter @sentinel-apex/config test -- src/__tests__/env.test.ts
-pnpm --filter @sentinel-apex/venue-adapters test -- src/__tests__/drift-devnet-carry-adapter.test.ts
-pnpm --filter @sentinel-apex/runtime test -- src/__tests__/devnet-execution-path.test.ts
-pnpm --filter @sentinel-apex/api test -- src/__tests__/runtime-api.test.ts
-pnpm --filter @sentinel-apex/ops-dashboard test -- src/test/phase-6-devnet-execution-pages.test.tsx
-```
+These will require:
+- Security audit
+- Hackathon eligibility verification
+- Proper testing and validation

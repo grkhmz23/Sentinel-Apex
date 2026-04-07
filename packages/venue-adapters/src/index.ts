@@ -103,16 +103,9 @@ export type { SimulatedVenueConfig } from './simulation/simulated-venue-adapter.
 export { SimulatedVenueAdapter } from './simulation/simulated-venue-adapter.js';
 export type { SimulatedTreasuryVenueConfig } from './simulation/simulated-treasury-venue-adapter.js';
 export { SimulatedTreasuryVenueAdapter } from './simulation/simulated-treasury-venue-adapter.js';
-export type { DriftReadonlyTruthAdapterConfig } from './real/drift-readonly-truth-adapter.js';
-export { DriftReadonlyTruthAdapter } from './real/drift-readonly-truth-adapter.js';
-export type { DriftDevnetCarryAdapterConfig } from './real/drift-devnet-carry-adapter.js';
-export { DriftDevnetCarryAdapter } from './real/drift-devnet-carry-adapter.js';
-export type { DriftMainnetCarryAdapterConfig } from './real/drift-mainnet-carry-adapter.js';
-export { DriftMainnetCarryAdapter } from './real/drift-mainnet-carry-adapter.js';
-export type { DriftSpotAdapterConfig } from './real/drift-spot-adapter.js';
-export { DriftSpotAdapter } from './real/drift-spot-adapter.js';
-export type { DriftMultiAssetCarryAdapterConfig } from './real/drift-multi-asset-carry-adapter.js';
-export { DriftMultiAssetCarryAdapter, DEFAULT_SUPPORTED_ASSETS } from './real/drift-multi-asset-carry-adapter.js';
+// Note: Drift adapters removed due to hackathon eligibility requirements (Drift protocol compromised)
+export type { JupiterPerpsAdapterConfig } from './real/jupiter-perps-adapter.js';
+export { JupiterPerpsAdapter } from './real/jupiter-perps-adapter.js';
 export type { SolanaRpcReadonlyTruthAdapterConfig } from './real/solana-rpc-readonly-truth-adapter.js';
 export { SolanaRpcReadonlyTruthAdapter } from './real/solana-rpc-readonly-truth-adapter.js';
 

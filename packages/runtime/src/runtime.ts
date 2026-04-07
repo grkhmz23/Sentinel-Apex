@@ -49,11 +49,7 @@ import {
   type TreasuryVenueSnapshot,
 } from '@sentinel-apex/treasury';
 import {
-  DriftDevnetCarryAdapter,
-  DriftMainnetCarryAdapter,
-  DriftMultiAssetCarryAdapter,
-  DriftReadonlyTruthAdapter,
-  DriftSpotAdapter,
+  JupiterPerpsAdapter,
   VENUE_EXECUTION_MODE_METADATA_KEY,
   VENUE_EXECUTION_REFERENCE_METADATA_KEY,
   readCanonicalMarketIdentityFromMetadata,
@@ -71,6 +67,9 @@ import {
   type VenueTruthAdapter,
   type VenueTruthSnapshot,
 } from '@sentinel-apex/venue-adapters';
+
+// Note: Drift adapters removed due to hackathon eligibility requirements (Drift protocol compromised)
+// Jupiter Perps adapter added as replacement
 
 import { RuntimeHealthMonitor } from './health-monitor.js';
 import {
@@ -436,23 +435,23 @@ function buildPostTradeConfirmationSummary(
 
   switch (status) {
     case 'confirmed_full':
-      return `Execution reference ${executionReference} has a strong Drift fill match and confirms the full requested ${requestedSize} ${requestedChange}.`;
+      return `Execution reference ${executionReference} confirms the full requested ${requestedSize} ${requestedChange}.`;
     case 'confirmed_partial':
-      return `Execution reference ${executionReference} has attributed Drift fill evidence and venue truth, but only ${confirmedSize ?? '0'} of the requested ${requestedSize} ${requestedChange} is jointly confirmed.`;
+      return `Execution reference ${executionReference} has attributed fill evidence and venue truth, but only ${confirmedSize ?? '0'} of the requested ${requestedSize} ${requestedChange} is jointly confirmed.`;
     case 'confirmed_partial_event_only':
       return eventEvidence?.fillBaseAssetAmount == null
-        ? `Execution reference ${executionReference} has a strong Drift fill match, but venue position truth has not fully reflected the requested ${requestedChange} yet.`
-        : `Execution reference ${executionReference} has a strong Drift fill match for ${eventEvidence.fillBaseAssetAmount}, but venue position truth has not fully reflected that ${requestedChange} yet.`;
+        ? `Execution reference ${executionReference} has fill evidence, but venue position truth has not fully reflected the requested ${requestedChange} yet.`
+        : `Execution reference ${executionReference} has fill evidence for ${eventEvidence.fillBaseAssetAmount}, but venue position truth has not fully reflected that ${requestedChange} yet.`;
     case 'confirmed_partial_position_only':
-      return `Execution reference ${executionReference} confirms ${confirmedSize ?? '0'} of the requested ${requestedSize} ${requestedChange} in venue truth, but venue-native Drift fill evidence is still missing or only probable.`;
+      return `Execution reference ${executionReference} confirms ${confirmedSize ?? '0'} of the requested ${requestedSize} ${requestedChange} in venue truth, but venue-native fill evidence is still missing or only probable.`;
     case 'pending_event':
-      return `Execution reference ${executionReference} is present in venue truth, but a strong venue-native Drift fill match has not been attributed yet.`;
+      return `Execution reference ${executionReference} is present in venue truth, but a strong venue-native fill match has not been attributed yet.`;
     case 'pending_position_delta':
-      return `Execution reference ${executionReference} has a strong Drift fill match, but the expected position delta is not yet visible in venue truth.`;
+      return `Execution reference ${executionReference} has fill evidence, but the expected position delta is not yet visible in venue truth.`;
     case 'conflicting_event':
-      return `Execution reference ${executionReference} has Drift venue events that conflict with the expected ${describeExpectedExecutionSemantics(candidate)}.`;
+      return `Execution reference ${executionReference} has venue events that conflict with the expected ${describeExpectedExecutionSemantics(candidate)}.`;
     case 'conflicting_event_vs_position':
-      return `Execution reference ${executionReference} has Drift event evidence that conflicts with the observed position delta.`;
+      return `Execution reference ${executionReference} has event evidence that conflicts with the observed position delta.`;
     case 'missing_reference':
       return `Execution reference ${executionReference} is not present in the latest venue truth snapshot.`;
     case 'invalid_position_delta':
@@ -775,7 +774,7 @@ function evaluatePostTradeConfirmationGroup(
       boundary,
       confirmedSize: null,
       remainingSize,
-      blockedReason: 'Execution reference is visible, but venue-native Drift fill evidence has not been attributed yet.',
+      blockedReason: 'Execution reference is visible, but venue-native fill evidence has not been attributed yet.',
       eventEvidence,
     });
 
@@ -798,7 +797,7 @@ function evaluatePostTradeConfirmationGroup(
         confirmedSize: positionConfirmedSize.gt(POST_TRADE_POSITION_TOLERANCE) ? positionConfirmedSize : null,
         remainingSize,
         blockedReason: eventEvidence?.blockedReason
-          ?? `Drift venue events conflicted with the expected market, side, or ${describeExpectedExecutionSemantics(candidate)}.`,
+          ?? `Venue events conflicted with the expected market, side, or ${describeExpectedExecutionSemantics(candidate)}.`,
         eventEvidence,
       });
     } else if (
@@ -844,7 +843,7 @@ function evaluatePostTradeConfirmationGroup(
           boundary,
           confirmedSize: null,
           remainingSize: requestedSize,
-          blockedReason: `Strong Drift fill evidence was attributed, but the expected ${describeRequestedPositionChange(candidate)} is not yet reflected in venue truth.`,
+          blockedReason: `Strong fill evidence was attributed, but the expected ${describeRequestedPositionChange(candidate)} is not yet reflected in venue truth.`,
           eventEvidence,
         });
       } else if (expectedEventSize.minus(positionConfirmedSize).greaterThan(POST_TRADE_POSITION_TOLERANCE)) {
@@ -859,7 +858,7 @@ function evaluatePostTradeConfirmationGroup(
           boundary,
           confirmedSize: positionConfirmedSize,
           remainingSize,
-          blockedReason: `Drift fill evidence reports ${formatOptionalDecimal(expectedEventSize) ?? '0'} filled, but venue truth currently confirms only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'}.`,
+          blockedReason: `Fill evidence reports ${formatOptionalDecimal(expectedEventSize) ?? '0'} filled, but venue truth currently confirms only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'}.`,
           eventEvidence,
         });
       } else if (remainingSize.lte(POST_TRADE_POSITION_TOLERANCE)) {
@@ -889,7 +888,7 @@ function evaluatePostTradeConfirmationGroup(
           boundary,
           confirmedSize: positionConfirmedSize,
           remainingSize,
-          blockedReason: `Only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize} is jointly confirmed by Drift fill evidence and venue truth for this ${describeRequestedPositionChange(candidate)}.`,
+          blockedReason: `Only ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize} is jointly confirmed by fill evidence and venue truth for this ${describeRequestedPositionChange(candidate)}.`,
           eventEvidence,
         });
       }
@@ -906,8 +905,8 @@ function evaluatePostTradeConfirmationGroup(
         confirmedSize: positionConfirmedSize,
         remainingSize,
         blockedReason: hasProbableEventMatch
-          ? `Venue truth confirms ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize}, but only probable Drift lifecycle evidence is currently attributed.`
-          : `Venue truth confirms ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize}, but venue-native Drift fill evidence is still missing.`,
+          ? `Venue truth confirms ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize}, but only probable lifecycle evidence is currently attributed.`
+          : `Venue truth confirms ${formatOptionalDecimal(positionConfirmedSize) ?? '0'} of ${candidate.requestedSize}, but venue-native fill evidence is still missing.`,
         eventEvidence,
       });
     } else {
@@ -923,8 +922,8 @@ function evaluatePostTradeConfirmationGroup(
         confirmedSize: null,
         remainingSize: requestedSize,
         blockedReason: hasProbableEventMatch
-          ? 'Execution reference is visible and a probable Drift lifecycle event was observed, but a strong fill match is still required.'
-          : 'Execution reference is visible, but venue-native Drift fill evidence has not been attributed yet.',
+          ? 'Execution reference is visible and a probable lifecycle event was observed, but a strong fill match is still required.'
+          : 'Execution reference is visible, but venue-native fill evidence has not been attributed yet.',
         eventEvidence,
       });
     }
@@ -1004,7 +1003,7 @@ function evaluatePostTradeConfirmation(
     evidence: {
       status: blockingEntries.length === 0 ? 'confirmed' : 'blocked',
       summary: blockingEntries.length === 0
-        ? `All ${entries.length} recent real execution reference(s) are fully confirmed by Drift event evidence and venue truth.`
+        ? `All ${entries.length} recent real execution reference(s) are fully confirmed by event evidence and venue truth.`
         : `${blockingEntries.length} of ${entries.length} recent real execution reference(s) still require operator review before the connector is considered execution-ready.`,
       evaluatedAt: snapshot.capturedAt,
       recentExecutionCount: entries.length,
@@ -1067,11 +1066,7 @@ function deriveVenueTruthComparisonCoverage(
       ? 'simulation'
       : capability.executionSupport
         ? 'execution_capable'
-        : capability.connectorType === 'drift_native_readonly'
-          ? 'drift_native_readonly'
-          : 'generic_rpc_readonly');
-  const isDriftNativeReadonly = connectorDepth === 'drift_native_readonly';
-
+        : 'generic_rpc_readonly');
   return {
     executionReferences: {
       status: snapshot.truthCoverage.executionReferences.status,
@@ -1079,32 +1074,21 @@ function deriveVenueTruthComparisonCoverage(
     },
     positionInventory: {
       status: 'unsupported',
-      reason: isDriftNativeReadonly && snapshot.truthCoverage.derivativePositionState.status === 'available'
-        ? 'Decoded Drift position inventory is visible, but the runtime does not yet persist venue-native Drift position projections for direct comparison.'
-        : 'The runtime does not yet maintain a truthful internal position model that can be compared directly against this venue snapshot.',
+      reason: 'The runtime does not yet maintain a truthful internal position model that can be compared directly against this venue snapshot.',
     },
     healthState: {
       status: 'unsupported',
-      reason: isDriftNativeReadonly && snapshot.truthCoverage.derivativeHealthState.status === 'available'
-        ? 'Drift health and margin metrics are visible, but the runtime does not yet persist an internal canonical health model for direct comparison.'
-        : 'No internal health-state model is available for direct reconciliation against this venue snapshot.',
+      reason: 'No internal health-state model is available for direct reconciliation against this venue snapshot.',
     },
     orderInventory: {
       status: 'unsupported',
-      reason: isDriftNativeReadonly && snapshot.truthCoverage.orderState.status === 'available'
-        ? 'Decoded Drift open-order inventory is visible, but the runtime does not yet persist a venue-native open-order model for direct comparison.'
-        : 'No venue-native internal open-order inventory is available for direct reconciliation against this venue snapshot.',
+      reason: 'No venue-native internal open-order inventory is available for direct reconciliation against this venue snapshot.',
     },
-    notes: isDriftNativeReadonly
+    notes: connectorDepth === 'generic_rpc_readonly'
       ? [
-        'Decoded Drift account, position, health, and order sections are operator-visible venue truth.',
-        'Current reconciliation directly compares internal execution references when they are available.',
+        'This connector exposes generic read-only truth.',
+        'Execution-reference comparison is the only direct real-venue reconciliation path currently available.',
       ]
-      : connectorDepth === 'generic_rpc_readonly'
-        ? [
-          'This connector exposes generic read-only truth rather than venue-native Drift decode.',
-          'Execution-reference comparison is the only direct real-venue reconciliation path currently available.',
-        ]
         : connectorDepth === 'simulation'
           ? [
             'Simulated venue truth is generated internally and is not treated as external reconciliation coverage.',
@@ -1242,158 +1226,46 @@ export class SentinelRuntime {
     const internalDerivativeTargets = new Map<string, InternalDerivativeTrackedVenueConfig>(
       (overrides.internalDerivativeTargets ?? []).map((target) => [target.venueId, target] as const),
     );
-    const driftRpcEndpoint = process.env['DRIFT_RPC_ENDPOINT'];
-    // Initialize multi-asset devnet adapter
-    if (
-      !adapters.has('drift-solana-devnet-carry')
-      && process.env['DRIFT_EXECUTION_ENV'] === 'devnet'
-    ) {
-      const adapter = new DriftMultiAssetCarryAdapter({
-        venueId: 'drift-solana-devnet-carry',
-        venueName: 'Drift Solana Devnet Carry (Multi-Asset)',
-        rpcEndpoint: driftRpcEndpoint ?? '',
-        driftEnv: 'devnet',
-        supportedAssets: ['BTC', 'ETH', 'SOL'],
+    // Initialize Jupiter Perps adapter if enabled
+    if (process.env['JUPITER_PERPS_ENABLED'] === 'true') {
+      const jupiterRpcEndpoint = process.env['JUPITER_PERPS_RPC_ENDPOINT'] 
+        ?? process.env['SOLANA_RPC_ENDPOINT'] 
+        ?? 'https://api.devnet.solana.com';
+      
+      const jupiterAdapter = new JupiterPerpsAdapter({
+        venueId: 'jupiter-perps-devnet',
+        venueName: 'Jupiter Perpetuals Devnet',
+        rpcEndpoint: jupiterRpcEndpoint,
+        jupiterApiEndpoint: process.env['JUPITER_PERPS_API_ENDPOINT'] ?? 'https://perps-api.jup.ag/v2',
+        network: (process.env['JUPITER_PERPS_NETWORK'] as 'devnet' | 'mainnet-beta') ?? 'devnet',
         executionEnabled: true,
-        ...(process.env['DRIFT_PRIVATE_KEY'] === undefined
+        supportedMarkets: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
+        ...(process.env['JUPITER_PERPS_PRIVATE_KEY'] === undefined
           ? {}
-          : { privateKey: process.env['DRIFT_PRIVATE_KEY'] }),
-        ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
+          : { privateKey: process.env['JUPITER_PERPS_PRIVATE_KEY'] }),
+        ...(process.env['JUPITER_PERPS_SUBACCOUNT_ID'] === undefined
           ? {}
-          : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
-        ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
+          : { subaccountId: Number.parseInt(process.env['JUPITER_PERPS_SUBACCOUNT_ID'], 10) }),
+        ...(process.env['JUPITER_PERPS_ACCOUNT_LABEL'] === undefined
           ? {}
-          : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
+          : { accountLabel: process.env['JUPITER_PERPS_ACCOUNT_LABEL'] }),
       });
-      adapters.set(adapter.venueId, adapter);
-
-      if (!internalDerivativeTargets.has(adapter.venueId)) {
-        internalDerivativeTargets.set(adapter.venueId, {
-          venueId: adapter.venueId,
-          venueName: 'Drift Solana Devnet Carry (Multi-Asset)',
-          ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
+      
+      adapters.set(jupiterAdapter.venueId, jupiterAdapter);
+      
+      if (!internalDerivativeTargets.has(jupiterAdapter.venueId)) {
+        internalDerivativeTargets.set(jupiterAdapter.venueId, {
+          venueId: jupiterAdapter.venueId,
+          venueName: 'Jupiter Perpetuals Devnet',
+          ...(process.env['JUPITER_PERPS_SUBACCOUNT_ID'] === undefined
             ? {}
-            : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
-          ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
-            ? {}
-            : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
+            : { subaccountId: Number.parseInt(process.env['JUPITER_PERPS_SUBACCOUNT_ID'], 10) }),
         });
       }
-    }
-    // Initialize multi-asset mainnet adapter
-    if (
-      !adapters.has('drift-solana-mainnet-carry')
-      && process.env['DRIFT_EXECUTION_ENV'] === 'mainnet-beta'
-    ) {
-      const executionEnabled = process.env['DRIFT_MAINNET_EXECUTION_ENABLED'] === 'true';
-      const adapter = new DriftMultiAssetCarryAdapter({
-        venueId: 'drift-solana-mainnet-carry',
-        venueName: 'Drift Solana Mainnet Carry (Multi-Asset)',
-        rpcEndpoint: driftRpcEndpoint ?? '',
-        driftEnv: 'mainnet-beta',
-        supportedAssets: ['BTC', 'ETH', 'SOL'],
-        executionEnabled,
-        ...(process.env['DRIFT_PRIVATE_KEY'] === undefined
-          ? {}
-          : { privateKey: process.env['DRIFT_PRIVATE_KEY'] }),
-        ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
-          ? {}
-          : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
-        ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
-          ? {}
-          : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
-      });
-      adapters.set(adapter.venueId, adapter);
-
-      if (!internalDerivativeTargets.has(adapter.venueId)) {
-        internalDerivativeTargets.set(adapter.venueId, {
-          venueId: adapter.venueId,
-          venueName: 'Drift Solana Mainnet Carry',
-          ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
-            ? {}
-            : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
-          ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
-            ? {}
-            : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
-        });
-      }
-    }
-    // Initialize Drift spot adapter if enabled
-    if (
-      !adapters.has('drift-solana-spot')
-      && driftRpcEndpoint !== undefined
-      && driftRpcEndpoint !== ''
-      && process.env['DRIFT_SPOT_EXECUTION_ENABLED'] === 'true'
-    ) {
-      const spotAdapter = new DriftSpotAdapter({
-        venueId: 'drift-solana-spot',
-        venueName: 'Drift Solana Spot',
-        rpcEndpoint: driftRpcEndpoint,
-        driftEnv: process.env['DRIFT_EXECUTION_ENV'] === 'devnet' ? 'devnet' : 'mainnet-beta',
-        executionEnabled: true,
-        ...(process.env['DRIFT_PRIVATE_KEY'] === undefined
-          ? {}
-          : { privateKey: process.env['DRIFT_PRIVATE_KEY'] }),
-        ...(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'] === undefined
-          ? {}
-          : { subaccountId: Number.parseInt(process.env['DRIFT_EXECUTION_SUBACCOUNT_ID'], 10) }),
-        ...(process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] === undefined
-          ? {}
-          : { accountLabel: process.env['DRIFT_EXECUTION_ACCOUNT_LABEL'] }),
-      });
-      adapters.set(spotAdapter.venueId, spotAdapter);
-    }
-    if (
-      !truthAdapters.has('drift-solana-readonly')
-      && driftRpcEndpoint !== undefined
-      && driftRpcEndpoint !== ''
-    ) {
-      const adapter = new DriftReadonlyTruthAdapter({
-        venueId: 'drift-solana-readonly',
-        venueName: 'Drift Solana Read-Only',
-        rpcEndpoint: driftRpcEndpoint,
-        ...(process.env['DRIFT_READONLY_ENV'] === undefined
-          ? {}
-          : { driftEnv: process.env['DRIFT_READONLY_ENV'] as 'devnet' | 'mainnet-beta' }),
-        ...(process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] === undefined
-          ? {}
-          : { accountAddress: process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] }),
-        ...(process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] === undefined
-          ? {}
-          : { authorityAddress: process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] }),
-        ...(process.env['DRIFT_READONLY_SUBACCOUNT_ID'] === undefined
-          ? {}
-          : { subaccountId: Number.parseInt(process.env['DRIFT_READONLY_SUBACCOUNT_ID'], 10) }),
-        ...(process.env['DRIFT_READONLY_ACCOUNT_LABEL'] === undefined
-          ? {}
-          : { accountLabel: process.env['DRIFT_READONLY_ACCOUNT_LABEL'] }),
-      });
-      truthAdapters.set(adapter.venueId, adapter);
-    }
-    if (
-      !internalDerivativeTargets.has('drift-solana-readonly')
-      && (
-        (process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] !== undefined
-          && process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] !== '')
-        || (process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] !== undefined
-          && process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] !== '')
-      )
-    ) {
-      internalDerivativeTargets.set('drift-solana-readonly', {
-        venueId: 'drift-solana-readonly',
-        venueName: 'Drift Solana Read-Only',
-        ...(process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] === undefined
-          ? {}
-          : { accountAddress: process.env['DRIFT_READONLY_ACCOUNT_ADDRESS'] }),
-        ...(process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] === undefined
-          ? {}
-          : { authorityAddress: process.env['DRIFT_READONLY_AUTHORITY_ADDRESS'] }),
-        ...(process.env['DRIFT_READONLY_SUBACCOUNT_ID'] === undefined
-          ? {}
-          : { subaccountId: Number.parseInt(process.env['DRIFT_READONLY_SUBACCOUNT_ID'], 10) }),
-        ...(process.env['DRIFT_READONLY_ACCOUNT_LABEL'] === undefined
-          ? {}
-          : { accountLabel: process.env['DRIFT_READONLY_ACCOUNT_LABEL'] }),
+      
+      logger.info('Jupiter Perps adapter initialized', {
+        venueId: jupiterAdapter.venueId,
+        network: process.env['JUPITER_PERPS_NETWORK'] ?? 'devnet',
       });
     }
 

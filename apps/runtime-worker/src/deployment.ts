@@ -33,8 +33,6 @@ export function logWorkerStartup(cycleIntervalMs: number): void {
     executionBadge: profile.executionBadge,
     executionMode: profile.executionMode,
     liveExecutionEnabled: profile.liveExecutionEnabled,
-    driftExecutionEnv: profile.driftExecutionEnv ?? 'disabled',
-    driftReadonlyEnv: profile.driftReadonlyEnv ?? 'unset',
     supportedExecutionScope: profile.supportedExecutionScope,
     blockedExecutionScope: profile.blockedExecutionScope,
     databaseUrlConfigured: config.DATABASE_URL.length > 0,

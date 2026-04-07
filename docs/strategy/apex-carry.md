@@ -26,52 +26,51 @@ Current Build-A-Bear strategy truth:
 
 Operationally, this means the carry sleeve can now answer whether its strategy profile is Build-A-Bear eligible in principle, independently from whether the current execution path is broad enough for production deployment.
 
-## Phase 6.0 Addendum: First Real Devnet Execution Boundary
+## Phase 6.0 Addendum: Execution Status (Post-Drift Removal)
 
-Phase 6.0 does not broaden the carry thesis. It adds the first honest real execution connector under the existing carry control plane.
+**⚠️ IMPORTANT:** All Drift protocol adapters have been removed due to hackathon eligibility requirements. The Drift protocol was compromised and is disqualified from prize consideration.
 
 Current execution truth:
 
-- the first real connector is `drift-solana-devnet-carry`
-- it is devnet only
-- it supports only BTC-PERP reduce-only market orders
-- it reuses the existing carry action approval and runtime command rail
-- it persists real Solana transaction signatures as execution references
-- it does not add generic order entry, increase-exposure execution, or broad live carry trading
+- **No live execution connectors are available**
+- All execution is simulation-only (dry-run mode)
+- The backtesting framework is the primary validation method
+- The multi-leg carry orchestration framework remains intact for future venue integration
+- Real Solana transaction execution is suspended pending alternative venue adapters
 
-Operationally, this means the carry sleeve can now prove one real gated reduction path end to end, but it still does not claim broad autonomous or multi-market deployment.
+Operationally, this means the carry sleeve demonstrates framework completeness through simulation and backtesting, with honest disclosure that no live venue adapters are currently configured.
 
 ## Phase 5.6 Addendum: Internal Derivative State Boundary
 
-Phase 5.6 does not change the carry thesis. It changes how Sentinel Apex represents the carry sleeve's internal derivative posture for comparison against external Drift-native truth.
+Phase 5.6 does not change the carry thesis. It changes how Sentinel Apex represents the carry sleeve's internal derivative posture.
 
 Current internal derivative state truth:
 
-- configured Drift account identity is treated as canonical internal account state
-- open carry-related derivative orders are treated as canonical internal order inventory when they exist in persisted runtime orders
+- internal derivative orders are treated as canonical internal order inventory when they exist in persisted runtime orders
 - open derivative positions are reconstructed from persisted fills and remain explicitly marked as derived internal state
 - internal health and margin-like state remain unsupported
+- external venue truth adapters are disabled pending alternative venue integration
 
-Operationally, this means carry execution now feeds a durable internal derivative comparison layer, but the runtime still does not pretend allocator budgets, generic risk snapshots, or external venue truth are themselves the canonical internal derivative state.
+Operationally, this means carry execution feeds a durable internal derivative state layer, but the runtime does not claim external venue truth as canonical internal state.
 
 ## Phase 5.7 Addendum: Derived Internal Health And Richer Market Identity
 
-Phase 5.7 does not widen carry execution scope. It improves how the existing carry sleeve is compared against Drift-native truth.
+Phase 5.7 does not widen carry execution scope. It improves how the existing carry sleeve represents internal state.
 
 Current derivative comparison truth:
 
 - internal health posture is now derived from persisted portfolio and risk projections
-- this health posture is explicitly marked as derived and only supports band-level comparison against external Drift health
-- exact venue-native collateral, free-collateral, margin-ratio, and requirement fields remain external-only
-- internal market identity now preserves venue-native keys when runtime metadata truly has them
+- this health posture is explicitly marked as derived
+- venue-native collateral, free-collateral, margin-ratio, and requirement fields are not available (no live venue adapters)
+- internal market identity preserves venue-native keys when runtime metadata has them
 - when exact keys are absent, the runtime falls back honestly to derived market symbol or asset-plus-market-type identity
-- reconciliation can now distinguish:
+- reconciliation can distinguish:
   - exact market-identity mismatch
   - position identity gap
   - partial market-identity comparison
   - partial health comparison
 
-Operationally, this means carry operators can inspect whether a reported issue is a true inventory mismatch, an exact identity mismatch, a partial health comparison, or an identity-gap problem. It does not mean the carry sleeve now owns a venue-native internal margin engine.
+Operationally, this means carry operators can inspect whether a reported issue is a true inventory mismatch, an exact identity mismatch, a partial health comparison, or an identity-gap problem.
 
 ## Phase 5.8 Addendum: Earlier Market Metadata Propagation
 
@@ -143,7 +142,7 @@ The strategy is designed to run continuously. Positions are sized for the medium
 - Estimated basis impact at close
 - A minimum spread floor (configurable; default 3% annualized net)
 
-**Primary venue:** Drift Protocol (perpetuals), spot on-chain or CEX
+**Primary venue:** CEX or alternative Solana perp venues (Drift removed due to disqualification)
 
 **Holding period:** Until funding rate compresses to or below the spread floor, or a regime shift triggers exit
 
@@ -169,7 +168,7 @@ The strategy is designed to run continuously. Positions are sized for the medium
 
 **Market condition required:** Funding rate differential between two venues exceeds fees plus a minimum spread floor. Differential must be persistent (i.e., not a one-interval anomaly).
 
-**Primary venues:** Drift Protocol vs. Binance/OKX perpetuals
+**Primary venues:** CEX perpetuals (Binance, OKX, etc.)
 
 **Holding period:** Until rate convergence or regime shift
 
@@ -186,10 +185,10 @@ The carry signal engine consumes the following inputs at each evaluation cycle:
 | Input | Source | Frequency | Staleness Limit |
 |---|---|---|---|
 | Funding rate (current interval) | All configured venues | 30s poll | 60s |
-| Predicted next-interval funding rate | Drift (on-chain computed) | 30s poll | 60s |
+| Predicted next-interval funding rate | Venue APIs | 30s poll | 60s |
 | Mark price (spot and perp) | All configured venues | 10s poll | 30s |
 | Order book depth (top 5 levels) | All configured venues | 30s poll | 30s |
-| Open interest | Drift, CEX APIs | 60s poll | 120s |
+| Open interest | CEX APIs | 60s poll | 120s |
 
 ### 3.2 Opportunity Scoring
 

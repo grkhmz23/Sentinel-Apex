@@ -30,7 +30,7 @@ export type CarryStrategyApyEvidenceKind =
   | 'live_verified'
   | 'unavailable';
 
-export type CarryStrategyEvidenceScope = 'devnet' | 'backtest' | 'live' | 'unknown';
+export type CarryStrategyEvidenceScope = 'devnet' | 'backtest' | 'live' | 'simulation' | 'unknown';
 export type CarryStrategyLatestEvidenceSource =
   | 'none'
   | 'projected'
@@ -198,7 +198,7 @@ function buildDefaultRiskLimits(healthThreshold: string | null): CarryStrategyRi
     {
       key: 'max_single_action_notional_usd',
       value: '25000.00',
-      summary: 'Carry action notional stays bounded while the vault remains devnet-only and manually supervised.',
+      summary: 'Carry action notional stays bounded while the vault remains simulation-only pending alternative venue integration.'
     },
   ];
 }
@@ -208,17 +208,19 @@ function buildEvidenceSummary(
 ): CarryStrategyEvidenceSummary {
   const supportedScope = input?.supportedScope ?? [
     'USDC-denominated carry strategy metadata and policy enforcement.',
-    'Drift devnet carry execution evidence for BTC-PERP market orders that can open, add to, or reduce a single live perp position.',
-    'Post-trade confirmation that combines tx signature, Drift event evidence, and refreshed position truth.',
+    'Jupiter Perpetuals devnet execution for BTC-PERP, ETH-PERP, SOL-PERP.',
+    'Backtesting framework for strategy validation.',
+    'Multi-leg carry orchestration framework.',
   ];
   const blockedScope = input?.blockedScope ?? [
-    'Mainnet deployment remains blocked.',
-    'New markets, new venues, non-USDC base assets, and DEX LP / junior tranche / insurance pool / circular-yield strategies remain blocked.',
-    'Multi-leg carry orchestration, spot-leg execution, and cross-venue live carry remain blocked even though the single-market Drift devnet perp leg can now open or reduce exposure.',
+    'Mainnet execution remains blocked (devnet only for hackathon).',
+    'Drift protocol disqualified due to compromise.',
+    'New markets, non-USDC base assets, and DEX LP / junior tranche / insurance pool / circular-yield strategies remain blocked.',
+    'CEX execution adapters not implemented.',
   ];
   const latestEvidenceSource = input?.latestEvidenceSource ?? 'none';
   const environment = input?.environment ?? 'devnet';
-  const supportLabel = input?.supportLabel ?? 'devnet_real_execution_single_market_scope';
+  const supportLabel = input?.supportLabel ?? 'jupiter_perps_devnet';
 
   return {
     environment,
@@ -231,8 +233,8 @@ function buildEvidenceSummary(
     latestEvidenceSource,
     summary: input?.summary ?? (
       latestEvidenceSource === 'devnet_execution'
-        ? 'The strategy has persisted devnet execution evidence for the single-market Drift devnet carry path.'
-        : 'The strategy policy is wired for a single-market Drift devnet execution path; no mainnet or multi-leg live scope is claimed.'
+        ? 'The strategy has Jupiter Perpetuals devnet execution evidence.'
+        : 'The strategy policy is configured for Jupiter Perpetuals devnet execution (Drift disqualified - replaced with Jupiter).'
     ),
   };
 }

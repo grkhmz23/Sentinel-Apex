@@ -1,6 +1,7 @@
 import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
 
 import { allocatorRoutes } from './allocator.js';
+import { backtestRoutes } from './backtest.js';
 import { carryRoutes } from './carry.js';
 import { cexVerificationRoutes } from './cex-verification.js';
 import { controlRoutes } from './control.js';
@@ -15,7 +16,6 @@ import { runtimeRoutes } from './runtime.js';
 import { submissionRoutes } from './submission.js';
 import { treasuryRoutes } from './treasury.js';
 import { vaultRoutes } from './vault.js';
-import { backtestRoutes } from './backtest.js';
 import { venueRoutes } from './venues.js';
 
 import type { FastifyInstance } from 'fastify';

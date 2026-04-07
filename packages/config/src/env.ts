@@ -89,21 +89,18 @@ const envSchema = z
     // ── Feature flags ────────────────────────────────────────────────────────
     FEATURE_FLAG_LIVE_EXECUTION: envBoolean,
 
-    // ── Drift / on-chain ─────────────────────────────────────────────────────
-    DRIFT_RPC_ENDPOINT: z.string().optional(),
-    DRIFT_READONLY_ENV: z.enum(['devnet', 'mainnet-beta']).optional(),
-    DRIFT_READONLY_ACCOUNT_ADDRESS: z.string().optional(),
-    DRIFT_READONLY_AUTHORITY_ADDRESS: z.string().optional(),
-    DRIFT_READONLY_SUBACCOUNT_ID: z.coerce.number().int().min(0).optional(),
-    DRIFT_READONLY_ACCOUNT_LABEL: z.string().optional(),
-    DRIFT_EXECUTION_ENV: z.enum(['devnet', 'mainnet-beta']).optional(),
-    DRIFT_EXECUTION_SUBACCOUNT_ID: z.coerce.number().int().min(0).optional(),
-    DRIFT_EXECUTION_ACCOUNT_LABEL: z.string().optional(),
+    // ── Solana / on-chain ────────────────────────────────────────────────────
+    // Note: Drift adapters removed due to hackathon eligibility requirements
+    SOLANA_RPC_ENDPOINT: z.string().optional(),
 
-    DRIFT_PRIVATE_KEY: z.string().optional(),
-
-    DRIFT_MAINNET_EXECUTION_ENABLED: envBoolean,
-    DRIFT_SPOT_EXECUTION_ENABLED: envBoolean,
+    // ── Jupiter Perpetuals ───────────────────────────────────────────────────
+    JUPITER_PERPS_ENABLED: envBoolean,
+    JUPITER_PERPS_NETWORK: z.enum(['devnet', 'mainnet-beta']).default('devnet'),
+    JUPITER_PERPS_RPC_ENDPOINT: z.string().optional(),
+    JUPITER_PERPS_API_ENDPOINT: z.string().url().optional(),
+    JUPITER_PERPS_PRIVATE_KEY: z.string().optional(),
+    JUPITER_PERPS_SUBACCOUNT_ID: z.coerce.number().int().min(0).default(0),
+    JUPITER_PERPS_ACCOUNT_LABEL: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // API_SECRET_KEY is required outside of test environments
@@ -124,20 +121,6 @@ const envSchema = z
           message: 'API_SECRET_KEY must be at least 32 characters',
         });
       }
-    }
-
-    // Warn about DRIFT_PRIVATE_KEY set in non-production without live execution
-    if (
-      data.DRIFT_PRIVATE_KEY !== undefined &&
-      data.NODE_ENV !== 'production' &&
-      !data.FEATURE_FLAG_LIVE_EXECUTION
-    ) {
-      // We emit a warning to stderr; this is not a hard failure
-      process.stderr.write(
-        '[config] WARNING: DRIFT_PRIVATE_KEY is set in a non-production environment ' +
-          'but FEATURE_FLAG_LIVE_EXECUTION is false. ' +
-          'The key will be loaded but live order submission is disabled.\n',
-      );
     }
 
     // DB_POOL_MAX must be >= DB_POOL_MIN

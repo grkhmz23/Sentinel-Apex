@@ -21,8 +21,6 @@ type ApiReadinessPayload = {
   executionBadge: string;
   executionMode: string;
   liveExecutionEnabled: boolean;
-  driftExecutionEnv: string | null;
-  driftReadonlyEnv: string | null;
   readinessTruth: string;
   supportedExecutionScope: DeploymentProfile['supportedExecutionScope'];
   blockedExecutionScope: DeploymentProfile['blockedExecutionScope'];
@@ -89,8 +87,7 @@ export function logApiStartup(): void {
     executionBadge: profile.executionBadge,
     executionMode: profile.executionMode,
     liveExecutionEnabled: profile.liveExecutionEnabled,
-    driftExecutionEnv: profile.driftExecutionEnv ?? 'disabled',
-    driftReadonlyEnv: profile.driftReadonlyEnv ?? 'unset',
+
     corsOrigin: process.env['CORS_ORIGIN'] ?? 'any',
     supportedExecutionScope: profile.supportedExecutionScope,
     blockedExecutionScope: profile.blockedExecutionScope,
@@ -146,8 +143,6 @@ export function buildApiReadinessPayload(
       executionBadge: profile.executionBadge,
       executionMode: profile.executionMode,
       liveExecutionEnabled: profile.liveExecutionEnabled,
-      driftExecutionEnv: profile.driftExecutionEnv,
-      driftReadonlyEnv: profile.driftReadonlyEnv,
       readinessTruth: profile.readinessTruth,
       supportedExecutionScope: profile.supportedExecutionScope,
       blockedExecutionScope: profile.blockedExecutionScope,
