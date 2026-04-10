@@ -17,6 +17,10 @@ export function AppShell(
         <aside className="sidebar">
           <div className="sidebar__top">
             <Link className="sidebar__brand" href="/">
+              <div className="sidebar__brand-chip-row">
+                <span className="sidebar__brand-chip">Operator Console</span>
+                <span className="sidebar__brand-chip sidebar__brand-chip--muted">{session.operator.role}</span>
+              </div>
               <div className="sidebar__brand-logo-wrap">
                 <Image
                   alt="Sentinel Apex"
@@ -28,10 +32,10 @@ export function AppShell(
                 />
               </div>
               <div className="sidebar__brand-copy">
-                <p className="eyebrow">Vercel Dashboard</p>
+                <p className="eyebrow">Render + Vercel Split</p>
                 <h1>Protocol Ops Console</h1>
                 <p className="sidebar__brand-note">
-                  Read-through control surface for Render-backed runtime truth and Drift devnet evidence.
+                  Luxury control surface for runtime truth, allocator posture, and evidence-backed operator decisions.
                 </p>
               </div>
             </Link>
@@ -58,11 +62,24 @@ export function AppShell(
           <div className="content__frame">
             <header className="shell-topbar">
               <div className="shell-topbar__copy">
+                <p className="eyebrow">Server-Side Execution Integrity</p>
                 <h2>Execution truth stays server-side.</h2>
                 <p className="shell-topbar__summary">
                   Frontend mutations proxy to the backend API. Long-running runtime control, reconciliation,
                   and venue-native Drift evidence ingestion stay in Render services only.
                 </p>
+              </div>
+              <div className="shell-topbar__meta">
+                <div className="shell-topbar__stat">
+                  <span className="shell-topbar__stat-label">Operator</span>
+                  <strong>{session.operator.displayName}</strong>
+                  <span className="shell-topbar__stat-detail">{session.operator.email}</span>
+                </div>
+                <div className="shell-topbar__stat">
+                  <span className="shell-topbar__stat-label">Session</span>
+                  <strong>{session.operator.active ? 'Active' : 'Inactive'}</strong>
+                  <span className="shell-topbar__stat-detail">Expires {session.expiresAt}</span>
+                </div>
               </div>
             </header>
             <DeploymentTruthBanner compact />

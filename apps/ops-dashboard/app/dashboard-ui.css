@@ -8,18 +8,18 @@
   position: absolute;
   inset: auto -12% -42% 38%;
   height: 12rem;
-  background: radial-gradient(circle, rgba(0, 229, 255, 0.16), transparent 60%);
+  background: radial-gradient(circle, rgba(232, 200, 140, 0.16), transparent 60%);
   pointer-events: none;
 }
 
 .page__header--hero {
   align-items: stretch;
-  padding: 1.25rem 1.35rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1.35rem;
+  padding: 1.4rem 1.55rem;
+  border: 1px solid rgba(255, 248, 234, 0.08);
+  border-radius: 1.6rem;
   background:
-    radial-gradient(circle at top left, rgba(0, 229, 255, 0.1), transparent 30%),
-    linear-gradient(135deg, rgba(10, 18, 34, 0.95) 0%, rgba(5, 8, 16, 0.98) 100%);
+    radial-gradient(circle at top left, rgba(232, 200, 140, 0.12), transparent 30%),
+    linear-gradient(135deg, rgba(26, 22, 17, 0.97) 0%, rgba(12, 10, 8, 0.99) 100%);
   box-shadow: var(--shadow), var(--inner-shadow);
 }
 
@@ -58,11 +58,12 @@
   display: grid;
   gap: 0.45rem;
   min-height: 9.5rem;
-  padding: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1.15rem;
+  padding: 1.1rem;
+  border: 1px solid rgba(255, 248, 234, 0.08);
+  border-radius: 1.3rem;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%);
+    radial-gradient(circle at top right, rgba(232, 200, 140, 0.06), transparent 28%),
+    linear-gradient(180deg, rgba(255, 248, 234, 0.04) 0%, rgba(255, 248, 234, 0.02) 100%);
 }
 
 .metric-card::before {
@@ -86,7 +87,7 @@
 }
 
 .metric-card--accent::before {
-  background: linear-gradient(180deg, var(--accent), rgba(0, 229, 255, 0.12));
+  background: linear-gradient(180deg, var(--accent), rgba(232, 200, 140, 0.12));
 }
 
 .metric-card__label,
@@ -124,9 +125,9 @@
   display: grid;
   gap: 0.45rem;
   padding: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 248, 234, 0.08);
+  border-radius: 1.1rem;
+  background: rgba(255, 248, 234, 0.025);
 }
 
 .signal-list__header {
@@ -156,9 +157,9 @@
   display: grid;
   gap: 0.55rem;
   padding: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 248, 234, 0.08);
+  border-radius: 1.1rem;
+  background: rgba(255, 248, 234, 0.025);
 }
 
 .event-feed__row {
@@ -193,9 +194,9 @@
 
 .table-surface__scroller {
   overflow: auto;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 248, 234, 0.08);
+  border-radius: 1.15rem;
+  background: rgba(255, 248, 234, 0.02);
 }
 
 .table-surface .table {
@@ -233,9 +234,9 @@
   align-items: center;
   min-height: 1.9rem;
   padding: 0.25rem 0.65rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 248, 234, 0.1);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 248, 234, 0.04);
   color: var(--text-secondary);
   font-size: 0.76rem;
   line-height: 1.35;
@@ -268,7 +269,7 @@
   display: grid;
   place-items: center;
   padding: 1rem;
-  background: rgba(1, 4, 10, 0.78);
+  background: rgba(6, 5, 4, 0.8);
   backdrop-filter: blur(12px);
 }
 
@@ -277,11 +278,11 @@
   display: grid;
   gap: 1rem;
   padding: 1.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 1.25rem;
+  border: 1px solid rgba(255, 248, 234, 0.12);
+  border-radius: 1.4rem;
   background:
-    radial-gradient(circle at top right, rgba(0, 229, 255, 0.08), transparent 26%),
-    linear-gradient(180deg, rgba(11, 18, 33, 0.98) 0%, rgba(5, 8, 17, 0.99) 100%);
+    radial-gradient(circle at top right, rgba(232, 200, 140, 0.08), transparent 26%),
+    linear-gradient(180deg, rgba(25, 21, 17, 0.98) 0%, rgba(11, 9, 8, 0.99) 100%);
   box-shadow: var(--shadow), var(--inner-shadow);
 }
 
