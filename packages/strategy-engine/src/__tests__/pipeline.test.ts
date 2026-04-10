@@ -312,6 +312,43 @@ describe('StrategyPipeline.runCycle', () => {
     expect(result.opportunitiesDetected).toBeGreaterThan(0);
   });
 
+  it('approves a diversified set of opportunities when asset caps are enabled', async () => {
+    const adapterDiversified = makeSimulatedAdapter(
+      'venue-a',
+      { BTC: '50000', ETH: '2000' },
+      { BTC: '0.0004', ETH: '0.0002' },
+    );
+    const adapterSecondary = makeSimulatedAdapter(
+      'venue-b',
+      { BTC: '50050', ETH: '2005' },
+      { BTC: '0.0003', ETH: '0.00015' },
+    );
+    await adapterDiversified.connect();
+    await adapterSecondary.connect();
+
+    const carryConfig = makeCarryConfig({
+      approvedVenues: ['venue-a', 'venue-b'],
+      approvedAssets: ['BTC', 'ETH'],
+      maxConcurrentOpportunities: 2,
+      maxOpportunitiesPerAsset: 1,
+      maxOpportunitiesPerVenue: 2,
+    });
+
+    const pipeline = makePipeline(
+      new Map([
+        ['venue-a', adapterDiversified],
+        ['venue-b', adapterSecondary],
+      ]),
+      carryConfig,
+    );
+
+    const plan = await pipeline.planCycle(makePortfolioState());
+    const approvedAssets = [...new Set(plan.opportunitiesApproved.map((opportunity) => opportunity.asset))];
+
+    expect(plan.opportunitiesApproved).toHaveLength(2);
+    expect(approvedAssets.sort()).toEqual(['BTC', 'ETH']);
+  });
+
   it('blocks intents when portfolio is at capacity (risk check failure)', async () => {
     const adapterHigh = makeSimulatedAdapter(
       'venue-a',

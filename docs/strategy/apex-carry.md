@@ -4,6 +4,9 @@
 **Status:** Active
 **Last Updated:** 2026-04-01
 
+Submission-friendly summary documentation is available at
+[docs/strategy/apex-carry-investor-strategy-documentation.md](./apex-carry-investor-strategy-documentation.md).
+
 ## Phase 6.1 Addendum: Build-A-Bear Strategy Eligibility
 
 Phase 6.1 does not widen carry execution scope. It adds an explicit strategy-policy layer so the repo can honestly present one hackathon-facing strategy profile.

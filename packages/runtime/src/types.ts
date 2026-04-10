@@ -2434,7 +2434,36 @@ export interface OpportunityView {
   detectedAt: string;
   expiresAt: string;
   approved: boolean;
+  evaluationStage: 'threshold_filter' | 'portfolio_optimizer' | null;
+  evaluationReason: string | null;
+  portfolioScore: number | null;
+  portfolioScoreBreakdown: Record<string, number> | null;
+  optimizerRationale: string[];
+  plannedNotionalUsd: string | null;
   payload: Record<string, unknown>;
+}
+
+export interface CarryOpportunityEvaluationView {
+  evaluationId: string;
+  opportunityId: string;
+  runId: string;
+  sleeveId: string;
+  asset: string;
+  opportunityType: string;
+  expectedAnnualYieldPct: string;
+  netYieldPct: string;
+  confidenceScore: string;
+  detectedAt: string;
+  expiresAt: string;
+  approved: boolean;
+  evaluationStage: 'threshold_filter' | 'portfolio_optimizer' | null;
+  evaluationReason: string | null;
+  portfolioScore: number | null;
+  portfolioScoreBreakdown: Record<string, number> | null;
+  optimizerRationale: string[];
+  plannedNotionalUsd: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditEventView {
@@ -2484,6 +2513,7 @@ export interface RuntimeReadApi {
   listRecentEvents(limit?: number): Promise<AuditEventView[]>;
   getRuntimeStatus(): Promise<RuntimeStatusView>;
   listCarryRecommendations(limit?: number): Promise<CarryActionView[]>;
+  listCarryOpportunityEvaluations(limit?: number): Promise<CarryOpportunityEvaluationView[]>;
   listCarryActions(limit?: number): Promise<CarryActionView[]>;
   getCarryStrategyProfile(): Promise<CarryStrategyProfileView>;
   getCarryAction(actionId: string): Promise<CarryActionDetailView | null>;

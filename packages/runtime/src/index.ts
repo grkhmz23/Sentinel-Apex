@@ -21,6 +21,7 @@ export type {
   CarryActionDetailView,
   CarryActionPlannedOrderView,
   CarryStrategyEligibilityView,
+  CarryOpportunityEvaluationView,
   CarryStrategyProfileView,
   CarryStrategyRuleResultView,
   CarryActionView,

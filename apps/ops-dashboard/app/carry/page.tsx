@@ -33,7 +33,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
     );
   }
 
-  const { strategyProfile, recommendations, actions, executions, venues } = state.data;
+  const { strategyProfile, opportunities, recommendations, actions, executions, venues } = state.data;
 
   return (
     <AppShell session={session}>
@@ -104,6 +104,51 @@ export default async function CarryPage(): Promise<JSX.Element> {
                   </p>
                 )}
               </div>
+            )}
+          </Panel>
+        </div>
+
+        <div className="grid">
+          <Panel subtitle="Portfolio optimizer decisions for recent carry opportunities" title="Opportunity Ranking">
+            {opportunities.length === 0 ? (
+              <EmptyState message="No carry opportunities are currently persisted." title="No opportunities" />
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Asset</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Score</th>
+                    <th>Planned Notional</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {opportunities.map((opportunity) => (
+                    <tr key={opportunity.opportunityId}>
+                      <td>{opportunity.asset}</td>
+                      <td>{opportunity.opportunityType}</td>
+                      <td>
+                        <StatusBadge
+                          label={opportunity.approved ? 'approved' : 'rejected'}
+                          tone={opportunity.approved ? 'good' : 'warn'}
+                        />
+                      </td>
+                      <td>{opportunity.portfolioScore === null ? 'Unavailable' : opportunity.portfolioScore.toFixed(4)}</td>
+                      <td>{opportunity.plannedNotionalUsd === null ? 'N/A' : formatUsd(opportunity.plannedNotionalUsd)}</td>
+                      <td>
+                        <div className="stack stack--compact">
+                          <span>{opportunity.evaluationReason ?? 'No evaluation reason recorded.'}</span>
+                          {opportunity.optimizerRationale.length === 0 ? null : (
+                            <span className="panel__hint">{opportunity.optimizerRationale.join(' | ')}</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </Panel>
         </div>

@@ -83,6 +83,7 @@ import type {
   AllocatorSummaryView,
   AuditEventView,
   CarryActionDetailView,
+  CarryOpportunityEvaluationView,
   CarryStrategyProfileView,
   CarryActionView,
   CarryExecutionPostTradeConfirmationView,
@@ -1460,12 +1461,34 @@ export class SentinelRuntime {
     try {
       const portfolioState = await this.options.portfolioTracker.refresh();
       const planned = await this.options.pipeline.planCycle(portfolioState);
-      const approvedOpportunityIds = new Set(
-        planned.opportunitiesApproved.map((opportunity) => buildOpportunityId(opportunity)),
+      const evaluationByOpportunityId = new Map(
+        planned.opportunityEvaluations.map((evaluation) => [
+          buildOpportunityId(evaluation.opportunity),
+          evaluation,
+        ]),
       );
 
       for (const opportunity of planned.opportunitiesDetected) {
         const opportunityId = buildOpportunityId(opportunity);
+        const evaluation = evaluationByOpportunityId.get(opportunityId);
+        const payload = {
+          ...opportunity,
+          optimizer: evaluation === undefined ? null : {
+            approved: evaluation.approved,
+            evaluationStage: evaluation.evaluationStage,
+            evaluationReason: evaluation.reason,
+            portfolioScore: evaluation.score?.totalScore ?? null,
+            portfolioScoreBreakdown: evaluation.score === null ? null : {
+              yieldScore: evaluation.score.yieldScore,
+              confidenceScore: evaluation.score.confidenceScore,
+              venueBreadthScore: evaluation.score.venueBreadthScore,
+              diversificationScore: evaluation.score.diversificationScore,
+              totalScore: evaluation.score.totalScore,
+            },
+            rationale: evaluation.rationale,
+            plannedNotionalUsd: evaluation.plannedNotionalUsd,
+          },
+        };
         await this.options.store.persistOpportunity({
           opportunityId,
           runId,
@@ -1477,9 +1500,57 @@ export class SentinelRuntime {
           confidenceScore: String(opportunity.confidenceScore),
           detectedAt: opportunity.detectedAt.toISOString(),
           expiresAt: opportunity.expiresAt.toISOString(),
-          approved: approvedOpportunityIds.has(opportunityId),
-          payload: opportunity as unknown as Record<string, unknown>,
+          approved: evaluation?.approved ?? false,
+          evaluationStage: evaluation?.evaluationStage ?? null,
+          evaluationReason: evaluation?.reason ?? null,
+          portfolioScore: evaluation?.score?.totalScore ?? null,
+          portfolioScoreBreakdown: evaluation?.score === null || evaluation?.score === undefined
+            ? null
+            : {
+              yieldScore: evaluation.score.yieldScore,
+              confidenceScore: evaluation.score.confidenceScore,
+              venueBreadthScore: evaluation.score.venueBreadthScore,
+              diversificationScore: evaluation.score.diversificationScore,
+              totalScore: evaluation.score.totalScore,
+            },
+          optimizerRationale: evaluation?.rationale ?? [],
+          plannedNotionalUsd: evaluation?.plannedNotionalUsd ?? null,
+          payload: payload as unknown as Record<string, unknown>,
         });
+
+        if (evaluation !== undefined) {
+          await this.options.store.persistOpportunityEvaluation({
+            evaluationId: `${opportunityId}:optimizer`,
+            opportunityId,
+            runId,
+            sleeveId: this.options.sleeveId,
+            asset: opportunity.asset,
+            opportunityType: opportunity.type,
+            expectedAnnualYieldPct: opportunity.expectedAnnualYieldPct,
+            netYieldPct: opportunity.netYieldPct,
+            confidenceScore: String(opportunity.confidenceScore),
+            detectedAt: opportunity.detectedAt.toISOString(),
+            expiresAt: opportunity.expiresAt.toISOString(),
+            approved: evaluation.approved,
+            evaluationStage: evaluation.evaluationStage,
+            evaluationReason: evaluation.reason,
+            portfolioScore: evaluation.score?.totalScore ?? null,
+            portfolioScoreBreakdown:
+              evaluation.score === null
+                ? null
+                : {
+                  yieldScore: evaluation.score.yieldScore,
+                  confidenceScore: evaluation.score.confidenceScore,
+                  venueBreadthScore: evaluation.score.venueBreadthScore,
+                  diversificationScore: evaluation.score.diversificationScore,
+                  totalScore: evaluation.score.totalScore,
+                },
+            optimizerRationale: evaluation.rationale,
+            plannedNotionalUsd: evaluation.plannedNotionalUsd ?? null,
+            createdAt: opportunity.detectedAt.toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
       }
 
       for (const riskResult of planned.riskResults) {
@@ -1588,6 +1659,12 @@ export class SentinelRuntime {
           detectedAt: opportunity.detectedAt.toISOString(),
           expiresAt: opportunity.expiresAt.toISOString(),
           approved: true,
+          evaluationStage: 'portfolio_optimizer',
+          evaluationReason: 'selected by portfolio optimizer',
+          portfolioScore: null,
+          portfolioScoreBreakdown: null,
+          optimizerRationale: [],
+          plannedNotionalUsd: null,
           payload: opportunity as unknown as Record<string, unknown>,
         })),
         treasurySummary,
@@ -1784,6 +1861,10 @@ export class SentinelRuntime {
 
   async listCarryRecommendations(limit = 50): Promise<CarryActionView[]> {
     return this.options.store.listCarryRecommendations(limit);
+  }
+
+  async listCarryOpportunityEvaluations(limit = 50): Promise<CarryOpportunityEvaluationView[]> {
+    return this.options.store.listCarryOpportunityEvaluations(limit);
   }
 
   async listCarryActions(limit = 50): Promise<CarryActionView[]> {

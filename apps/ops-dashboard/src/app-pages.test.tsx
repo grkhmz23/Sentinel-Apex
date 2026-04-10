@@ -199,6 +199,7 @@ vi.mock('./lib/runtime-api.server', () => ({
   loadCarryPageData: vi.fn(async () => ({
     data: {
       strategyProfile: createCarryStrategyProfile(),
+      opportunities: [],
       recommendations: [createCarryAction()],
       actions: [createCarryAction()],
       executions: [createCarryExecution()],
@@ -408,6 +409,7 @@ describe('ops dashboard pages', () => {
             }],
           },
         }),
+        opportunities: [],
         recommendations: [createCarryAction()],
         actions: [createCarryAction()],
         executions: [createCarryExecution()],

@@ -6,6 +6,7 @@ export type {
   PipelineConfig,
   PipelineStage,
   PipelineResult,
+  OpportunityEvaluationRecord,
   PlannedIntentAssessment,
   PlannedStrategyCycle,
 } from './pipeline.js';

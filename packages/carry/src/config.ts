@@ -27,6 +27,12 @@ export interface CarryConfig {
 
   // Opportunity limits
   maxConcurrentOpportunities: number; // default 5
+  maxOpportunitiesPerAsset: number; // default 2
+  maxOpportunitiesPerVenue: number; // default 3
+
+  // Portfolio concentration limits
+  maxAssetExposurePct: string; // default '10'
+  maxVenueExposurePct: string; // default '15'
 
   // Funding rate thresholds
   minFundingRateAnnualized: string; // default '3.0' (3% annual)
@@ -52,6 +58,10 @@ export const DEFAULT_CARRY_CONFIG: CarryConfig = {
   approvedAssets: ['BTC', 'ETH', 'SOL'], // Multi-asset support for hackathon
 
   maxConcurrentOpportunities: 5,
+  maxOpportunitiesPerAsset: 2,
+  maxOpportunitiesPerVenue: 3,
+  maxAssetExposurePct: '10',
+  maxVenueExposurePct: '15',
 
   minFundingRateAnnualized: '3.0',
   minBasisPct: '0.5',

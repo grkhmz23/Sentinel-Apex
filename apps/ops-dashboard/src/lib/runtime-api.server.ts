@@ -5,6 +5,7 @@ import type {
   AllocatorSummaryView,
   CarryActionDetailView,
   CarryActionView,
+  CarryOpportunityEvaluationView,
   CarryStrategyProfileView,
   CarryExecutionDetailView,
   CarryExecutionView,
@@ -351,6 +352,14 @@ export async function getCarryStrategyProfile(): Promise<CarryStrategyProfileVie
   return fetchCarryApi<CarryStrategyProfileView>('/strategy-profile');
 }
 
+export async function listCarryOpportunityEvaluations(
+  limit = 20,
+): Promise<CarryOpportunityEvaluationView[]> {
+  return fetchCarryApi<CarryOpportunityEvaluationView[]>(
+    `/opportunity-evaluations${buildSearchParams({ limit })}`,
+  );
+}
+
 export async function getSubmissionDossier(): Promise<SubmissionDossierView> {
   return fetchSubmissionApi<SubmissionDossierView>();
 }
@@ -681,8 +690,9 @@ export async function loadVenueDetailPageData(
 
 export async function loadCarryPageData(): Promise<DashboardPageState<CarryPageData>> {
   try {
-    const [strategyProfile, recommendations, actions, executions, venues] = await Promise.all([
+    const [strategyProfile, opportunities, recommendations, actions, executions, venues] = await Promise.all([
       getCarryStrategyProfile(),
+      listCarryOpportunityEvaluations(20),
       listCarryRecommendations(20),
       listCarryActions(20),
       listCarryExecutions(20),
@@ -692,6 +702,7 @@ export async function loadCarryPageData(): Promise<DashboardPageState<CarryPageD
     return {
       data: {
         strategyProfile,
+        opportunities,
         recommendations,
         actions,
         executions,

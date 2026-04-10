@@ -2,14 +2,14 @@
 // Strategy pipeline — signal → intent → risk → execution
 // =============================================================================
 
-import Decimal from 'decimal.js';
-
 import type { CarryConfig, CarryOpportunityCandidate } from '@sentinel-apex/carry';
 import {
   detectFundingRateOpportunities,
   detectCrossVenueOpportunities,
-  computeMaxAllowedSize,
-  computePositionSize,
+  type OpportunityScoreBreakdown,
+  type PortfolioCapitalAllocation,
+  type OpportunityRejectionDecision,
+  optimizeCarryPortfolio,
 } from '@sentinel-apex/carry';
 import type { RiskAssessment, OrderIntent } from '@sentinel-apex/domain';
 import type { Logger, AuditWriter, MetricsRegistry } from '@sentinel-apex/observability';
@@ -60,9 +60,20 @@ export interface PlannedIntentAssessment {
   assessment: RiskAssessment;
 }
 
+export interface OpportunityEvaluationRecord {
+  opportunity: CarryOpportunityCandidate;
+  approved: boolean;
+  evaluationStage: 'threshold_filter' | 'portfolio_optimizer';
+  reason: string;
+  score: OpportunityScoreBreakdown | null;
+  rationale: string[];
+  plannedNotionalUsd: string | null;
+}
+
 export interface PlannedStrategyCycle {
   opportunitiesDetected: CarryOpportunityCandidate[];
   opportunitiesApproved: CarryOpportunityCandidate[];
+  opportunityEvaluations: OpportunityEvaluationRecord[];
   intentsGenerated: OrderIntent[];
   riskResults: PlannedIntentAssessment[];
   approvedIntents: OrderIntent[];
@@ -217,8 +228,12 @@ export class StrategyPipeline {
       count: candidates.length,
     });
 
-    const approved = await this.evaluateOpportunities(candidates);
-    const intents = await this.generateIntents(approved, portfolioState);
+    const {
+      approved,
+      evaluations,
+      allocations,
+    } = await this.evaluateOpportunities(candidates, portfolioState);
+    const intents = await this.generateIntents(allocations);
 
     this.intentCounter.increment(
       { sleeve: this.config.sleeveId },
@@ -232,6 +247,7 @@ export class StrategyPipeline {
     return {
       opportunitiesDetected: candidates,
       opportunitiesApproved: approved,
+      opportunityEvaluations: evaluations,
       intentsGenerated: intents,
       riskResults,
       approvedIntents,
@@ -327,29 +343,101 @@ export class StrategyPipeline {
    *
    * Sorts by net yield descending and caps at maxConcurrentOpportunities.
    */
+  private buildOpportunityId(opportunity: CarryOpportunityCandidate): string {
+    return `${opportunity.asset}-${opportunity.type}-${opportunity.detectedAt.getTime()}`;
+  }
+
   private async evaluateOpportunities(
     candidates: CarryOpportunityCandidate[],
-  ): Promise<CarryOpportunityCandidate[]> {
+    portfolioState: PortfolioState,
+  ): Promise<{
+    approved: CarryOpportunityCandidate[];
+    evaluations: OpportunityEvaluationRecord[];
+    allocations: PortfolioCapitalAllocation[];
+  }> {
     const now = new Date();
+    const evaluations: OpportunityEvaluationRecord[] = [];
 
     const filtered = candidates.filter((c) => {
       if (c.expiresAt <= now) {
+        evaluations.push({
+          opportunity: c,
+          approved: false,
+          evaluationStage: 'threshold_filter',
+          reason: 'opportunity expired before portfolio evaluation',
+          score: null,
+          rationale: [],
+          plannedNotionalUsd: null,
+        });
         return false;
       }
       if (c.confidenceScore < this.carryConfig.minConfidenceScore) {
+        evaluations.push({
+          opportunity: c,
+          approved: false,
+          evaluationStage: 'threshold_filter',
+          reason: 'confidence score below minimum threshold',
+          score: null,
+          rationale: [],
+          plannedNotionalUsd: null,
+        });
         return false;
       }
       if (parseFloat(c.netYieldPct) < parseFloat(this.carryConfig.minAnnualYieldPct)) {
+        evaluations.push({
+          opportunity: c,
+          approved: false,
+          evaluationStage: 'threshold_filter',
+          reason: 'net yield below minimum threshold',
+          score: null,
+          rationale: [],
+          plannedNotionalUsd: null,
+        });
         return false;
       }
       return true;
     });
 
-    // Sort by net yield descending — take the best opportunities first
-    filtered.sort((a, b) => parseFloat(b.netYieldPct) - parseFloat(a.netYieldPct));
+    const optimized = optimizeCarryPortfolio({
+      opportunities: filtered,
+      sleeveNav:
+        portfolioState.sleeveNav.get(this.config.sleeveId) ?? portfolioState.totalNav,
+      currentGrossExposureUsd: portfolioState.grossExposure,
+      currentOpenPositions: portfolioState.openPositionCount,
+      currentAssetExposureUsd: portfolioState.assetExposures,
+      currentVenueExposureUsd: portfolioState.venueExposures,
+      config: this.carryConfig,
+    });
 
-    // Cap at max concurrent opportunities
-    return filtered.slice(0, this.carryConfig.maxConcurrentOpportunities);
+    for (const selection of optimized.selected) {
+      evaluations.push({
+        opportunity: selection.opportunity,
+        approved: true,
+        evaluationStage: 'portfolio_optimizer',
+        reason: 'selected by portfolio optimizer',
+        score: selection.score,
+        rationale: selection.rationale,
+        plannedNotionalUsd: selection.positionSizeUsd,
+      });
+    }
+
+    for (const rejection of optimized.rejected) {
+      evaluations.push({
+        opportunity: rejection.opportunity,
+        approved: false,
+        evaluationStage: 'portfolio_optimizer',
+        reason: rejection.reason,
+        score: null,
+        rationale: [],
+        plannedNotionalUsd: null,
+      });
+    }
+
+    return {
+      approved: optimized.selected.map((selection) => selection.opportunity),
+      evaluations,
+      allocations: optimized.selected,
+    };
   }
 
   /**
@@ -358,51 +446,17 @@ export class StrategyPipeline {
    * Computes position size from the carry config and sleeve NAV.
    */
   private async generateIntents(
-    opportunities: CarryOpportunityCandidate[],
-    portfolioState: PortfolioState,
+    allocations: PortfolioCapitalAllocation[],
   ): Promise<OrderIntent[]> {
     const intents: OrderIntent[] = [];
 
-    const sleeveNav =
-      portfolioState.sleeveNav.get(this.config.sleeveId) ?? portfolioState.totalNav;
-
-    const sleeveNavUsd = new Decimal(sleeveNav);
-    let plannedGrossExposureUsd = new Decimal(portfolioState.grossExposure);
-    let plannedOpenPositions = portfolioState.openPositionCount;
-
-    for (const opp of opportunities) {
-      const currentExposurePct = sleeveNavUsd.isZero()
-        ? '0'
-        : plannedGrossExposureUsd.div(sleeveNavUsd).times(100).toFixed(4);
-      const targetSizeUsd = computePositionSize({
-        sleeveNav,
-        expectedYieldPct: opp.expectedAnnualYieldPct,
-        confidenceScore: opp.confidenceScore,
-        config: this.carryConfig,
-        currentExposurePct,
-      });
-      const maxAllowedSizeUsd = computeMaxAllowedSize({
-        sleeveNav,
-        currentPositions: plannedOpenPositions,
-        config: this.carryConfig,
-      });
-      const positionSizeUsd = Decimal.min(
-        new Decimal(targetSizeUsd),
-        new Decimal(maxAllowedSizeUsd),
-      ).toFixed(2);
-
-      if (parseFloat(positionSizeUsd) <= 0) {
-        this.logger.debug('StrategyPipeline.generateIntents: zero size, skipping', {
-          asset: opp.asset,
-          type: opp.type,
-        });
-        continue;
-      }
-
-      const legIntents = buildIntentsFromOpportunity(opp, this.config.sleeveId, positionSizeUsd);
+    for (const allocation of allocations) {
+      const legIntents = buildIntentsFromOpportunity(
+        allocation.opportunity,
+        this.config.sleeveId,
+        allocation.positionSizeUsd,
+      );
       intents.push(...legIntents);
-      plannedGrossExposureUsd = plannedGrossExposureUsd.plus(positionSizeUsd);
-      plannedOpenPositions += 1;
     }
 
     return intents;

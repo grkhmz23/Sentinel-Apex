@@ -26,6 +26,27 @@ export async function carryRoutes(
   app.get<{
     Querystring: { limit?: string };
   }>(
+    '/api/v1/carry/opportunity-evaluations',
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const limit = Math.min(Number.parseInt(request.query.limit ?? '50', 10), 200);
+      const evaluations = await controlPlane.listCarryOpportunityEvaluations(limit);
+      return reply.status(200).send({
+        data: evaluations,
+        meta: {
+          correlationId: request.id,
+          count: evaluations.length,
+          limit,
+        },
+      });
+    },
+  );
+
+  app.get<{
+    Querystring: { limit?: string };
+  }>(
     '/api/v1/carry/recommendations',
     {
       preHandler: authenticate,

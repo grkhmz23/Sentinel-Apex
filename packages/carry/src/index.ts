@@ -48,6 +48,15 @@ export type {
   ComputeMaxAllowedSizeParams,
 } from './position-sizer.js';
 export { computePositionSize, computeMaxAllowedSize } from './position-sizer.js';
+export type {
+  OpportunityScoreBreakdown,
+  OpportunitySelectionDecision,
+  OpportunityRejectionDecision,
+  PortfolioCapitalAllocation,
+  PortfolioOptimizationInput,
+  PortfolioOptimizationResult,
+} from './portfolio-optimizer.js';
+export { optimizeCarryPortfolio } from './portfolio-optimizer.js';
 
 export type { HedgeLegSizes } from './hedge-state.js';
 export { computeHedgeState, HEDGE_TOLERANCE_PCT } from './hedge-state.js';

@@ -70,6 +70,7 @@ import {
   runtimeState,
   runtimeWorkerState,
   strategyIntents,
+  strategyOpportunityEvaluations,
   strategyOpportunities,
   strategyRuns,
   treasuryActionExecutions,
@@ -115,6 +116,7 @@ import type {
   AuditEventView,
   CarryActionDetailView,
   CarryActionPlannedOrderView,
+  CarryOpportunityEvaluationView,
   CarryStrategyProfileView,
   CarryActionView,
   CarryExecutionPostTradeConfirmationView,
@@ -289,6 +291,57 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function readOpportunityOptimizer(payload: unknown): Record<string, unknown> {
+  return asRecord(asRecord(payload)['optimizer']);
+}
+
+function readOpportunityOptimizerValue(
+  payload: unknown,
+  key: 'evaluationStage' | 'evaluationReason' | 'plannedNotionalUsd',
+): string | null {
+  const value = readOpportunityOptimizer(payload)[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readOpportunityEvaluationStage(
+  payload: unknown,
+): 'threshold_filter' | 'portfolio_optimizer' | null {
+  const value = readOpportunityOptimizerValue(payload, 'evaluationStage');
+  return value === 'threshold_filter' || value === 'portfolio_optimizer'
+    ? value
+    : null;
+}
+
+function readOpportunityOptimizerNumber(
+  payload: unknown,
+  key: 'portfolioScore',
+): number | null {
+  const value = readOpportunityOptimizer(payload)[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readOpportunityOptimizerScoreBreakdown(
+  payload: unknown,
+): Record<string, number> | null {
+  const breakdown = asRecord(readOpportunityOptimizer(payload)['portfolioScoreBreakdown']);
+  const entries = Object.entries(breakdown)
+    .filter(([, value]) => typeof value === 'number' && Number.isFinite(value))
+    .map(([key, value]) => [key, value as number] as const);
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return Object.fromEntries(entries);
+}
+
+function readOpportunityOptimizerRationale(payload: unknown): string[] {
+  const rationale = readOpportunityOptimizer(payload)['rationale'];
+  return Array.isArray(rationale)
+    ? rationale.filter((value): value is string => typeof value === 'string' && value.length > 0)
+    : [];
 }
 
 function toIsoString(value: Date | string | null | undefined): string | null {
@@ -6455,6 +6508,42 @@ export class RuntimeStore {
       });
   }
 
+  async persistOpportunityEvaluation(input: CarryOpportunityEvaluationView): Promise<void> {
+    await this.db
+      .insert(strategyOpportunityEvaluations)
+      .values({
+        opportunityId: input.opportunityId,
+        runId: input.runId,
+        sleeveId: input.sleeveId,
+        asset: input.asset,
+        approved: input.approved,
+        evaluationStage: input.evaluationStage,
+        evaluationReason: input.evaluationReason,
+        portfolioScore: input.portfolioScore === null ? null : String(input.portfolioScore),
+        portfolioScoreBreakdown: input.portfolioScoreBreakdown,
+        optimizerRationale: input.optimizerRationale,
+        plannedNotionalUsd: input.plannedNotionalUsd,
+        createdAt: new Date(input.createdAt),
+        updatedAt: new Date(input.updatedAt),
+      })
+      .onConflictDoUpdate({
+        target: strategyOpportunityEvaluations.opportunityId,
+        set: {
+          runId: input.runId,
+          sleeveId: input.sleeveId,
+          asset: input.asset,
+          approved: input.approved,
+          evaluationStage: input.evaluationStage,
+          evaluationReason: input.evaluationReason,
+          portfolioScore: input.portfolioScore === null ? null : String(input.portfolioScore),
+          portfolioScoreBreakdown: input.portfolioScoreBreakdown,
+          optimizerRationale: input.optimizerRationale,
+          plannedNotionalUsd: input.plannedNotionalUsd,
+          updatedAt: new Date(input.updatedAt),
+        },
+      });
+  }
+
   async persistIntent(input: {
     runId: string;
     intent: OrderIntent;
@@ -8265,7 +8354,68 @@ export class RuntimeStore {
       detectedAt: row.detectedAt.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
       approved: row.approved,
+      evaluationStage: readOpportunityEvaluationStage(row.payload),
+      evaluationReason: readOpportunityOptimizerValue(row.payload, 'evaluationReason'),
+      portfolioScore: readOpportunityOptimizerNumber(row.payload, 'portfolioScore'),
+      portfolioScoreBreakdown: readOpportunityOptimizerScoreBreakdown(row.payload),
+      optimizerRationale: readOpportunityOptimizerRationale(row.payload),
+      plannedNotionalUsd: readOpportunityOptimizerValue(row.payload, 'plannedNotionalUsd'),
       payload: row.payload as Record<string, unknown>,
+    }));
+  }
+
+  async listCarryOpportunityEvaluations(limit: number): Promise<CarryOpportunityEvaluationView[]> {
+    const rows = await this.db
+      .select({
+        evaluation: strategyOpportunityEvaluations,
+        opportunity: strategyOpportunities,
+      })
+      .from(strategyOpportunityEvaluations)
+      .innerJoin(
+        strategyOpportunities,
+        eq(strategyOpportunityEvaluations.opportunityId, strategyOpportunities.opportunityId),
+      )
+      .orderBy(desc(strategyOpportunityEvaluations.createdAt))
+      .limit(limit);
+
+    return rows.map(({ evaluation, opportunity }) => ({
+      evaluationId: evaluation.id,
+      opportunityId: evaluation.opportunityId,
+      runId: evaluation.runId,
+      sleeveId: evaluation.sleeveId,
+      asset: evaluation.asset,
+      opportunityType: opportunity.opportunityType,
+      expectedAnnualYieldPct: opportunity.expectedAnnualYieldPct,
+      netYieldPct: opportunity.netYieldPct,
+      confidenceScore: opportunity.confidenceScore,
+      detectedAt: opportunity.detectedAt.toISOString(),
+      expiresAt: opportunity.expiresAt.toISOString(),
+      approved: evaluation.approved,
+      evaluationStage:
+        evaluation.evaluationStage === 'threshold_filter' ||
+        evaluation.evaluationStage === 'portfolio_optimizer'
+          ? evaluation.evaluationStage
+          : null,
+      evaluationReason: evaluation.evaluationReason,
+      portfolioScore: evaluation.portfolioScore === null ? null : Number(evaluation.portfolioScore),
+      portfolioScoreBreakdown:
+        Object.keys(asRecord(evaluation.portfolioScoreBreakdown)).length > 0
+          ? Object.fromEntries(
+              Object.entries(asRecord(evaluation.portfolioScoreBreakdown))
+                .filter((entry): entry is [string, number | string] =>
+                  typeof entry[1] === 'number' || typeof entry[1] === 'string',
+                )
+                .map(([key, value]) => [key, Number(value)]),
+            )
+          : null,
+      optimizerRationale: Array.isArray(evaluation.optimizerRationale)
+        ? evaluation.optimizerRationale.filter(
+            (value: unknown): value is string => typeof value === 'string',
+          )
+        : [],
+      plannedNotionalUsd: evaluation.plannedNotionalUsd,
+      createdAt: evaluation.createdAt.toISOString(),
+      updatedAt: evaluation.updatedAt.toISOString(),
     }));
   }
 
@@ -8298,6 +8448,12 @@ export class RuntimeStore {
       detectedAt: row.detectedAt.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
       approved: row.approved,
+      evaluationStage: readOpportunityEvaluationStage(row.payload),
+      evaluationReason: readOpportunityOptimizerValue(row.payload, 'evaluationReason'),
+      portfolioScore: readOpportunityOptimizerNumber(row.payload, 'portfolioScore'),
+      portfolioScoreBreakdown: readOpportunityOptimizerScoreBreakdown(row.payload),
+      optimizerRationale: readOpportunityOptimizerRationale(row.payload),
+      plannedNotionalUsd: readOpportunityOptimizerValue(row.payload, 'plannedNotionalUsd'),
       payload: row.payload as Record<string, unknown>,
     }));
   }

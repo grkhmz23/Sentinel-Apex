@@ -44,12 +44,12 @@ export default function SignInPage(
         </p>
 
         <div className="signin-shell__chips" aria-label="Current execution scope">
-          <span className="truth-chip truth-chip--accent">Drift devnet only</span>
+          <span className="truth-chip truth-chip--accent">Jupiter devnet</span>
           <span className="truth-chip truth-chip--accent">Carry sleeve only</span>
-          <span className="truth-chip truth-chip--accent">BTC-PERP only</span>
-          <span className="truth-chip">Reduce-only</span>
-          <span className="truth-chip">Market orders only</span>
-          <span className="truth-chip truth-chip--danger">No mainnet claim</span>
+          <span className="truth-chip truth-chip--accent">USDC base asset</span>
+          <span className="truth-chip">Operator approval</span>
+          <span className="truth-chip">Evidence-backed execution</span>
+          <span className="truth-chip truth-chip--danger">Devnet demo only</span>
         </div>
 
         <DeploymentTruthBanner />

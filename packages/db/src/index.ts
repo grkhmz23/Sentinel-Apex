@@ -66,6 +66,7 @@ export {
   runtimeState,
   runtimeWorkerState,
   strategyIntents,
+  strategyOpportunityEvaluations,
   strategyOpportunities,
   strategyRuns,
   treasuryActionExecutions,

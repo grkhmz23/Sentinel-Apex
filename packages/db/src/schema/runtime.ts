@@ -66,6 +66,38 @@ export const strategyOpportunities = pgTable(
   }),
 );
 
+export const strategyOpportunityEvaluations = pgTable(
+  'strategy_opportunity_evaluations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    opportunityId: text('opportunity_id')
+      .notNull()
+      .unique()
+      .references(() => strategyOpportunities.opportunityId),
+    runId: text('run_id')
+      .notNull()
+      .references(() => strategyRuns.runId),
+    sleeveId: text('sleeve_id').notNull(),
+    asset: text('asset').notNull(),
+    approved: boolean('approved').notNull(),
+    evaluationStage: text('evaluation_stage'),
+    evaluationReason: text('evaluation_reason'),
+    portfolioScore: text('portfolio_score'),
+    portfolioScoreBreakdown: jsonb('portfolio_score_breakdown'),
+    optimizerRationale: jsonb('optimizer_rationale').notNull().default([]),
+    plannedNotionalUsd: text('planned_notional_usd'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    opportunityIdIdx: index('strategy_opp_evals_opportunity_id_idx').on(t.opportunityId),
+    runIdIdx: index('strategy_opp_evals_run_id_idx').on(t.runId),
+    sleeveIdIdx: index('strategy_opp_evals_sleeve_id_idx').on(t.sleeveId),
+    approvedIdx: index('strategy_opp_evals_approved_idx').on(t.approved),
+    createdAtIdx: index('strategy_opp_evals_created_at_idx').on(t.createdAt),
+  }),
+);
+
 export const strategyIntents = pgTable(
   'strategy_intents',
   {
