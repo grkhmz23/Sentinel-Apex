@@ -27,7 +27,6 @@ export default function SignInPage(
       <div className="signin-shell__backdrop" aria-hidden="true" />
 
       <section className="signin-shell__hero">
-        <p className="eyebrow">Sentinel Apex</p>
         <Image
           alt="Sentinel Apex"
           className="signin-shell__logo"
