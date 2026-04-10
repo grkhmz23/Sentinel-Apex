@@ -6,8 +6,10 @@ import { CarryActions } from '../../src/components/carry-actions';
 import { DefinitionList } from '../../src/components/definition-list';
 import { EmptyState } from '../../src/components/empty-state';
 import { ErrorState } from '../../src/components/error-state';
+import { MetricCard } from '../../src/components/metric-card';
 import { Panel } from '../../src/components/panel';
 import { StatusBadge } from '../../src/components/status-badge';
+import { TableSurface } from '../../src/components/table-surface';
 import { requireDashboardSession } from '../../src/lib/auth.server';
 import { carryModeTone, carryOnboardingTone, carryStatusTone, formatCarryOnboardingState } from '../../src/lib/carry-display';
 import {
@@ -38,16 +40,61 @@ export default async function CarryPage(): Promise<JSX.Element> {
   return (
     <AppShell session={session}>
       <div className="page">
-        <header className="page__header">
-          <div>
+        <header className="page__header page__header--hero">
+          <div className="page__header-copy">
             <p className="eyebrow">Apex Carry</p>
             <h1>Carry Sleeve</h1>
+            <p className="page__summary">
+              Portfolio-level view of carry eligibility, opportunity ranking, recommendation readiness,
+              and venue execution boundaries for the constrained USDC mandate.
+            </p>
+            <div className="page__header-meta">
+              <StatusBadge
+                label={strategyProfile.eligibility.status}
+                tone={carryStrategyEligibilityTone(strategyProfile.eligibility.status)}
+              />
+              <StatusBadge
+                label={strategyProfile.evidence.latestConfirmationStatus ?? 'confirmation pending'}
+                tone={strategyProfile.evidence.latestConfirmationStatus === 'confirmed' ? 'good' : 'warn'}
+              />
+            </div>
           </div>
-          <div className="stack stack--compact">
+          <div className="stack stack--compact stack--align-end">
             <CarryActions />
-            <Link href="/carry/executions">Execution drill-through</Link>
+            <div className="inline-links">
+              <Link href="/carry/executions">Execution drill-through</Link>
+            </div>
           </div>
         </header>
+
+        <div className="metric-grid">
+          <MetricCard
+            detail={strategyProfile.evidence.summary}
+            label="Configured target APY"
+            tone="accent"
+            value={`${strategyProfile.apy.targetApyPct}%`}
+          />
+          <MetricCard
+            detail={`Target floor ${strategyProfile.apy.targetFloorPct}%`}
+            label="Projected APY"
+            tone={strategyProfile.apy.projectedApyPct === null ? 'warn' : 'good'}
+            value={strategyProfile.apy.projectedApyPct === null ? 'Unknown' : `${strategyProfile.apy.projectedApyPct}%`}
+          />
+          <MetricCard
+            detail={formatCarryStrategyEvidenceLabel(strategyProfile.yieldSourceCategory)}
+            label="Evidence environment"
+            tone="neutral"
+            value={formatCarryStrategyEnvironment(strategyProfile.evidence.environment)}
+          />
+          <MetricCard
+            detail={strategyProfile.eligibility.blockedReasons.length === 0
+              ? 'No blocked reasons recorded.'
+              : `${strategyProfile.eligibility.blockedReasons.length} blocked eligibility reason(s) recorded.`}
+            label="Eligibility posture"
+            tone={carryStrategyEligibilityTone(strategyProfile.eligibility.status)}
+            value={strategyProfile.eligibility.status}
+          />
+        </div>
 
         <div className="grid grid--two-column">
           <Panel subtitle="Constrained USDC carry mandate, target APY model, and currently provable evidence scope" title="Strategy Profile">
@@ -113,42 +160,44 @@ export default async function CarryPage(): Promise<JSX.Element> {
             {opportunities.length === 0 ? (
               <EmptyState message="No carry opportunities are currently persisted." title="No opportunities" />
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Asset</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Score</th>
-                    <th>Planned Notional</th>
-                    <th>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {opportunities.map((opportunity) => (
-                    <tr key={opportunity.opportunityId}>
-                      <td>{opportunity.asset}</td>
-                      <td>{opportunity.opportunityType}</td>
-                      <td>
-                        <StatusBadge
-                          label={opportunity.approved ? 'approved' : 'rejected'}
-                          tone={opportunity.approved ? 'good' : 'warn'}
-                        />
-                      </td>
-                      <td>{opportunity.portfolioScore === null ? 'Unavailable' : opportunity.portfolioScore.toFixed(4)}</td>
-                      <td>{opportunity.plannedNotionalUsd === null ? 'N/A' : formatUsd(opportunity.plannedNotionalUsd)}</td>
-                      <td>
-                        <div className="stack stack--compact">
-                          <span>{opportunity.evaluationReason ?? 'No evaluation reason recorded.'}</span>
-                          {opportunity.optimizerRationale.length === 0 ? null : (
-                            <span className="panel__hint">{opportunity.optimizerRationale.join(' | ')}</span>
-                          )}
-                        </div>
-                      </td>
+              <TableSurface caption="Recent scored opportunities">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Asset</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Score</th>
+                      <th>Planned Notional</th>
+                      <th>Reason</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {opportunities.map((opportunity) => (
+                      <tr key={opportunity.opportunityId}>
+                        <td>{opportunity.asset}</td>
+                        <td>{opportunity.opportunityType}</td>
+                        <td>
+                          <StatusBadge
+                            label={opportunity.approved ? 'approved' : 'rejected'}
+                            tone={opportunity.approved ? 'good' : 'warn'}
+                          />
+                        </td>
+                        <td>{opportunity.portfolioScore === null ? 'Unavailable' : opportunity.portfolioScore.toFixed(4)}</td>
+                        <td>{opportunity.plannedNotionalUsd === null ? 'N/A' : formatUsd(opportunity.plannedNotionalUsd)}</td>
+                        <td>
+                          <div className="stack stack--compact">
+                            <span>{opportunity.evaluationReason ?? 'No evaluation reason recorded.'}</span>
+                            {opportunity.optimizerRationale.length === 0 ? null : (
+                              <span className="panel__hint">{opportunity.optimizerRationale.join(' | ')}</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableSurface>
             )}
           </Panel>
         </div>
@@ -168,28 +217,30 @@ export default async function CarryPage(): Promise<JSX.Element> {
             {venues.length === 0 ? (
               <EmptyState message="No carry venue snapshots are persisted yet." title="No venues" />
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Venue</th>
-                    <th>Mode</th>
-                    <th>Onboarding</th>
-                    <th>Execution</th>
-                    <th>Missing</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {venues.map((venue) => (
-                    <tr key={venue.venueId}>
-                      <td><Link href={`/venues/${venue.venueId}`}>{venue.venueId}</Link></td>
-                      <td><StatusBadge label={venue.venueMode} tone={carryModeTone(venue.venueMode)} /></td>
-                      <td><StatusBadge label={formatCarryOnboardingState(venue.onboardingState)} tone={carryOnboardingTone(venue.onboardingState)} /></td>
-                      <td>{venue.executionSupported ? 'Supported' : 'Unsupported'}</td>
-                      <td>{venue.missingPrerequisites.join(', ') || 'None'}</td>
+              <TableSurface caption="Current carry venue posture">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Venue</th>
+                      <th>Mode</th>
+                      <th>Onboarding</th>
+                      <th>Execution</th>
+                      <th>Missing</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {venues.map((venue) => (
+                      <tr key={venue.venueId}>
+                        <td><Link href={`/venues/${venue.venueId}`}>{venue.venueId}</Link></td>
+                        <td><StatusBadge label={venue.venueMode} tone={carryModeTone(venue.venueMode)} /></td>
+                        <td><StatusBadge label={formatCarryOnboardingState(venue.onboardingState)} tone={carryOnboardingTone(venue.onboardingState)} /></td>
+                        <td>{venue.executionSupported ? 'Supported' : 'Unsupported'}</td>
+                        <td>{venue.missingPrerequisites.join(', ') || 'None'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableSurface>
             )}
           </Panel>
         </div>
@@ -199,35 +250,37 @@ export default async function CarryPage(): Promise<JSX.Element> {
             {actions.length === 0 ? (
               <EmptyState message="No carry actions are currently persisted." title="No actions" />
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Action</th>
-                    <th>Status</th>
-                    <th>Mode</th>
-                    <th>Notional</th>
-                    <th>Source</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {actions.map((action) => (
-                    <tr key={action.id}>
-                      <td>
-                        <div className="stack stack--compact">
-                          <Link href={`/carry/actions/${action.id}`}>{action.actionType}</Link>
-                          <span className="panel__hint">{action.summary}</span>
-                        </div>
-                      </td>
-                      <td><StatusBadge label={action.status} tone={carryStatusTone(action.status)} /></td>
-                      <td>{action.executionMode}{action.simulated ? ' / simulated' : ''}</td>
-                      <td>{formatUsd(action.notionalUsd)}</td>
-                      <td>{action.sourceKind}</td>
-                      <td>{formatDateTime(action.createdAt)}</td>
+              <TableSurface caption="Recent persisted carry actions">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Action</th>
+                      <th>Status</th>
+                      <th>Mode</th>
+                      <th>Notional</th>
+                      <th>Source</th>
+                      <th>Created</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {actions.map((action) => (
+                      <tr key={action.id}>
+                        <td>
+                          <div className="stack stack--compact">
+                            <Link href={`/carry/actions/${action.id}`}>{action.actionType}</Link>
+                            <span className="panel__hint">{action.summary}</span>
+                          </div>
+                        </td>
+                        <td><StatusBadge label={action.status} tone={carryStatusTone(action.status)} /></td>
+                        <td>{action.executionMode}{action.simulated ? ' / simulated' : ''}</td>
+                        <td>{formatUsd(action.notionalUsd)}</td>
+                        <td>{action.sourceKind}</td>
+                        <td>{formatDateTime(action.createdAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableSurface>
             )}
           </Panel>
         </div>
@@ -237,33 +290,35 @@ export default async function CarryPage(): Promise<JSX.Element> {
             {executions.length === 0 ? (
               <EmptyState message="No carry execution attempts are currently persisted." title="No executions" />
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Status</th>
-                    <th>Action</th>
-                    <th>Mode</th>
-                    <th>Requested By</th>
-                    <th>Completed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {executions.map((execution) => (
-                    <tr key={execution.id}>
-                      <td><StatusBadge label={execution.status} tone={carryStatusTone(execution.status)} /></td>
-                      <td>
-                        <div className="stack stack--compact">
-                          <Link href={`/carry/executions/${execution.id}`}>{execution.id}</Link>
-                          <Link href={`/carry/actions/${execution.carryActionId}`}>{execution.carryActionId}</Link>
-                        </div>
-                      </td>
-                      <td>{execution.executionMode}{execution.simulated ? ' / simulated' : ''}</td>
-                      <td>{execution.requestedBy}</td>
-                      <td>{formatDateTime(execution.completedAt)}</td>
+              <TableSurface caption="Recent downstream execution attempts">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Action</th>
+                      <th>Mode</th>
+                      <th>Requested By</th>
+                      <th>Completed</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {executions.map((execution) => (
+                      <tr key={execution.id}>
+                        <td><StatusBadge label={execution.status} tone={carryStatusTone(execution.status)} /></td>
+                        <td>
+                          <div className="stack stack--compact">
+                            <Link href={`/carry/executions/${execution.id}`}>{execution.id}</Link>
+                            <Link href={`/carry/actions/${execution.carryActionId}`}>{execution.carryActionId}</Link>
+                          </div>
+                        </td>
+                        <td>{execution.executionMode}{execution.simulated ? ' / simulated' : ''}</td>
+                        <td>{execution.requestedBy}</td>
+                        <td>{formatDateTime(execution.completedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableSurface>
             )}
           </Panel>
         </div>

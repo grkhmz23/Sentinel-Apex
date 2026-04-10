@@ -30,7 +30,6 @@ vi.mock('../lib/runtime-api.client', () => ({
 describe('QuickActions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubGlobal('confirm', vi.fn(() => true));
   });
 
   it('calls the correct API action and refreshes the page', async () => {
@@ -43,6 +42,7 @@ describe('QuickActions', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Run Cycle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     await waitFor(() => {
       expect(triggerCycle).toHaveBeenCalledTimes(1);
@@ -65,6 +65,7 @@ describe('QuickActions', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Run Reconciliation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     expect(screen.getByRole('button', { name: 'Queueing reconciliation...' })).toBeDisabled();
 

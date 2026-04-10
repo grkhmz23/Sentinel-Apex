@@ -1,16 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CarryActions } from './carry-actions';
 import { OperatorProvider } from './operator-context';
-import { TreasuryActions } from './treasury-actions';
 import { createDashboardSession } from '../test/fixtures';
 
 const {
   refresh,
-  triggerTreasuryEvaluation,
+  triggerCarryEvaluation,
 } = vi.hoisted(() => ({
   refresh: vi.fn(),
-  triggerTreasuryEvaluation: vi.fn(),
+  triggerCarryEvaluation: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -18,33 +18,33 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('../lib/runtime-api.client', () => ({
-  triggerTreasuryEvaluation,
+  triggerCarryEvaluation,
 }));
 
-describe('TreasuryActions', () => {
+describe('CarryActions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('queues a treasury evaluation and refreshes the page', async () => {
-    triggerTreasuryEvaluation.mockResolvedValueOnce({});
+  it('queues a carry evaluation and refreshes the page', async () => {
+    triggerCarryEvaluation.mockResolvedValueOnce({});
 
     render(
       <OperatorProvider session={createDashboardSession()}>
-        <TreasuryActions />
+        <CarryActions />
       </OperatorProvider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Run Treasury Evaluation' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Queue treasury evaluation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run Carry Evaluation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Queue carry evaluation' }));
 
     await waitFor(() => {
-      expect(triggerTreasuryEvaluation).toHaveBeenCalledTimes(1);
+      expect(triggerCarryEvaluation).toHaveBeenCalledTimes(1);
       expect(refresh).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('disables treasury action controls for viewer sessions', () => {
+  it('disables carry action controls for viewer sessions', () => {
     render(
       <OperatorProvider
         session={createDashboardSession({
@@ -54,11 +54,11 @@ describe('TreasuryActions', () => {
           },
         })}
       >
-        <TreasuryActions />
+        <CarryActions />
       </OperatorProvider>,
     );
 
-    expect(screen.getByRole('button', { name: 'Run Treasury Evaluation' })).toBeDisabled();
-    expect(screen.getByText('Your role is read-only for treasury actions.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run Carry Evaluation' })).toBeDisabled();
+    expect(screen.getByText('Your role is read-only for carry actions.')).toBeInTheDocument();
   });
 });

@@ -56,7 +56,9 @@ describe('TreasuryActionTable', () => {
     expect(secondExecuteButton).toBeDefined();
 
     fireEvent.click(firstApproveButton as HTMLElement);
+    fireEvent.click(screen.getByRole('button', { name: 'Approve treasury action' }));
     fireEvent.click(secondExecuteButton as HTMLElement);
+    fireEvent.click(screen.getByRole('button', { name: 'Execute treasury action' }));
 
     await waitFor(() => {
       expect(approveTreasuryAction).toHaveBeenCalledWith('treasury-action-1');

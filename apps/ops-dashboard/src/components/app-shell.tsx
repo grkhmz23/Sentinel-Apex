@@ -58,7 +58,6 @@ export function AppShell(
           <div className="content__frame">
             <header className="shell-topbar">
               <div className="shell-topbar__copy">
-                <p className="eyebrow">Sentinel Apex</p>
                 <h2>Execution truth stays server-side.</h2>
                 <p className="shell-topbar__summary">
                   Frontend mutations proxy to the backend API. Long-running runtime control, reconciliation,

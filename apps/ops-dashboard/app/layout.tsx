@@ -1,4 +1,5 @@
 import './globals.css';
+import './dashboard-ui.css';
 
 import type { Metadata } from 'next';
 

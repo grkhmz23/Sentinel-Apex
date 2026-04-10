@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import { ConfirmDialog } from './confirm-dialog';
 import { useOperator } from './operator-context';
 import { triggerCarryEvaluation } from '../lib/runtime-api.client';
 
@@ -20,12 +21,9 @@ export function CarryActions(): JSX.Element {
     error: null,
     success: null,
   });
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function handleEvaluate(): Promise<void> {
-    if (!window.confirm('Run a carry execution evaluation against the latest persisted strategy state?')) {
-      return;
-    }
-
     setState({
       loading: true,
       error: null,
@@ -39,6 +37,7 @@ export function CarryActions(): JSX.Element {
         error: null,
         success: 'Carry evaluation queued.',
       });
+      setConfirmOpen(false);
       router.refresh();
     } catch (error) {
       setState({
@@ -50,18 +49,29 @@ export function CarryActions(): JSX.Element {
   }
 
   return (
-    <div className="button-row">
-      <button
-        className="button"
-        disabled={state.loading || !canOperate}
-        onClick={() => void handleEvaluate()}
-        type="button"
-      >
-        {state.loading ? 'Queueing carry evaluation...' : 'Run Carry Evaluation'}
-      </button>
-      {state.error !== null ? <p className="feedback feedback--error">{state.error}</p> : null}
-      {state.success !== null ? <p className="feedback feedback--success">{state.success}</p> : null}
-      {!canOperate ? <p className="feedback feedback--warning">Your role is read-only for carry actions.</p> : null}
-    </div>
+    <>
+      <div className="button-row">
+        <button
+          className="button"
+          disabled={state.loading || !canOperate}
+          onClick={() => setConfirmOpen(true)}
+          type="button"
+        >
+          {state.loading ? 'Queueing carry evaluation...' : 'Run Carry Evaluation'}
+        </button>
+        {state.error !== null ? <p className="feedback feedback--error">{state.error}</p> : null}
+        {state.success !== null ? <p className="feedback feedback--success">{state.success}</p> : null}
+        {!canOperate ? <p className="feedback feedback--warning">Your role is read-only for carry actions.</p> : null}
+      </div>
+      <ConfirmDialog
+        busy={state.loading}
+        confirmLabel="Queue carry evaluation"
+        description="Run a carry execution evaluation against the latest persisted strategy state?"
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => void handleEvaluate()}
+        open={confirmOpen}
+        title="Confirm carry evaluation"
+      />
+    </>
   );
 }

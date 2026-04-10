@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import { ConfirmDialog } from './confirm-dialog';
 import { useOperator } from './operator-context';
 import {
   rebuildProjections,
@@ -17,6 +18,13 @@ interface MutationState {
   success: string | null;
 }
 
+interface PendingAction {
+  name: NonNullable<MutationState['name']>;
+  confirmationMessage: string;
+  successMessage: string;
+  run: () => Promise<unknown>;
+}
+
 export function QuickActions(): JSX.Element {
   const router = useRouter();
   const { canOperate } = useOperator();
@@ -25,21 +33,20 @@ export function QuickActions(): JSX.Element {
     error: null,
     success: null,
   });
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
-  async function runAction(
-    actionName: MutationState['name'],
-    action: () => Promise<unknown>,
-    confirmationMessage: string,
-    successMessage: string,
-  ): Promise<void> {
-    if (!window.confirm(confirmationMessage)) {
+  async function runAction(): Promise<void> {
+    if (pendingAction === null) {
       return;
     }
 
-    setState({ name: actionName, error: null, success: null });
+    const actionToRun = pendingAction;
+
+    setState({ name: actionToRun.name, error: null, success: null });
     try {
-      await action();
-      setState({ name: null, error: null, success: successMessage });
+      await actionToRun.run();
+      setState({ name: null, error: null, success: actionToRun.successMessage });
+      setPendingAction(null);
       router.refresh();
     } catch (error) {
       setState({
@@ -53,62 +60,73 @@ export function QuickActions(): JSX.Element {
   const disabled = state.name !== null || !canOperate;
 
   return (
-    <div className="button-row">
-      <button
-        className="button"
-        disabled={disabled}
-        onClick={() => void runAction(
-          'run_cycle',
-          async () => triggerCycle(),
-          'Queue a runtime cycle?',
-          'Runtime cycle queued.',
-        )}
-        type="button"
-      >
-        {state.name === 'run_cycle' ? 'Queueing cycle...' : 'Run Cycle'}
-      </button>
-      <button
-        className="button"
-        disabled={disabled}
-        onClick={() => void runAction(
-          'rebuild_projections',
-          async () => rebuildProjections(),
-          'Rebuild projections from durable state?',
-          'Projection rebuild queued.',
-        )}
-        type="button"
-      >
-        {state.name === 'rebuild_projections' ? 'Queueing rebuild...' : 'Rebuild Projections'}
-      </button>
-      <button
-        className="button button--secondary"
-        disabled={disabled}
-        onClick={() => void runAction(
-          'run_allocator_evaluation',
-          async () => triggerAllocatorEvaluation(),
-          'Run a Sentinel allocator evaluation?',
-          'Allocator evaluation queued.',
-        )}
-        type="button"
-      >
-        {state.name === 'run_allocator_evaluation' ? 'Queueing allocator...' : 'Evaluate Allocator'}
-      </button>
-      <button
-        className="button button--secondary"
-        disabled={disabled}
-        onClick={() => void runAction(
-          'run_reconciliation',
-          async () => triggerReconciliation(),
-          'Run reconciliation against current persisted and adapter state?',
-          'Reconciliation queued.',
-        )}
-        type="button"
-      >
-        {state.name === 'run_reconciliation' ? 'Queueing reconciliation...' : 'Run Reconciliation'}
-      </button>
-      {state.error !== null ? <p className="feedback feedback--error">{state.error}</p> : null}
-      {state.success !== null ? <p className="feedback feedback--success">{state.success}</p> : null}
-      {!canOperate ? <p className="feedback feedback--warning">Your role is read-only for runtime actions.</p> : null}
-    </div>
+    <>
+      <div className="button-row">
+        <button
+          className="button"
+          disabled={disabled}
+          onClick={() => setPendingAction({
+            name: 'run_cycle',
+            confirmationMessage: 'Queue a runtime cycle?',
+            successMessage: 'Runtime cycle queued.',
+            run: async () => triggerCycle(),
+          })}
+          type="button"
+        >
+          {state.name === 'run_cycle' ? 'Queueing cycle...' : 'Run Cycle'}
+        </button>
+        <button
+          className="button"
+          disabled={disabled}
+          onClick={() => setPendingAction({
+            name: 'rebuild_projections',
+            confirmationMessage: 'Rebuild projections from durable state?',
+            successMessage: 'Projection rebuild queued.',
+            run: async () => rebuildProjections(),
+          })}
+          type="button"
+        >
+          {state.name === 'rebuild_projections' ? 'Queueing rebuild...' : 'Rebuild Projections'}
+        </button>
+        <button
+          className="button button--secondary"
+          disabled={disabled}
+          onClick={() => setPendingAction({
+            name: 'run_allocator_evaluation',
+            confirmationMessage: 'Run a Sentinel allocator evaluation?',
+            successMessage: 'Allocator evaluation queued.',
+            run: async () => triggerAllocatorEvaluation(),
+          })}
+          type="button"
+        >
+          {state.name === 'run_allocator_evaluation' ? 'Queueing allocator...' : 'Evaluate Allocator'}
+        </button>
+        <button
+          className="button button--secondary"
+          disabled={disabled}
+          onClick={() => setPendingAction({
+            name: 'run_reconciliation',
+            confirmationMessage: 'Run reconciliation against current persisted and adapter state?',
+            successMessage: 'Reconciliation queued.',
+            run: async () => triggerReconciliation(),
+          })}
+          type="button"
+        >
+          {state.name === 'run_reconciliation' ? 'Queueing reconciliation...' : 'Run Reconciliation'}
+        </button>
+        {state.error !== null ? <p className="feedback feedback--error">{state.error}</p> : null}
+        {state.success !== null ? <p className="feedback feedback--success">{state.success}</p> : null}
+        {!canOperate ? <p className="feedback feedback--warning">Your role is read-only for runtime actions.</p> : null}
+      </div>
+      <ConfirmDialog
+        busy={pendingAction !== null && state.name === pendingAction.name}
+        confirmLabel="Confirm"
+        description={pendingAction?.confirmationMessage ?? ''}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => void runAction()}
+        open={pendingAction !== null}
+        title="Queue runtime action"
+      />
+    </>
   );
 }
