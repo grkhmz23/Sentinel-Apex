@@ -43,7 +43,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
       </header>
 
       <div className="grid grid--metrics">
-        <Panel subtitle="Runtime and worker state" title="Status">
+        <Panel subtitle="Live operating state for the vault runtime, worker, and projection layer" title="Status">
           <DefinitionList
             items={[
               { label: 'Runtime lifecycle', value: <StatusBadge label={overview.runtime.lifecycleState} tone={overview.runtime.lifecycleState === 'ready' ? 'good' : 'warn'} /> },
@@ -56,7 +56,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
           />
         </Panel>
 
-        <Panel subtitle="Mismatch and degradation posture" title="Health">
+        <Panel subtitle="Integrity posture, degradation signals, and reconciliation freshness" title="Health">
           <DefinitionList
             items={[
               { label: 'Open mismatches', value: String(overview.openMismatchCount) },
@@ -69,7 +69,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
           />
         </Panel>
 
-        <Panel subtitle="Idle capital and reserve posture" title="Treasury">
+        <Panel subtitle="Reserve coverage and idle-capital posture for controlled deployment" title="Treasury">
           {overview.treasurySummary === null ? (
             <EmptyState message="Treasury has not been evaluated yet." title="No treasury data" />
           ) : (
@@ -88,7 +88,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
       </div>
 
       <div className="grid grid--two-column">
-        <Panel subtitle="Newest runtime integrity incidents" title="Recent Mismatches">
+        <Panel subtitle="Newest integrity incidents that can block or constrain deployment" title="Recent Mismatches">
           {mismatches.length === 0 ? (
             <EmptyState message="No mismatches are currently recorded." title="No mismatches" />
           ) : (
@@ -115,7 +115,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
           )}
         </Panel>
 
-        <Panel subtitle="Most recent queued and completed actions" title="Recent Commands">
+        <Panel subtitle="Most recent operator and runtime actions moving the protocol forward" title="Recent Commands">
           {commands.length === 0 ? (
             <EmptyState message="No runtime commands have been recorded." title="No commands" />
           ) : (
@@ -144,7 +144,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
       </div>
 
       <div className="grid grid--two-column">
-        <Panel subtitle="Recent reconciliation activity" title="Reconciliation">
+        <Panel subtitle="Recent state-verification runs across runtime, execution, and portfolio truth" title="Reconciliation">
           {reconciliationRuns.length === 0 ? (
             <EmptyState message="No reconciliation runs have been recorded." title="No reconciliation runs" />
           ) : (
@@ -174,7 +174,7 @@ export default async function OverviewPage(): Promise<JSX.Element> {
           ) : null}
         </Panel>
 
-        <Panel subtitle="Latest recovery outcomes" title="Recovery">
+        <Panel subtitle="Latest recovery outcomes from fail-closed operating workflows" title="Recovery">
           {recoveryOutcomes.length === 0 ? (
             <EmptyState message="No recovery outcomes have been recorded." title="No recovery outcomes" />
           ) : (

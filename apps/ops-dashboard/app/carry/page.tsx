@@ -50,7 +50,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
         </header>
 
         <div className="grid grid--two-column">
-          <Panel subtitle="Hackathon-facing vault policy, APY model, and current supported evidence scope" title="Strategy Profile">
+          <Panel subtitle="Constrained USDC carry mandate, target APY model, and currently provable evidence scope" title="Strategy Profile">
             <DefinitionList
               items={[
                 { label: 'Strategy', value: strategyProfile.strategyName },
@@ -88,7 +88,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
             <p className="panel__hint">{strategyProfile.evidence.summary}</p>
           </Panel>
 
-          <Panel subtitle="Each Build-A-Bear rule is evaluated explicitly and fails closed when unsupported or ineligible" title="Eligibility Checks">
+          <Panel subtitle="Explicit product-rule enforcement so the vault fails closed when eligibility drifts" title="Eligibility Checks">
             {strategyProfile.eligibility.ruleResults.length === 0 ? (
               <EmptyState message="No eligibility rules were recorded for this strategy profile." title="No rules" />
             ) : (
@@ -109,7 +109,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
         </div>
 
         <div className="grid">
-          <Panel subtitle="Portfolio optimizer decisions for recent carry opportunities" title="Opportunity Ranking">
+          <Panel subtitle="Portfolio-level selection, rejection, and sizing decisions for recent carry opportunities" title="Opportunity Ranking">
             {opportunities.length === 0 ? (
               <EmptyState message="No carry opportunities are currently persisted." title="No opportunities" />
             ) : (
@@ -154,7 +154,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
         </div>
 
         <div className="grid">
-          <Panel subtitle="Execution-ready carry recommendations with backend-enforced gating" title="Recommendations">
+          <Panel subtitle="Execution-ready carry recommendations after policy, optimizer, and runtime gating" title="Recommendations">
             {recommendations.length === 0 ? (
               <EmptyState message="No carry recommendations are currently persisted." title="No recommendations" />
             ) : (
@@ -164,7 +164,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
         </div>
 
         <div className="grid">
-          <Panel subtitle="Venue readiness, simulation state, and execution support boundaries" title="Venue Readiness">
+          <Panel subtitle="Venue readiness, execution support, and current deployment boundaries" title="Venue Readiness">
             {venues.length === 0 ? (
               <EmptyState message="No carry venue snapshots are persisted yet." title="No venues" />
             ) : (
@@ -195,7 +195,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
         </div>
 
         <div className="grid">
-          <Panel subtitle="Durable carry action lifecycle, including simulated and blocked states" title="Action History">
+          <Panel subtitle="Durable carry action lifecycle from recommendation to approval-ready action" title="Action History">
             {actions.length === 0 ? (
               <EmptyState message="No carry actions are currently persisted." title="No actions" />
             ) : (
@@ -233,7 +233,7 @@ export default async function CarryPage(): Promise<JSX.Element> {
         </div>
 
         <div className="grid">
-          <Panel subtitle="Recent downstream execution attempts and outcomes" title="Execution History">
+          <Panel subtitle="Recent downstream execution attempts, outcomes, and operator-verifiable references" title="Execution History">
             {executions.length === 0 ? (
               <EmptyState message="No carry execution attempts are currently persisted." title="No executions" />
             ) : (

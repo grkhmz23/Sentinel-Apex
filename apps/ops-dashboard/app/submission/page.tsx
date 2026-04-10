@@ -99,7 +99,7 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
 
         <div className="grid grid--two-column">
           <Panel
-            subtitle="Canonical track, build window, address scope, and latest verifiable execution evidence"
+            subtitle="Canonical vault identity, build window, address scope, and latest verifiable execution evidence"
             title="Submission Profile"
           >
             <DefinitionList
@@ -193,7 +193,7 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
 
         <div className="grid grid--two-column">
           <Panel
-            subtitle="These are the scopes the repo can actually support and prove today"
+            subtitle="These are the product claims the protocol can currently support and prove honestly"
             title="Supported Scope"
           >
             <div className="stack">
@@ -204,7 +204,7 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
           </Panel>
 
           <Panel
-            subtitle="These boundaries still block a truthful Main Track submission"
+            subtitle="These boundaries still block a truthful mainnet-ready submission claim"
             title="Blocked Scope"
           >
             <div className="stack">
@@ -218,7 +218,7 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
 
         <div className="grid grid--two-column">
           <Panel
-            subtitle="Explicit artifacts recorded for hackathon review and verification"
+            subtitle="Explicit artifacts recorded for investor, judge, and on-chain verification"
             title="Verification Evidence"
           >
             <div className="stack">
@@ -252,7 +252,7 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
           </Panel>
 
           <Panel
-            subtitle="Judge-facing checklist derived from dossier state and explicit evidence attachments"
+            subtitle="Exportable checklist derived from dossier state and explicit evidence attachments"
             title="Export Bundle"
           >
             <p className="panel__hint">{exportBundle.judgeSummary}</p>
