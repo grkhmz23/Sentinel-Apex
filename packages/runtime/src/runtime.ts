@@ -282,6 +282,17 @@ function getSimulationReplayLimit(): number | null {
   return parsed === 0 ? null : parsed;
 }
 
+function shouldUseSimulatedCarryVenues(
+  liveExecutionEnabled: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!liveExecutionEnabled) {
+    return true;
+  }
+
+  return env['JUPITER_PERPS_ENABLED'] !== 'true';
+}
+
 function readPreTradePositionContext(metadata: Record<string, unknown>): PreTradePositionContext | null {
   const value = asRecord(metadata[PRE_TRADE_POSITION_CONTEXT_METADATA_KEY]);
   if (typeof value['captureStatus'] !== 'string' || typeof value['observedAt'] !== 'string') {
@@ -1178,28 +1189,32 @@ export class SentinelRuntime {
     const liveExecutionEnabled = overrides.liveExecutionEnabled ?? false;
     const logger = createLogger('runtime');
 
-    const defaultVenues: SimulatedVenueConfig[] = overrides.venues ?? [
-      {
-        venueId: 'sim-venue-a',
-        venueType: 'cex',
-        makerFeePct: '0.0002',
-        takerFeePct: '0.0005',
-        slippagePct: '0.0001',
-        initialBalances: { USDC: '100000' },
-        deterministicPrices: { BTC: '100000', ETH: '3000' },
-        deterministicFundingRates: { BTC: '0.00006', ETH: '0.00003' },
-      },
-      {
-        venueId: 'sim-venue-b',
-        venueType: 'cex',
-        makerFeePct: '0.0002',
-        takerFeePct: '0.0005',
-        slippagePct: '0.0001',
-        initialBalances: { USDC: '100000' },
-        deterministicPrices: { BTC: '100180', ETH: '3008' },
-        deterministicFundingRates: { BTC: '-0.00002', ETH: '0.00001' },
-      },
-    ];
+    const defaultVenues: SimulatedVenueConfig[] = overrides.venues ?? (
+      shouldUseSimulatedCarryVenues(liveExecutionEnabled)
+        ? [
+          {
+            venueId: 'sim-venue-a',
+            venueType: 'cex',
+            makerFeePct: '0.0002',
+            takerFeePct: '0.0005',
+            slippagePct: '0.0001',
+            initialBalances: { USDC: '100000' },
+            deterministicPrices: { BTC: '100000', ETH: '3000' },
+            deterministicFundingRates: { BTC: '0.00006', ETH: '0.00003' },
+          },
+          {
+            venueId: 'sim-venue-b',
+            venueType: 'cex',
+            makerFeePct: '0.0002',
+            takerFeePct: '0.0005',
+            slippagePct: '0.0001',
+            initialBalances: { USDC: '100000' },
+            deterministicPrices: { BTC: '100180', ETH: '3008' },
+            deterministicFundingRates: { BTC: '-0.00002', ETH: '0.00001' },
+          },
+        ]
+        : []
+    );
     const defaultTreasuryVenues: SimulatedTreasuryVenueConfig[] = overrides.treasuryVenues ?? [
       {
         venueId: 'atlas-t0-sim',

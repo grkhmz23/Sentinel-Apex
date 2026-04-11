@@ -4955,9 +4955,16 @@ export class RuntimeStore {
       .select()
       .from(carryVenueSnapshots)
       .orderBy(desc(carryVenueSnapshots.updatedAt))
-      .limit(limit);
+      .limit(limit * 5);
 
-    const venues = rows.map(mapCarryVenueRow);
+    const venues = Array.from(
+      rows.reduce((map, row) => {
+        if (!map.has(row.venueId)) {
+          map.set(row.venueId, mapCarryVenueRow(row));
+        }
+        return map;
+      }, new Map<string, CarryVenueCoreView>()).values(),
+    ).slice(0, limit);
     const inventory = await this.listVenueInventoryCore(500);
     const inventoryByVenueId = new Map(inventory.map((venue) => [venue.venueId, venue] as const));
     const promotionSummaryMap = await this.buildPromotionSummaryMap(inventory);

@@ -117,13 +117,15 @@ export class RuntimeReconciliationEngine {
 
     try {
       const detectedAt = new Date();
+      const activeRealVenueIds = await this.getActiveRealVenueIds();
+      await this.resolveInactiveVenueMismatches(activeRealVenueIds, input.sourceComponent, detectedAt);
       const candidates = [
         ...(await this.detectProjectionStateFindings(input.sourceComponent, detectedAt)),
         ...(await this.detectCommandOutcomeFindings(input.sourceComponent, detectedAt)),
         ...(await this.detectOrderStateFindings(input.sourceComponent, detectedAt)),
         ...(await this.detectPositionExposureFindings(input.sourceComponent, detectedAt)),
-        ...(await this.detectVenueTruthFindings(input.sourceComponent, detectedAt)),
-        ...(await this.detectDerivativeComparisonFindings(input.sourceComponent, detectedAt)),
+        ...(await this.detectVenueTruthFindings(input.sourceComponent, detectedAt, activeRealVenueIds)),
+        ...(await this.detectDerivativeComparisonFindings(input.sourceComponent, detectedAt, activeRealVenueIds)),
       ];
 
       const linkedMismatchIds = new Set<string>();
@@ -206,6 +208,61 @@ export class RuntimeReconciliationEngine {
       });
 
       throw error;
+    }
+  }
+
+  private async getActiveRealVenueIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+
+    for (const adapter of this.adapters.values()) {
+      if (typeof adapter.getVenueCapabilitySnapshot !== 'function') {
+        continue;
+      }
+      const capability = await adapter.getVenueCapabilitySnapshot();
+      if (capability.truthMode === 'real') {
+        ids.add(capability.venueId);
+      }
+    }
+
+    for (const adapter of this.truthAdapters.values()) {
+      const capability = await adapter.getVenueCapabilitySnapshot();
+      if (capability.truthMode === 'real') {
+        ids.add(capability.venueId);
+      }
+    }
+
+    return ids;
+  }
+
+  private async resolveInactiveVenueMismatches(
+    activeRealVenueIds: Set<string>,
+    sourceComponent: string,
+    detectedAt: Date,
+  ): Promise<void> {
+    if (activeRealVenueIds.size === 0) {
+      return;
+    }
+
+    const mismatches = await this.store.listMismatches(500, { sourceKind: 'reconciliation' });
+    for (const mismatch of mismatches) {
+      if (mismatch.status === 'verified' || mismatch.status === 'resolved') {
+        continue;
+      }
+
+      const venueId = typeof mismatch.details['venueId'] === 'string'
+        ? mismatch.details['venueId']
+        : null;
+      if (venueId === null || activeRealVenueIds.has(venueId)) {
+        continue;
+      }
+
+      await this.store.updateMismatchById(mismatch.id, {
+        status: 'resolved',
+        resolvedAt: detectedAt,
+        resolvedBy: sourceComponent,
+        resolutionSummary: `Inactive historical venue mismatch for ${venueId} was auto-resolved because the venue is no longer configured in the active runtime.`,
+        lastStatusChangeAt: detectedAt,
+      });
     }
   }
 
@@ -696,9 +753,12 @@ export class RuntimeReconciliationEngine {
   private async detectVenueTruthFindings(
     sourceComponent: string,
     detectedAt: Date,
+    activeRealVenueIds: Set<string>,
   ): Promise<ReconciliationCandidateFinding[]> {
     const results: ReconciliationCandidateFinding[] = [];
-    const venues = await this.store.listVenues(500);
+    const venues = (await this.store.listVenues(500)).filter((venue) =>
+      activeRealVenueIds.size === 0 || activeRealVenueIds.has(venue.venueId),
+    );
     const venueById = new Map(venues.map((venue) => [venue.venueId, venue] as const));
 
     for (const adapter of this.truthAdapters.values()) {
@@ -950,9 +1010,12 @@ export class RuntimeReconciliationEngine {
   private async detectDerivativeComparisonFindings(
     sourceComponent: string,
     detectedAt: Date,
+    activeRealVenueIds: Set<string>,
   ): Promise<ReconciliationCandidateFinding[]> {
     const results: ReconciliationCandidateFinding[] = [];
-    const venues = await this.store.listVenues(500);
+    const venues = (await this.store.listVenues(500)).filter((venue) =>
+      activeRealVenueIds.size === 0 || activeRealVenueIds.has(venue.venueId),
+    );
 
     for (const venue of venues) {
       if (venue.truthMode !== 'real' || venue.truthProfile !== 'derivative_aware') {
