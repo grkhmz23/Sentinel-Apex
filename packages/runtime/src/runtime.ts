@@ -2016,6 +2016,21 @@ export class SentinelRuntime {
           },
         };
       const promotion = promotionByVenueId.get(capabilities.venueId);
+      const approvedForLiveUse =
+        promotion?.approvedForLiveUse
+        ?? capabilities.approvedForLiveUse
+        ?? capabilities.onboardingState === 'approved_for_live';
+      const sensitiveExecutionEligible =
+        promotion?.sensitiveExecutionEligible
+        ?? (
+          approvedForLiveUse
+          && capabilities.executionSupported
+          && capabilities.healthy
+          && capabilities.missingPrerequisites.length === 0
+        );
+      const promotionStatus =
+        promotion?.promotionStatus
+        ?? (approvedForLiveUse ? 'approved' : 'not_requested');
 
       views.push({
         strategyRunId,
@@ -2025,9 +2040,9 @@ export class SentinelRuntime {
         supportsIncreaseExposure: capabilities.supportsIncreaseExposure,
         supportsReduceExposure: capabilities.supportsReduceExposure,
         readOnly: capabilities.readOnly,
-        approvedForLiveUse: promotion?.approvedForLiveUse ?? false,
-        sensitiveExecutionEligible: promotion?.sensitiveExecutionEligible ?? false,
-        promotionStatus: promotion?.promotionStatus ?? 'not_requested',
+        approvedForLiveUse,
+        sensitiveExecutionEligible,
+        promotionStatus,
         promotionBlockedReasons: promotion?.blockers ?? capabilities.missingPrerequisites,
         healthy: capabilities.healthy,
         onboardingState: capabilities.onboardingState,
@@ -2035,7 +2050,7 @@ export class SentinelRuntime {
         metadata: {
           ...capabilities.metadata,
           reportedApprovedForLiveUse: capabilities.approvedForLiveUse,
-          connectorPromotionStatus: promotion?.promotionStatus ?? 'not_requested',
+          connectorPromotionStatus: promotionStatus,
         },
         updatedAt: now,
         createdAt: now,

@@ -20,7 +20,7 @@ import type {
 } from './types.js';
 
 export const DEFAULT_CARRY_OPERATIONAL_POLICY: CarryOperationalPolicy = {
-  minimumActionableUsd: '2500',
+  minimumActionableUsd: '250',
   minimumConfidenceScore: 0.6,
 };
 

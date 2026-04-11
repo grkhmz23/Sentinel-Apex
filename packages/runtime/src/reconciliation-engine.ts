@@ -620,8 +620,25 @@ export class RuntimeReconciliationEngine {
     detectedAt: Date,
   ): Promise<ReconciliationCandidateFinding[]> {
     const results: ReconciliationCandidateFinding[] = [];
+    const venueOrderSupport = new Map<string, boolean>(
+      await Promise.all(
+        Array.from(this.adapters.entries()).map(async ([venueId, adapter]) => {
+          const snapshot = typeof adapter.getVenueTruthSnapshot === 'function'
+            ? await adapter.getVenueTruthSnapshot()
+            : null;
+          return [
+            venueId,
+            snapshot?.truthCoverage.orderState.status !== 'unsupported',
+          ] as const;
+        }),
+      ),
+    );
 
     for (const [venueId, adapter] of this.adapters) {
+      if (!venueOrderSupport.get(venueId)) {
+        continue;
+      }
+
       const localOrders = await this.store.listOrdersByVenue(venueId);
 
       for (const order of localOrders) {
