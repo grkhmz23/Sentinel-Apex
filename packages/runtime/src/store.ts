@@ -8737,11 +8737,18 @@ export class RuntimeStore {
     return rows.map((row) => mapMismatchRow(row));
   }
 
-  async countOpenMismatches(): Promise<number> {
+  async countOpenMismatches(
+    filters?: { severity?: RuntimeReconciliationFindingSeverity },
+  ): Promise<number> {
+    const conditions = [eq(runtimeMismatches.status, 'open')];
+    if (filters?.severity !== undefined) {
+      conditions.push(eq(runtimeMismatches.severity, filters.severity));
+    }
+
     const rows = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(runtimeMismatches)
-      .where(eq(runtimeMismatches.status, 'open'));
+      .where(and(...conditions));
 
     return Number(rows[0]?.count ?? 0);
   }
