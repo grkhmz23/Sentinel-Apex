@@ -68,7 +68,7 @@ export function buildDeploymentProfile(
       ?? options.defaultExecutionBadge
       ?? DEFAULT_EXECUTION_BADGE,
     executionMode: trimToNull(env['EXECUTION_MODE']) ?? 'dry-run',
-    liveExecutionEnabled: false, // Disabled - no live venues configured
+    liveExecutionEnabled: envFlagEnabled(env['FEATURE_FLAG_LIVE_EXECUTION']),
     supportedExecutionScope: SUPPORTED_EXECUTION_SCOPE,
     blockedExecutionScope: BLOCKED_EXECUTION_SCOPE,
     readinessTruth: READINESS_TRUTH_STATEMENT,
