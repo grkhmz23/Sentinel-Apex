@@ -69,16 +69,22 @@ export function AppShell(
                   and venue-native Drift evidence ingestion stay in Render services only.
                 </p>
               </div>
-              <div className="shell-topbar__meta">
-                <div className="shell-topbar__stat">
-                  <span className="shell-topbar__stat-label">Operator</span>
-                  <strong>{session.operator.displayName}</strong>
-                  <span className="shell-topbar__stat-detail">{session.operator.email}</span>
+              <div className="shell-topbar__aside">
+                <div className="shell-topbar__brandline">
+                  <span className="shell-topbar__brand-pulse" aria-hidden="true" />
+                  <span>Sentinel operator link</span>
                 </div>
-                <div className="shell-topbar__stat">
-                  <span className="shell-topbar__stat-label">Session</span>
-                  <strong>{session.operator.active ? 'Active' : 'Inactive'}</strong>
-                  <span className="shell-topbar__stat-detail">Expires {session.expiresAt}</span>
+                <div className="shell-topbar__meta">
+                  <div className="shell-topbar__stat">
+                    <span className="shell-topbar__stat-label">Operator</span>
+                    <strong>{session.operator.displayName}</strong>
+                    <span className="shell-topbar__stat-detail">{session.operator.email}</span>
+                  </div>
+                  <div className="shell-topbar__stat">
+                    <span className="shell-topbar__stat-label">Session</span>
+                    <strong>{session.operator.active ? 'Active' : 'Inactive'}</strong>
+                    <span className="shell-topbar__stat-detail">Expires {session.expiresAt}</span>
+                  </div>
                 </div>
               </div>
             </header>

@@ -61,9 +61,9 @@ export function QuickActions(): JSX.Element {
 
   return (
     <>
-      <div className="button-row">
+      <div className="quick-actions">
         <button
-          className="button"
+          className="quick-actions__card quick-actions__card--primary"
           disabled={disabled}
           onClick={() => setPendingAction({
             name: 'run_cycle',
@@ -73,10 +73,12 @@ export function QuickActions(): JSX.Element {
           })}
           type="button"
         >
-          {state.name === 'run_cycle' ? 'Queueing cycle...' : 'Run Cycle'}
+          <span className="quick-actions__eyebrow">Immediate cycle</span>
+          <strong>{state.name === 'run_cycle' ? 'Queueing cycle...' : 'Run Cycle'}</strong>
+          <span className="quick-actions__detail">Advance runtime state against the latest persisted inputs.</span>
         </button>
         <button
-          className="button"
+          className="quick-actions__card quick-actions__card--primary"
           disabled={disabled}
           onClick={() => setPendingAction({
             name: 'rebuild_projections',
@@ -86,10 +88,12 @@ export function QuickActions(): JSX.Element {
           })}
           type="button"
         >
-          {state.name === 'rebuild_projections' ? 'Queueing rebuild...' : 'Rebuild Projections'}
+          <span className="quick-actions__eyebrow">Projection hygiene</span>
+          <strong>{state.name === 'rebuild_projections' ? 'Queueing rebuild...' : 'Rebuild Projections'}</strong>
+          <span className="quick-actions__detail">Refresh dashboard-facing state from durable control-plane records.</span>
         </button>
         <button
-          className="button button--secondary"
+          className="quick-actions__card"
           disabled={disabled}
           onClick={() => setPendingAction({
             name: 'run_allocator_evaluation',
@@ -99,10 +103,12 @@ export function QuickActions(): JSX.Element {
           })}
           type="button"
         >
-          {state.name === 'run_allocator_evaluation' ? 'Queueing allocator...' : 'Evaluate Allocator'}
+          <span className="quick-actions__eyebrow">Capital posture</span>
+          <strong>{state.name === 'run_allocator_evaluation' ? 'Queueing allocator...' : 'Evaluate Allocator'}</strong>
+          <span className="quick-actions__detail">Recompute sleeve budget pressure and current target mix.</span>
         </button>
         <button
-          className="button button--secondary"
+          className="quick-actions__card"
           disabled={disabled}
           onClick={() => setPendingAction({
             name: 'run_reconciliation',
@@ -112,7 +118,9 @@ export function QuickActions(): JSX.Element {
           })}
           type="button"
         >
-          {state.name === 'run_reconciliation' ? 'Queueing reconciliation...' : 'Run Reconciliation'}
+          <span className="quick-actions__eyebrow">Integrity pass</span>
+          <strong>{state.name === 'run_reconciliation' ? 'Queueing reconciliation...' : 'Run Reconciliation'}</strong>
+          <span className="quick-actions__detail">Compare runtime projections against adapter and venue truth.</span>
         </button>
         {state.error !== null ? <p className="feedback feedback--error">{state.error}</p> : null}
         {state.success !== null ? <p className="feedback feedback--success">{state.success}</p> : null}

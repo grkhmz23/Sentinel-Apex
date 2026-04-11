@@ -16,6 +16,14 @@ export function OperatorSettings(): JSX.Element {
         <StatusBadge label={session.operator.role} tone={session.operator.role === 'admin' ? 'good' : 'accent'} />
       </div>
 
+      <div className="operator-card__signal">
+        <span className="operator-card__signal-dot" aria-hidden="true" />
+        <div>
+          <p className="operator-card__signal-label">Signed control session</p>
+          <p className="operator-card__signal-value">Operator context is active and ready for guarded actions.</p>
+        </div>
+      </div>
+
       <dl className="operator-card__meta">
         <div>
           <dt>Email</dt>
