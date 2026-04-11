@@ -8137,7 +8137,34 @@ export class RuntimeStore {
       metadata: Record<string, unknown>;
     }>
   > {
-    const rows = await this.db
+    return this.listFillHistoryForVenues();
+  }
+
+  async listFillHistoryForVenues(
+    venueIds?: readonly string[],
+    limit?: number,
+  ): Promise<
+    Array<{
+      venueId: string;
+      venueOrderId: string;
+      clientOrderId: string;
+      asset: string;
+      side: 'buy' | 'sell';
+      size: string;
+      price: string;
+      fee: string;
+      feeAsset: string | null;
+      reduceOnly: boolean;
+      filledAt: Date;
+      marketIdentity: CanonicalMarketIdentity | null;
+      metadata: Record<string, unknown>;
+    }>
+  > {
+    const venueFilter = venueIds === undefined || venueIds.length === 0
+      ? undefined
+      : inArray(orders.venueId, [...venueIds]);
+
+    const baseQuery = this.db
       .select({
         venueId: orders.venueId,
         venueOrderId: fills.venueOrderId,
@@ -8155,7 +8182,16 @@ export class RuntimeStore {
       })
       .from(fills)
       .innerJoin(orders, eq(fills.clientOrderId, orders.clientOrderId))
-      .orderBy(fills.filledAt, fills.createdAt);
+      .orderBy(desc(fills.filledAt), desc(fills.createdAt));
+
+    const filteredQuery = venueFilter === undefined
+      ? baseQuery
+      : baseQuery.where(venueFilter);
+    const query = limit !== undefined && limit > 0
+      ? filteredQuery.limit(limit)
+      : filteredQuery;
+
+    const rows = (await query).reverse();
 
     return rows.map((row) => ({
       venueId: row.venueId,

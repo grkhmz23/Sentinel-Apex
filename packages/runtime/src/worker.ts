@@ -1,7 +1,6 @@
 import os from 'node:os';
 
 import {
-  applyMigrations,
   createDatabaseConnection,
 } from '@sentinel-apex/db';
 
@@ -79,7 +78,6 @@ export class RuntimeWorker {
     options: RuntimeWorkerOptions,
   ): Promise<RuntimeWorker> {
     const connection = await createDatabaseConnection(connectionString);
-    await applyMigrations(connection);
     const auditWriter = new DatabaseAuditWriter(connection.db);
     const store = new RuntimeStore(connection.db, auditWriter);
     const runtime = await SentinelRuntime.createDeterministic(connectionString, runtimeOverrides);

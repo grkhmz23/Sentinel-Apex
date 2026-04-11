@@ -268,6 +268,20 @@ function marketValue(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function getSimulationReplayLimit(): number | null {
+  const raw = process.env['RUNTIME_SIMULATION_REPLAY_LIMIT'];
+  if (raw === undefined || raw.trim() === '') {
+    return 1000;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 1000;
+  }
+
+  return parsed === 0 ? null : parsed;
+}
+
 function readPreTradePositionContext(metadata: Record<string, unknown>): PreTradePositionContext | null {
   const value = asRecord(metadata[PRE_TRADE_POSITION_CONTEXT_METADATA_KEY]);
   if (typeof value['captureStatus'] !== 'string' || typeof value['observedAt'] !== 'string') {
@@ -4627,9 +4641,17 @@ export class SentinelRuntime {
   }
 
   private async restoreAdaptersFromPersistence(): Promise<void> {
-    const fillHistory = await this.options.store.listFillHistory();
     const simulatedAdapters = Array.from(this.options.adapters.values()).filter(
       (adapter): adapter is SimulatedVenueAdapter => adapter instanceof SimulatedVenueAdapter,
+    );
+
+    if (simulatedAdapters.length === 0) {
+      return;
+    }
+
+    const fillHistory = await this.options.store.listFillHistoryForVenues(
+      simulatedAdapters.map((adapter) => adapter.venueId),
+      getSimulationReplayLimit() ?? undefined,
     );
 
     for (const adapter of simulatedAdapters) {
