@@ -31,15 +31,16 @@ async function proxyRequest(
   }
 
   const body = request.method === 'GET' ? null : await request.text();
+  const hasJsonBody = body !== null && body.trim().length > 0;
   const apiPath = `/api/v1/allocator/${path.join('/')}`;
   const response = await fetch(buildTargetUrl(request, path), {
     method: request.method,
     headers: {
-      'content-type': 'application/json',
       'x-api-key': getDashboardApiKey(),
       ...buildOperatorProxyHeaders(session, request.method, apiPath),
+      ...(hasJsonBody ? { 'content-type': 'application/json' } : {}),
     },
-    ...(body !== null ? { body } : {}),
+    ...(hasJsonBody ? { body } : {}),
     cache: 'no-store',
   });
 
