@@ -32,7 +32,7 @@ const DEFAULT_CONFIG: MarketDataConfig = {
  * 
  * IMPORTANT: This is synthesized data for framework testing.
  * Production backtests should use real historical data from:
- * - Drift historical funding rates
+ * - Venue funding history
  * - Exchange trade history
  * - On-chain oracle data
  */
@@ -133,7 +133,7 @@ import type { BacktestPosition } from './types.js';
 /**
  * Calculate funding payment for a position
  * 
- * Funding is paid every 8 hours on Drift:
+ * Funding is modeled on an 8-hour schedule:
  * - Positive rate: longs pay shorts
  * - Negative rate: shorts pay longs
  * 
@@ -168,11 +168,11 @@ export function calculateFundingPayment(
 // =============================================================================
 
 /**
- * Load real historical funding rates from Drift
+ * Load real historical funding rates from the target venue
  * 
  * NOTE: This is a placeholder for real data integration.
  * Production implementation should:
- * 1. Connect to Drift historical data API
+ * 1. Connect to the target venue's historical data API
  * 2. Load funding payment history
  * 3. Cache results for reproducibility
  */

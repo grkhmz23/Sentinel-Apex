@@ -68,8 +68,7 @@ import {
   type VenueTruthSnapshot,
 } from '@sentinel-apex/venue-adapters';
 
-// Note: Drift adapters removed due to hackathon eligibility requirements (Drift protocol compromised)
-// Jupiter Perps adapter added as replacement
+// Jupiter Perps is the only live execution venue currently exposed by this runtime.
 
 import { RuntimeHealthMonitor } from './health-monitor.js';
 import {

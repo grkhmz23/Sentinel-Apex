@@ -1170,8 +1170,8 @@ export class RuntimeReconciliationEngine {
         venueId: venue.venueId,
         entityType: 'derivative_account',
         entityId: venue.venueId,
-        summaryActive: `Internal derivative account identity for ${venue.venueId} does not match external Drift-native account truth.`,
-        summaryResolved: `Internal derivative account identity for ${venue.venueId} matches external Drift-native account truth.`,
+          summaryActive: `Internal derivative account identity for ${venue.venueId} does not match external venue-native account truth.`,
+          summaryResolved: `Internal derivative account identity for ${venue.venueId} matches external venue-native account truth.`,
         expectedState: comparisonDetail.accountComparison.internalState === null
           ? {}
           : { ...comparisonDetail.accountComparison.internalState },
@@ -1266,8 +1266,8 @@ export class RuntimeReconciliationEngine {
         venueId: venue.venueId,
         entityType: 'derivative_health',
         entityId: venue.venueId,
-        summaryActive: `Internal health state for ${venue.venueId} does not match external Drift-native truth.`,
-        summaryResolved: `Internal health state for ${venue.venueId} matches external Drift-native truth.`,
+        summaryActive: `Internal health state for ${venue.venueId} does not match external venue-native truth.`,
+        summaryResolved: `Internal health state for ${venue.venueId} matches external venue-native truth.`,
         expectedState: comparisonDetail.healthComparison.internalState === null
           ? {}
           : { ...comparisonDetail.healthComparison.internalState },
@@ -1329,8 +1329,8 @@ export class RuntimeReconciliationEngine {
           venueId: venue.venueId,
           entityType: 'derivative_market_identity',
           entityId: comparison.comparisonKey,
-          summaryActive: `Exact market identity for derivative position ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift truth.`,
-          summaryResolved: `Exact market identity for derivative position ${comparison.comparisonKey} on ${venue.venueId} matches external Drift truth.`,
+          summaryActive: `Exact market identity for derivative position ${comparison.comparisonKey} on ${venue.venueId} does not match external venue truth.`,
+          summaryResolved: `Exact market identity for derivative position ${comparison.comparisonKey} on ${venue.venueId} matches external venue truth.`,
           expectedState: comparison.marketIdentityComparison.internalIdentity === null
             ? {}
             : { ...comparison.marketIdentityComparison.internalIdentity },
@@ -1365,8 +1365,8 @@ export class RuntimeReconciliationEngine {
           venueId: venue.venueId,
           entityType: 'derivative_position',
           entityId: comparison.comparisonKey,
-          summaryActive: `Internal derivative position ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift-native truth.`,
-          summaryResolved: `Internal derivative position ${comparison.comparisonKey} on ${venue.venueId} matches external Drift-native truth.`,
+          summaryActive: `Internal derivative position ${comparison.comparisonKey} on ${venue.venueId} does not match external venue-native truth.`,
+          summaryResolved: `Internal derivative position ${comparison.comparisonKey} on ${venue.venueId} matches external venue-native truth.`,
           expectedState: comparison.internalPosition === null ? {} : { ...comparison.internalPosition },
           actualState: comparison.externalPosition === null ? {} : { ...comparison.externalPosition },
           delta: {
@@ -1395,8 +1395,8 @@ export class RuntimeReconciliationEngine {
           venueId: venue.venueId,
           entityType: 'derivative_market_identity',
           entityId: comparison.comparisonKey,
-          summaryActive: `Exact market identity for open order ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift truth.`,
-          summaryResolved: `Exact market identity for open order ${comparison.comparisonKey} on ${venue.venueId} matches external Drift truth.`,
+          summaryActive: `Exact market identity for open order ${comparison.comparisonKey} on ${venue.venueId} does not match external venue truth.`,
+          summaryResolved: `Exact market identity for open order ${comparison.comparisonKey} on ${venue.venueId} matches external venue truth.`,
           expectedState: comparison.marketIdentityComparison.internalIdentity === null
             ? {}
             : { ...comparison.marketIdentityComparison.internalIdentity },
@@ -1427,8 +1427,8 @@ export class RuntimeReconciliationEngine {
           venueId: venue.venueId,
           entityType: 'derivative_order',
           entityId: comparison.comparisonKey,
-          summaryActive: `Internal open-order inventory for ${comparison.comparisonKey} on ${venue.venueId} does not match external Drift-native truth.`,
-          summaryResolved: `Internal open-order inventory for ${comparison.comparisonKey} on ${venue.venueId} matches external Drift-native truth.`,
+          summaryActive: `Internal open-order inventory for ${comparison.comparisonKey} on ${venue.venueId} does not match external venue-native truth.`,
+          summaryResolved: `Internal open-order inventory for ${comparison.comparisonKey} on ${venue.venueId} matches external venue-native truth.`,
           expectedState: comparison.internalOrder === null ? {} : { ...comparison.internalOrder },
           actualState: comparison.externalOrder === null ? {} : { ...comparison.externalOrder },
           delta: {

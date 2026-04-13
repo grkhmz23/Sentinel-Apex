@@ -650,7 +650,7 @@ function compareMarketIdentity(
             : [],
         },
         notes: comparisonMode === 'partial'
-          ? ['Internal market identity aligned to external Drift truth through a partial or derived key.']
+          ? ['Internal market identity aligned to external venue truth through a partial or derived key.']
           : [],
       };
     }
@@ -716,8 +716,8 @@ function buildAccountState(
     return {
       coverage: coverage(
         'unsupported',
-        'No internal Drift account locator is configured for this venue.',
-        ['Configure DRIFT_READONLY_ACCOUNT_ADDRESS or DRIFT_READONLY_AUTHORITY_ADDRESS to enable canonical internal account identity.'],
+        'No internal account locator is configured for this venue.',
+        ['Configure the tracked venue account address to enable canonical internal account identity.'],
       ),
       state: null,
     };
@@ -976,7 +976,7 @@ function buildPositionState(
       coverageStatus,
       coverageReason,
       unknownTypeCount > 0
-        ? ['Unknown market-type rows remain internally tracked but only partially comparable to Drift-native external positions.']
+        ? ['Unknown market-type rows remain internally tracked but only partially comparable to external venue positions.']
         : [],
     ),
     state: {
@@ -1006,7 +1006,7 @@ function unsupportedHealthState(
     coverage: coverage(
       'unsupported',
       reason,
-      ['Allocator and risk summaries are not treated as exact venue-native Drift margin state.'],
+      ['Allocator and risk summaries are not treated as exact venue-native margin state.'],
     ),
     state: {
       healthStatus: 'unknown',
@@ -1075,7 +1075,7 @@ function buildHealthState(input: {
       'available',
       null,
       [
-        'Internal health posture is derived from internal portfolio and risk projections, not from venue-native Drift margin math.',
+        'Internal health posture is derived from internal portfolio and risk projections, not from venue-native margin math.',
         'Only band-level health comparison is currently truthful; exact margin fields remain external-only.',
       ],
     ),
@@ -1096,12 +1096,12 @@ function buildHealthState(input: {
       openOrderCount: input.orderState.openOrderCount,
       openCircuitBreakers: [...input.riskSummary.summary.openCircuitBreakers],
       unsupportedReasons: [
-        'Exact Drift collateral, free collateral, margin ratio, and requirement fields remain external-only.',
+        'Exact venue collateral, free collateral, margin ratio, and requirement fields remain external-only.',
       ],
       methodology: 'portfolio_current_plus_risk_current',
       notes: [
         'Internal health posture is derived from persisted portfolio and risk read models.',
-        'Collateral-like posture maps to internal liquidity reserve rather than exact Drift collateral accounting.',
+        'Collateral-like posture maps to internal liquidity reserve rather than exact venue collateral accounting.',
         'This view is suitable for operator comparison and audit, but it is not a canonical venue-native margin engine.',
       ],
       provenance: provenance(
@@ -1651,7 +1651,7 @@ function healthComparison(
     fields: [healthStatusField, ...unsupportedFields],
     notes: [
       'Only band-level health-status comparison is currently truthful.',
-      'Exact Drift collateral and margin metrics remain external-only until the runtime owns an equivalent internal model.',
+      'Exact venue collateral and margin metrics remain external-only until the runtime owns an equivalent internal model.',
     ],
   };
 }
@@ -1669,13 +1669,13 @@ export function buildVenueDerivativeComparisonDetail(input: {
   const derivativeHealthComparison = healthComparison(input.internalState, input.externalSnapshot);
 
   const subaccountIdentity = input.externalSnapshot?.truthCoverage.derivativeAccountState.status !== 'available'
-    ? comparisonCoverage('unsupported', 'External Drift derivative-account truth is not available for comparison.')
+    ? comparisonCoverage('unsupported', 'External derivative-account truth is not available for comparison.')
     : accountComparison.comparable
       ? comparisonCoverage('available', null)
-      : comparisonCoverage('unsupported', 'No internal canonical Drift account locator is available for direct comparison.');
+      : comparisonCoverage('unsupported', 'No internal canonical account locator is available for direct comparison.');
 
   const positionInventory = input.externalSnapshot?.truthCoverage.derivativePositionState.status !== 'available'
-    ? comparisonCoverage('unsupported', 'External Drift position truth is not available for comparison.')
+    ? comparisonCoverage('unsupported', 'External position truth is not available for comparison.')
     : input.internalState === null
       ? comparisonCoverage('unsupported', 'No internal derivative state snapshot is currently persisted for this venue.')
       : positionComparison.skippedInternalCount > 0
@@ -1688,7 +1688,7 @@ export function buildVenueDerivativeComparisonDetail(input: {
         : comparisonCoverage('available', null);
 
   const marketIdentity = input.externalSnapshot?.truthCoverage.derivativePositionState.status !== 'available'
-    ? comparisonCoverage('unsupported', 'External Drift position truth is not available for market identity comparison.')
+    ? comparisonCoverage('unsupported', 'External position truth is not available for market identity comparison.')
     : input.internalState === null
       ? comparisonCoverage('unsupported', 'No internal derivative state snapshot is currently persisted for this venue.')
       : positionComparison.partialIdentityCount > 0 || positionComparison.identityGapCount > 0
@@ -1699,7 +1699,7 @@ export function buildVenueDerivativeComparisonDetail(input: {
         : comparisonCoverage('available', null);
 
   const orderInventory = input.externalSnapshot?.truthCoverage.orderState.status !== 'available'
-    ? comparisonCoverage('unsupported', 'External Drift open-order truth is not available for comparison.')
+    ? comparisonCoverage('unsupported', 'External open-order truth is not available for comparison.')
     : input.internalState === null
       ? comparisonCoverage('unsupported', 'No internal derivative state snapshot is currently persisted for this venue.')
       : orderComparison.skippedInternalCount > 0
@@ -1710,7 +1710,7 @@ export function buildVenueDerivativeComparisonDetail(input: {
         : comparisonCoverage('available', null);
 
   const healthState = input.externalSnapshot?.truthCoverage.derivativeHealthState.status !== 'available'
-    ? comparisonCoverage('unsupported', 'External Drift health truth is not available for comparison.')
+    ? comparisonCoverage('unsupported', 'External health truth is not available for comparison.')
     : derivativeHealthComparison.comparisonMode === 'status_band_only'
       ? comparisonCoverage(
         'partial',
@@ -1744,7 +1744,7 @@ export function buildVenueDerivativeComparisonDetail(input: {
     notes: [
       'Internal positions are still derived from Sentinel Apex fills, but market identity is now normalized through exact or derived keys when available.',
       'Exact market-index comparison only occurs when the internal side truly has exact venue-native identity in persisted metadata.',
-      'Health comparison is now band-level only; exact Drift collateral and margin fields remain external-only.',
+      'Health comparison is now band-level only; exact venue collateral and margin fields remain external-only.',
       'Internal open-order comparison still uses venue order ids for row matching, with market identity carried as additional audit detail.',
     ],
   };

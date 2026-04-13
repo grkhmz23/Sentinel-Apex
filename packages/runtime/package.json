@@ -23,10 +23,12 @@
     "@sentinel-apex/domain": "workspace:*",
     "@sentinel-apex/execution": "workspace:*",
     "@sentinel-apex/observability": "workspace:*",
+    "@sentinel-apex/ranger": "workspace:*",
     "@sentinel-apex/risk-engine": "workspace:*",
     "@sentinel-apex/strategy-engine": "workspace:*",
     "@sentinel-apex/treasury": "workspace:*",
     "@sentinel-apex/venue-adapters": "workspace:*",
+    "@solana/web3.js": "^1.98.4",
     "decimal.js": "^10.4.3",
     "drizzle-orm": "^0.30.10"
   },

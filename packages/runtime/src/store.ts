@@ -398,6 +398,21 @@ interface SubmissionDefaultConfig {
   metadata: Record<string, unknown>;
 }
 
+interface SubmissionMetadata extends Record<string, unknown> {
+  rangerVaultAddress: string | null;
+  rangerLpMintAddress: string | null;
+  rangerVaultProgramId: string | null;
+  rangerAdaptorProgramId: string | null;
+  rangerStrategyAddress: string | null;
+  rangerLpMetadataUri: string | null;
+  rangerStrategyInitialized: boolean;
+  rangerFundsAllocated: boolean;
+  strategyDocumentationUrl: string | null;
+  codeRepositoryUrl: string | null;
+  codeRepositoryVisibility: 'public' | 'private' | 'unknown';
+  privateRepoReviewerAdded: boolean;
+}
+
 function mapStrategyEnvironmentToVaultExecutionEnvironment(
   environment: string | null | undefined,
 ): VaultExecutionEnvironment {
@@ -1282,7 +1297,7 @@ function deriveVenueTruthComparisonCoverage(input: {
     executionSupport: input.executionSupport,
     sourceMetadata: input.snapshotData.sourceMetadata,
   });
-  const isDriftNativeReadonly = connectorDepth === 'drift_native_readonly';
+  const isVenueNativeReadonly = connectorDepth === 'drift_native_readonly';
   const executionReferenceCoverage = input.snapshotData.truthCoverage.executionReferences;
 
   return {
@@ -1296,33 +1311,33 @@ function deriveVenueTruthComparisonCoverage(input: {
           ),
     positionInventory: comparisonCoverageItem(
       'unsupported',
-      isDriftNativeReadonly &&
+      isVenueNativeReadonly &&
         input.snapshotData.truthCoverage.derivativePositionState.status === 'available'
-        ? 'Decoded Drift position inventory is visible, but the runtime does not yet persist venue-native Drift position projections for direct comparison.'
+        ? 'Decoded venue position inventory is visible, but the runtime does not yet persist venue-native position projections for direct comparison.'
         : 'The runtime does not yet maintain a truthful internal position model that can be compared directly against this venue snapshot.',
     ),
     healthState: comparisonCoverageItem(
       'unsupported',
-      isDriftNativeReadonly &&
+      isVenueNativeReadonly &&
         input.snapshotData.truthCoverage.derivativeHealthState.status === 'available'
-        ? 'Drift health and margin metrics are visible, but the runtime does not yet persist an internal canonical health model for direct comparison.'
+        ? 'Venue health and margin metrics are visible, but the runtime does not yet persist an internal canonical health model for direct comparison.'
         : 'No internal health-state model is available for direct reconciliation against this venue snapshot.',
     ),
     orderInventory: comparisonCoverageItem(
       'unsupported',
-      isDriftNativeReadonly && input.snapshotData.truthCoverage.orderState.status === 'available'
-        ? 'Decoded Drift open-order inventory is visible, but the runtime does not yet persist a venue-native open-order model for direct comparison.'
+      isVenueNativeReadonly && input.snapshotData.truthCoverage.orderState.status === 'available'
+        ? 'Decoded venue open-order inventory is visible, but the runtime does not yet persist a venue-native open-order model for direct comparison.'
         : 'No venue-native internal open-order inventory is available for direct reconciliation against this venue snapshot.',
     ),
-    notes: isDriftNativeReadonly
+    notes: isVenueNativeReadonly
       ? [
-          'Decoded Drift account, position, health, and order sections are operator-visible venue truth.',
+          'Decoded venue account, position, health, and order sections are operator-visible venue truth.',
           'Current reconciliation directly compares internal execution references when they are available.',
-          'Direct internal-versus-external Drift position, health, and order comparisons remain intentionally unsupported until the runtime persists matching canonical internal models.',
+          'Direct internal-versus-external position, health, and order comparisons remain intentionally unsupported until the runtime persists matching canonical internal models.',
         ]
       : connectorDepth === 'generic_rpc_readonly'
         ? [
-            'This connector exposes generic read-only truth rather than venue-native Drift decode.',
+            'This connector exposes generic read-only truth rather than venue-native decoded state.',
             'Execution-reference comparison is the only direct real-venue reconciliation path currently available.',
           ]
         : connectorDepth === 'simulation'
@@ -1387,6 +1402,135 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
 
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+function defaultSubmissionMetadata(): SubmissionMetadata {
+  return {
+    rangerVaultAddress: null,
+    rangerLpMintAddress: null,
+    rangerVaultProgramId: null,
+    rangerAdaptorProgramId: null,
+    rangerStrategyAddress: null,
+    rangerLpMetadataUri: null,
+    rangerStrategyInitialized: false,
+    rangerFundsAllocated: false,
+    strategyDocumentationUrl: null,
+    codeRepositoryUrl: null,
+    codeRepositoryVisibility: 'unknown',
+    privateRepoReviewerAdded: false,
+  };
+}
+
+function readSubmissionMetadata(value: unknown): SubmissionMetadata {
+  const record = asRecord(value);
+  const defaults = defaultSubmissionMetadata();
+  return {
+    rangerVaultAddress: normalizeOptionalText(
+      typeof record['rangerVaultAddress'] === 'string' ? record['rangerVaultAddress'] : null,
+    ),
+    rangerLpMintAddress: normalizeOptionalText(
+      typeof record['rangerLpMintAddress'] === 'string' ? record['rangerLpMintAddress'] : null,
+    ),
+    rangerVaultProgramId: normalizeOptionalText(
+      typeof record['rangerVaultProgramId'] === 'string' ? record['rangerVaultProgramId'] : null,
+    ),
+    rangerAdaptorProgramId: normalizeOptionalText(
+      typeof record['rangerAdaptorProgramId'] === 'string' ? record['rangerAdaptorProgramId'] : null,
+    ),
+    rangerStrategyAddress: normalizeOptionalText(
+      typeof record['rangerStrategyAddress'] === 'string' ? record['rangerStrategyAddress'] : null,
+    ),
+    rangerLpMetadataUri: normalizeOptionalText(
+      typeof record['rangerLpMetadataUri'] === 'string' ? record['rangerLpMetadataUri'] : null,
+    ),
+    rangerStrategyInitialized:
+      typeof record['rangerStrategyInitialized'] === 'boolean'
+        ? record['rangerStrategyInitialized']
+        : defaults.rangerStrategyInitialized,
+    rangerFundsAllocated:
+      typeof record['rangerFundsAllocated'] === 'boolean'
+        ? record['rangerFundsAllocated']
+        : defaults.rangerFundsAllocated,
+    strategyDocumentationUrl: normalizeOptionalText(
+      typeof record['strategyDocumentationUrl'] === 'string' ? record['strategyDocumentationUrl'] : null,
+    ),
+    codeRepositoryUrl: normalizeOptionalText(
+      typeof record['codeRepositoryUrl'] === 'string' ? record['codeRepositoryUrl'] : null,
+    ),
+    codeRepositoryVisibility:
+      record['codeRepositoryVisibility'] === 'public' || record['codeRepositoryVisibility'] === 'private'
+        ? record['codeRepositoryVisibility']
+        : defaults.codeRepositoryVisibility,
+    privateRepoReviewerAdded:
+      typeof record['privateRepoReviewerAdded'] === 'boolean'
+        ? record['privateRepoReviewerAdded']
+        : defaults.privateRepoReviewerAdded,
+  };
+}
+
+function mergeSubmissionMetadata(input: {
+  existing: unknown;
+  update: {
+    rangerVaultAddress?: string | null;
+    rangerLpMintAddress?: string | null;
+    rangerVaultProgramId?: string | null;
+    rangerAdaptorProgramId?: string | null;
+    rangerStrategyAddress?: string | null;
+    rangerLpMetadataUri?: string | null;
+    rangerStrategyInitialized?: boolean;
+    rangerFundsAllocated?: boolean;
+    strategyDocumentationUrl?: string | null;
+    codeRepositoryUrl?: string | null;
+    codeRepositoryVisibility?: 'public' | 'private' | 'unknown';
+    privateRepoReviewerAdded?: boolean;
+  };
+}): Record<string, unknown> {
+  const existingRecord = asJsonObject(input.existing);
+  const current = readSubmissionMetadata(existingRecord);
+
+  return {
+    ...existingRecord,
+    rangerVaultAddress:
+      input.update.rangerVaultAddress === undefined
+        ? current.rangerVaultAddress
+        : normalizeOptionalText(input.update.rangerVaultAddress),
+    rangerLpMintAddress:
+      input.update.rangerLpMintAddress === undefined
+        ? current.rangerLpMintAddress
+        : normalizeOptionalText(input.update.rangerLpMintAddress),
+    rangerVaultProgramId:
+      input.update.rangerVaultProgramId === undefined
+        ? current.rangerVaultProgramId
+        : normalizeOptionalText(input.update.rangerVaultProgramId),
+    rangerAdaptorProgramId:
+      input.update.rangerAdaptorProgramId === undefined
+        ? current.rangerAdaptorProgramId
+        : normalizeOptionalText(input.update.rangerAdaptorProgramId),
+    rangerStrategyAddress:
+      input.update.rangerStrategyAddress === undefined
+        ? current.rangerStrategyAddress
+        : normalizeOptionalText(input.update.rangerStrategyAddress),
+    rangerLpMetadataUri:
+      input.update.rangerLpMetadataUri === undefined
+        ? current.rangerLpMetadataUri
+        : normalizeOptionalText(input.update.rangerLpMetadataUri),
+    rangerStrategyInitialized:
+      input.update.rangerStrategyInitialized ?? current.rangerStrategyInitialized,
+    rangerFundsAllocated:
+      input.update.rangerFundsAllocated ?? current.rangerFundsAllocated,
+    strategyDocumentationUrl:
+      input.update.strategyDocumentationUrl === undefined
+        ? current.strategyDocumentationUrl
+        : normalizeOptionalText(input.update.strategyDocumentationUrl),
+    codeRepositoryUrl:
+      input.update.codeRepositoryUrl === undefined
+        ? current.codeRepositoryUrl
+        : normalizeOptionalText(input.update.codeRepositoryUrl),
+    codeRepositoryVisibility:
+      input.update.codeRepositoryVisibility ?? current.codeRepositoryVisibility,
+    privateRepoReviewerAdded:
+      input.update.privateRepoReviewerAdded ?? current.privateRepoReviewerAdded,
+  };
 }
 
 function normalizeSubmissionCluster(value: string | null | undefined): SubmissionCluster {
@@ -1532,7 +1676,7 @@ function buildDefaultSubmissionConfig(): SubmissionDefaultConfig {
     cexTradeHistoryProvided: false,
     cexReadOnlyApiKeyProvided: false,
     notes: null,
-    metadata: {},
+    metadata: defaultSubmissionMetadata(),
   };
 }
 
@@ -1571,8 +1715,98 @@ function buildSubmissionReadiness(input: {
   cexReadOnlyApiKeyProvided: boolean;
   cexTradeHistoryEvidenceCount: number;
   cexReadOnlyApiEvidenceCount: number;
+  strategyDocumentationUrl: string | null;
+  codeRepositoryUrl: string | null;
+  codeRepositoryVisibility: 'public' | 'private' | 'unknown';
+  privateRepoReviewerAdded: boolean;
+  rangerVaultAddress: string | null;
+  rangerLpMintAddress: string | null;
+  rangerStrategyAddress: string | null;
+  rangerStrategyInitialized: boolean;
+  rangerFundsAllocated: boolean;
 }): SubmissionDossierView['readiness'] {
   const checks: SubmissionReadinessCheckView[] = [];
+
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'strategy_documentation_present',
+      input.strategyDocumentationUrl !== null ? 'pass' : 'fail',
+      input.strategyDocumentationUrl !== null
+        ? 'Strategy documentation URL is recorded for reviewer access.'
+        : 'Strategy documentation is still missing. Submission requires a written strategy thesis and risk management explanation.',
+      input.strategyDocumentationUrl !== null ? null : 'strategy_documentation_missing',
+      {
+        strategyDocumentationUrl: input.strategyDocumentationUrl,
+      },
+    ),
+  );
+
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'code_repository_reviewable',
+      input.codeRepositoryUrl !== null && (
+        input.codeRepositoryVisibility === 'public' || (
+          input.codeRepositoryVisibility === 'private' && input.privateRepoReviewerAdded
+        )
+      )
+        ? 'pass'
+        : 'fail',
+      input.codeRepositoryUrl === null
+        ? 'Code repository URL is still missing.'
+        : input.codeRepositoryVisibility === 'public'
+          ? 'Public code repository URL is recorded.'
+          : input.codeRepositoryVisibility === 'private' && input.privateRepoReviewerAdded
+            ? 'Private repository is recorded and reviewer access is marked as granted.'
+            : 'Repository is private, but reviewer access for @jakeyvee is not yet marked as granted.',
+      input.codeRepositoryUrl !== null && (
+        input.codeRepositoryVisibility === 'public' || (
+          input.codeRepositoryVisibility === 'private' && input.privateRepoReviewerAdded
+        )
+      )
+        ? null
+        : input.codeRepositoryUrl === null
+          ? 'code_repository_missing'
+          : 'private_repo_reviewer_access_missing',
+      {
+        codeRepositoryUrl: input.codeRepositoryUrl,
+        codeRepositoryVisibility: input.codeRepositoryVisibility,
+        privateRepoReviewerAdded: input.privateRepoReviewerAdded,
+      },
+    ),
+  );
+
+  checks.push(
+    buildSubmissionReadinessCheck(
+      'ranger_earn_setup',
+      input.rangerVaultAddress !== null &&
+        input.rangerLpMintAddress !== null &&
+        input.rangerStrategyAddress !== null &&
+        input.rangerStrategyInitialized
+        ? input.rangerFundsAllocated ? 'pass' : 'warning'
+        : 'fail',
+      input.rangerVaultAddress === null ||
+        input.rangerLpMintAddress === null ||
+        input.rangerStrategyAddress === null ||
+        !input.rangerStrategyInitialized
+        ? 'Submission is not yet fully configured through Ranger Earn; vault, LP mint, and initialized strategy details are still missing.'
+        : input.rangerFundsAllocated
+          ? 'Ranger vault, LP mint, and initialized strategy are recorded, and funds have been allocated.'
+          : 'Ranger vault and strategy are configured, but no strategy allocation has been marked yet.',
+      input.rangerVaultAddress !== null &&
+        input.rangerLpMintAddress !== null &&
+        input.rangerStrategyAddress !== null &&
+        input.rangerStrategyInitialized
+        ? input.rangerFundsAllocated ? null : 'ranger_strategy_not_yet_allocated'
+        : 'ranger_earn_setup_incomplete',
+      {
+        rangerVaultAddress: input.rangerVaultAddress,
+        rangerLpMintAddress: input.rangerLpMintAddress,
+        rangerStrategyAddress: input.rangerStrategyAddress,
+        rangerStrategyInitialized: input.rangerStrategyInitialized,
+        rangerFundsAllocated: input.rangerFundsAllocated,
+      },
+    ),
+  );
 
   checks.push(
     buildSubmissionReadinessCheck(
@@ -1588,12 +1822,14 @@ function buildSubmissionReadiness(input: {
 
   checks.push(
     buildSubmissionReadinessCheck(
-      'mainnet_cluster',
-      input.cluster === 'mainnet-beta' ? 'pass' : 'fail',
+      'submission_cluster_known',
+      input.cluster === 'unknown' ? 'fail' : 'pass',
       input.cluster === 'mainnet-beta'
         ? 'Submission is configured for mainnet-beta verification.'
-        : `Submission currently points to ${input.cluster}; verified performance for seeding requires mainnet-beta evidence.`,
-      input.cluster === 'mainnet-beta' ? null : 'mainnet_cluster_required',
+        : input.cluster === 'devnet'
+          ? 'Submission is configured for devnet verification. This is acceptable for hackathon review, though mainnet evidence is stronger for seeding.'
+          : 'Submission cluster is still unknown; set a concrete cluster for verification and reviewer clarity.',
+      input.cluster === 'unknown' ? 'submission_cluster_unknown' : null,
       { cluster: input.cluster },
     ),
   );
@@ -1661,19 +1897,28 @@ function buildSubmissionReadiness(input: {
   const realizedApyAvailable = input.realizedApyPct !== null;
   const realizedApyMeetsMinimum =
     realizedApyAvailable && decimalOrZero(input.realizedApyPct).gte(10);
+  const hasBacktestOrPerformanceEvidence = input.performanceEvidenceCount > 0;
   checks.push(
     buildSubmissionReadinessCheck(
       'realized_performance_evidence',
-      !realizedApyAvailable || !realizedApyMeetsMinimum ? 'fail' : 'pass',
       !realizedApyAvailable
-        ? input.performanceEvidenceCount > 0
-          ? 'Performance evidence artifacts exist, but realized APY is still not persisted as a numeric value.'
+        ? hasBacktestOrPerformanceEvidence
+          ? 'warning'
+          : 'fail'
+        : realizedApyMeetsMinimum
+          ? 'pass'
+          : 'fail',
+      !realizedApyAvailable
+        ? hasBacktestOrPerformanceEvidence
+          ? 'Performance or backtest artifacts exist, but realized APY is still not persisted as a numeric value. This is acceptable for review but weaker than live realized performance.'
           : 'Realized APY evidence is not currently persisted.'
         : realizedApyMeetsMinimum
           ? `Realized APY ${input.realizedApyPct}% meets the 10% minimum.`
           : `Realized APY ${input.realizedApyPct}% is below the 10% minimum.`,
       !realizedApyAvailable
-        ? 'realized_apy_evidence_missing'
+        ? hasBacktestOrPerformanceEvidence
+          ? 'live_realized_apy_not_yet_persisted'
+          : 'realized_apy_evidence_missing'
         : realizedApyMeetsMinimum
           ? null
           : 'realized_apy_below_minimum',
@@ -1691,13 +1936,23 @@ function buildSubmissionReadiness(input: {
   checks.push(
     buildSubmissionReadinessCheck(
       'on_chain_trade_evidence',
-      onChainEvidenceCount > 0 ? 'pass' : 'fail',
+      onChainEvidenceCount > 0
+        ? 'pass'
+        : hasBacktestOrPerformanceEvidence
+          ? 'warning'
+          : 'fail',
       onChainEvidenceCount > 0
         ? input.onChainEvidenceCountInWindow > 0
           ? `Submission window includes ${input.onChainEvidenceCountInWindow} explicit on-chain evidence record(s).`
           : `Submission window includes ${input.realExecutionCountInWindow} real execution record(s).`
-        : 'No real on-chain execution evidence is currently persisted inside the submission window.',
-      onChainEvidenceCount > 0 ? null : 'on_chain_trade_evidence_missing',
+        : hasBacktestOrPerformanceEvidence
+          ? 'No real on-chain execution evidence is currently persisted inside the submission window, but performance/backtest artifacts exist. Live on-chain activity is preferred, not strictly required.'
+          : 'No real on-chain execution evidence is currently persisted inside the submission window.',
+      onChainEvidenceCount > 0
+        ? null
+        : hasBacktestOrPerformanceEvidence
+          ? 'live_on_chain_evidence_missing'
+          : 'on_chain_trade_evidence_missing',
       {
         realExecutionCountInWindow: input.realExecutionCountInWindow,
         onChainEvidenceCountInWindow: input.onChainEvidenceCountInWindow,
@@ -1748,9 +2003,9 @@ function buildSubmissionReadiness(input: {
     status,
     summary:
       status === 'ready'
-        ? 'Submission dossier has the required eligibility, address, and evidence markers to support a Main Track review.'
+        ? 'Submission dossier has the required eligibility, address, and evidence markers to support Build-A-Bear review.'
         : status === 'partial'
-          ? 'Submission dossier is usable but still has warnings to resolve before review.'
+          ? 'Submission dossier is usable for review, but stronger live evidence or cleaner verification artifacts would improve it.'
           : 'Submission dossier is still blocked because one or more eligibility or verification requirements are unmet.',
     blockedReasons,
     warnings,
@@ -1796,6 +2051,77 @@ function buildSubmissionExportBundle(input: {
   const backtestEvidence = evidenceByType('backtest_simulation');
   const artifactChecklist: SubmissionExportArtifactView[] = [
     buildSubmissionExportArtifact(
+      'strategy_documentation',
+      'Strategy documentation',
+      true,
+      input.dossier.strategyDocumentationUrl !== null ? 'pass' : 'fail',
+      input.dossier.strategyDocumentationUrl !== null
+        ? 'Strategy documentation URL is recorded.'
+        : 'Strategy documentation URL is still missing.',
+      input.dossier.strategyDocumentationUrl !== null ? null : 'strategy_documentation_missing',
+      input.dossier.strategyDocumentationUrl !== null ? 1 : 0,
+      [],
+    ),
+    buildSubmissionExportArtifact(
+      'code_repository',
+      'Code repository access',
+      true,
+      input.dossier.codeRepositoryUrl !== null && (
+        input.dossier.codeRepositoryVisibility === 'public' || (
+          input.dossier.codeRepositoryVisibility === 'private' &&
+          input.dossier.privateRepoReviewerAdded
+        )
+      )
+        ? 'pass'
+        : 'fail',
+      input.dossier.codeRepositoryUrl === null
+        ? 'Code repository URL is still missing.'
+        : input.dossier.codeRepositoryVisibility === 'public'
+          ? 'Public code repository URL is recorded.'
+          : input.dossier.privateRepoReviewerAdded
+            ? 'Private code repository is recorded and reviewer access is marked as granted.'
+            : 'Private code repository is recorded, but reviewer access for @jakeyvee is not yet marked as granted.',
+      input.dossier.codeRepositoryUrl !== null && (
+        input.dossier.codeRepositoryVisibility === 'public' || (
+          input.dossier.codeRepositoryVisibility === 'private' &&
+          input.dossier.privateRepoReviewerAdded
+        )
+      )
+        ? null
+        : input.dossier.codeRepositoryUrl === null
+          ? 'code_repository_missing'
+          : 'private_repo_reviewer_access_missing',
+      input.dossier.codeRepositoryUrl !== null ? 1 : 0,
+      [],
+    ),
+    buildSubmissionExportArtifact(
+      'ranger_earn_setup',
+      'Ranger Earn vault setup',
+      true,
+      input.dossier.rangerVaultAddress !== null &&
+        input.dossier.rangerLpMintAddress !== null &&
+        input.dossier.rangerStrategyAddress !== null &&
+        input.dossier.rangerStrategyInitialized
+        ? input.dossier.rangerFundsAllocated ? 'pass' : 'warning'
+        : 'fail',
+      input.dossier.rangerVaultAddress === null ||
+        input.dossier.rangerLpMintAddress === null ||
+        input.dossier.rangerStrategyAddress === null ||
+        !input.dossier.rangerStrategyInitialized
+        ? 'Ranger Earn vault setup is incomplete; vault address, LP mint, or initialized strategy details are missing.'
+        : input.dossier.rangerFundsAllocated
+          ? 'Ranger vault, LP mint, initialized strategy, and allocation markers are all present.'
+          : 'Ranger vault is configured, but no strategy allocation marker has been recorded yet.',
+      input.dossier.rangerVaultAddress !== null &&
+        input.dossier.rangerLpMintAddress !== null &&
+        input.dossier.rangerStrategyAddress !== null &&
+        input.dossier.rangerStrategyInitialized
+        ? input.dossier.rangerFundsAllocated ? null : 'ranger_strategy_not_yet_allocated'
+        : 'ranger_earn_setup_incomplete',
+      0,
+      [],
+    ),
+    buildSubmissionExportArtifact(
       'addresses',
       'Canonical wallet or vault address',
       true,
@@ -1811,15 +2137,23 @@ function buildSubmissionExportBundle(input: {
       'on_chain_trade_activity',
       'On-chain trade activity in the build window',
       true,
-      onChainEvidence.length > 0 || input.dossier.realExecutionCountInWindow > 0 ? 'pass' : 'fail',
+      onChainEvidence.length > 0 || input.dossier.realExecutionCountInWindow > 0
+        ? 'pass'
+        : performanceEvidence.length > 0 || backtestEvidence.length > 0
+          ? 'warning'
+          : 'fail',
       onChainEvidence.length > 0
         ? `${onChainEvidence.length} explicit on-chain transaction evidence item(s) are attached to the build window.`
         : input.dossier.realExecutionCountInWindow > 0
           ? `Runtime persists ${input.dossier.realExecutionCountInWindow} real execution record(s) in the build window, but no explicit evidence attachment was recorded.`
-          : 'No on-chain trade evidence is attached to the build window.',
+          : performanceEvidence.length > 0 || backtestEvidence.length > 0
+            ? 'No on-chain trade evidence is attached to the build window, but backtest or performance artifacts are attached. Reviewable, but weaker than live activity.'
+            : 'No on-chain trade evidence is attached to the build window.',
       onChainEvidence.length > 0 || input.dossier.realExecutionCountInWindow > 0
         ? null
-        : 'on_chain_trade_evidence_missing',
+        : performanceEvidence.length > 0 || backtestEvidence.length > 0
+          ? 'live_on_chain_evidence_missing'
+          : 'on_chain_trade_evidence_missing',
       onChainEvidence.length,
       ['on_chain_transaction'],
     ),
@@ -1829,10 +2163,12 @@ function buildSubmissionExportBundle(input: {
       true,
       input.dossier.realizedApyPct !== null && decimalOrZero(input.dossier.realizedApyPct).gte(10)
         ? 'pass'
-        : 'fail',
+        : input.dossier.realizedApyPct === null && (performanceEvidence.length > 0 || backtestEvidence.length > 0)
+          ? 'warning'
+          : 'fail',
       input.dossier.realizedApyPct === null
-        ? performanceEvidence.length > 0
-          ? 'Performance evidence attachments exist, but no realized APY value is persisted yet.'
+        ? performanceEvidence.length > 0 || backtestEvidence.length > 0
+          ? 'Performance or backtest evidence is attached, but no realized APY value is persisted yet.'
           : 'No realized APY evidence is attached or persisted yet.'
         : decimalOrZero(input.dossier.realizedApyPct).gte(10)
           ? `Realized APY ${input.dossier.realizedApyPct}% is persisted and meets the minimum.`
@@ -1840,10 +2176,12 @@ function buildSubmissionExportBundle(input: {
       input.dossier.realizedApyPct !== null && decimalOrZero(input.dossier.realizedApyPct).gte(10)
         ? null
         : input.dossier.realizedApyPct === null
-          ? 'realized_apy_evidence_missing'
+          ? performanceEvidence.length > 0 || backtestEvidence.length > 0
+            ? 'live_realized_apy_not_yet_persisted'
+            : 'realized_apy_evidence_missing'
           : 'realized_apy_below_minimum',
       performanceEvidence.length,
-      ['performance_snapshot'],
+      ['performance_snapshot', 'backtest_simulation'],
     ),
     buildSubmissionExportArtifact(
       'cex_trade_history',
@@ -1905,7 +2243,7 @@ function buildSubmissionExportBundle(input: {
   const blockedReasons = artifactChecklist.flatMap((item) =>
     item.status === 'fail' && item.blockedReason !== null ? [item.blockedReason] : []);
   const judgeSummary = blockedReasons.length === 0
-    ? 'Submission bundle includes the required verification artifacts for a Main Track review.'
+    ? 'Submission bundle includes the required verification artifacts for a Build-A-Bear review.'
     : `Submission bundle remains blocked by ${blockedReasons.length} requirement(s): ${blockedReasons.join(', ')}.`;
 
   return {
@@ -7319,6 +7657,7 @@ export class RuntimeStore {
       )
       : normalizeSubmissionCluster(dossierRecord.cluster);
     const evidence = evidenceRows.map((row) => this.mapSubmissionEvidenceRow(row, cluster));
+    const submissionMetadata = readSubmissionMetadata(dossierRecord.metadata);
     const onChainEvidence = evidence.filter((item) =>
       item.evidenceType === 'on_chain_transaction' && item.status !== 'rejected' && item.withinBuildWindow
     );
@@ -7365,6 +7704,15 @@ export class RuntimeStore {
       cexReadOnlyApiKeyProvided: dossierRecord.cexReadOnlyApiKeyProvided,
       cexTradeHistoryEvidenceCount,
       cexReadOnlyApiEvidenceCount,
+      strategyDocumentationUrl: submissionMetadata.strategyDocumentationUrl,
+      codeRepositoryUrl: submissionMetadata.codeRepositoryUrl,
+      codeRepositoryVisibility: submissionMetadata.codeRepositoryVisibility,
+      privateRepoReviewerAdded: submissionMetadata.privateRepoReviewerAdded,
+      rangerVaultAddress: submissionMetadata.rangerVaultAddress,
+      rangerLpMintAddress: submissionMetadata.rangerLpMintAddress,
+      rangerStrategyAddress: submissionMetadata.rangerStrategyAddress,
+      rangerStrategyInitialized: submissionMetadata.rangerStrategyInitialized,
+      rangerFundsAllocated: submissionMetadata.rangerFundsAllocated,
     });
 
     return {
@@ -7388,6 +7736,18 @@ export class RuntimeStore {
       latestExecutionReference,
       latestExecutionReferenceUrl: buildSolscanUrl('tx', latestExecutionReference, cluster),
       latestExecutionAt,
+      rangerVaultAddress: submissionMetadata.rangerVaultAddress,
+      rangerLpMintAddress: submissionMetadata.rangerLpMintAddress,
+      rangerVaultProgramId: submissionMetadata.rangerVaultProgramId,
+      rangerAdaptorProgramId: submissionMetadata.rangerAdaptorProgramId,
+      rangerStrategyAddress: submissionMetadata.rangerStrategyAddress,
+      rangerLpMetadataUri: submissionMetadata.rangerLpMetadataUri,
+      rangerStrategyInitialized: submissionMetadata.rangerStrategyInitialized,
+      rangerFundsAllocated: submissionMetadata.rangerFundsAllocated,
+      strategyDocumentationUrl: submissionMetadata.strategyDocumentationUrl,
+      codeRepositoryUrl: submissionMetadata.codeRepositoryUrl,
+      codeRepositoryVisibility: submissionMetadata.codeRepositoryVisibility,
+      privateRepoReviewerAdded: submissionMetadata.privateRepoReviewerAdded,
       realExecutionCountInWindow: realExecutionRowsInWindow.length,
       simulatedExecutionCountInWindow: executionRowsInWindow.filter((row) => row.simulated).length,
       realizedApyPct: strategyProfile.apy.realizedApyPct,
@@ -7796,6 +8156,62 @@ export class RuntimeStore {
     const notes = input.notes === undefined
       ? normalizeOptionalText(existing.notes)
       : normalizeOptionalText(input.notes);
+    const rangerMetadataUpdate: {
+      rangerVaultAddress?: string | null;
+      rangerLpMintAddress?: string | null;
+      rangerVaultProgramId?: string | null;
+      rangerAdaptorProgramId?: string | null;
+      rangerStrategyAddress?: string | null;
+      rangerLpMetadataUri?: string | null;
+      rangerStrategyInitialized?: boolean;
+      rangerFundsAllocated?: boolean;
+      strategyDocumentationUrl?: string | null;
+      codeRepositoryUrl?: string | null;
+      codeRepositoryVisibility?: 'public' | 'private' | 'unknown';
+      privateRepoReviewerAdded?: boolean;
+    } = {};
+
+    if (input.rangerVaultAddress !== undefined) {
+      rangerMetadataUpdate.rangerVaultAddress = input.rangerVaultAddress;
+    }
+    if (input.rangerLpMintAddress !== undefined) {
+      rangerMetadataUpdate.rangerLpMintAddress = input.rangerLpMintAddress;
+    }
+    if (input.rangerVaultProgramId !== undefined) {
+      rangerMetadataUpdate.rangerVaultProgramId = input.rangerVaultProgramId;
+    }
+    if (input.rangerAdaptorProgramId !== undefined) {
+      rangerMetadataUpdate.rangerAdaptorProgramId = input.rangerAdaptorProgramId;
+    }
+    if (input.rangerStrategyAddress !== undefined) {
+      rangerMetadataUpdate.rangerStrategyAddress = input.rangerStrategyAddress;
+    }
+    if (input.rangerLpMetadataUri !== undefined) {
+      rangerMetadataUpdate.rangerLpMetadataUri = input.rangerLpMetadataUri;
+    }
+    if (input.rangerStrategyInitialized !== undefined) {
+      rangerMetadataUpdate.rangerStrategyInitialized = input.rangerStrategyInitialized;
+    }
+    if (input.rangerFundsAllocated !== undefined) {
+      rangerMetadataUpdate.rangerFundsAllocated = input.rangerFundsAllocated;
+    }
+    if (input.strategyDocumentationUrl !== undefined) {
+      rangerMetadataUpdate.strategyDocumentationUrl = input.strategyDocumentationUrl;
+    }
+    if (input.codeRepositoryUrl !== undefined) {
+      rangerMetadataUpdate.codeRepositoryUrl = input.codeRepositoryUrl;
+    }
+    if (input.codeRepositoryVisibility !== undefined) {
+      rangerMetadataUpdate.codeRepositoryVisibility = input.codeRepositoryVisibility;
+    }
+    if (input.privateRepoReviewerAdded !== undefined) {
+      rangerMetadataUpdate.privateRepoReviewerAdded = input.privateRepoReviewerAdded;
+    }
+
+    const metadata = mergeSubmissionMetadata({
+      existing: input.metadata ?? asJsonObject(existing.metadata),
+      update: rangerMetadataUpdate,
+    });
 
     const createdAt = existing.createdAt.getTime() === 0 ? new Date() : existing.createdAt;
     const [row] = await this.db
@@ -7818,7 +8234,7 @@ export class RuntimeStore {
         cexReadOnlyApiKeyProvided:
           input.cexReadOnlyApiKeyProvided ?? existing.cexReadOnlyApiKeyProvided,
         notes,
-        metadata: input.metadata ?? asJsonObject(existing.metadata),
+        metadata,
         createdAt,
         updatedAt: new Date(),
       })
@@ -7841,7 +8257,7 @@ export class RuntimeStore {
           cexReadOnlyApiKeyProvided:
             input.cexReadOnlyApiKeyProvided ?? existing.cexReadOnlyApiKeyProvided,
           notes,
-          metadata: input.metadata ?? asJsonObject(existing.metadata),
+          metadata,
           updatedAt: new Date(),
         },
       })

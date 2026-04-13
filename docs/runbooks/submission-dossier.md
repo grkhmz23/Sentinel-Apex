@@ -30,16 +30,20 @@ curl -X POST /api/v1/submission \
   }'
 ```
 
-### 2. Set Build Window
+### 2. Set Verification Window
 
-Define the submission period:
+Define the evidence verification window used for on-chain and performance review.
+
+Hackathon dates reflected in the current submission flow:
+- Verification / build window: March 9, 2026 through April 6, 2026
+- Submission deadline: April 17, 2026 at 15:59 UTC
 
 ```bash
 curl -X POST /api/v1/submission \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
-    "buildWindowStart": "2026-04-01T00:00:00Z",
-    "buildWindowEnd": "2026-04-07T23:59:59Z"
+    "buildWindowStart": "2026-03-09T00:00:00Z",
+    "buildWindowEnd": "2026-04-06T23:59:59Z"
   }'
 ```
 
@@ -75,8 +79,8 @@ curl -X POST /api/v1/submission/report \
   -d '{
     "reportName": "Week 1 Performance",
     "format": "markdown",
-    "dateRangeStart": "2026-04-01T00:00:00Z",
-    "dateRangeEnd": "2026-04-07T23:59:59Z",
+    "dateRangeStart": "2026-03-09T00:00:00Z",
+    "dateRangeEnd": "2026-04-06T23:59:59Z",
     "includeMultiLegDetail": true,
     "includeHedgeState": true
   }'
@@ -113,7 +117,7 @@ curl -X POST /api/v1/submission/evidence \
     "label": "Initial deposit",
     "reference": "tx-signature",
     "url": "https://solscan.io/tx/...",
-    "capturedAt": "2026-04-01T12:00:00Z"
+    "capturedAt": "2026-03-20T12:00:00Z"
   }'
 ```
 

@@ -327,7 +327,7 @@ export class JupiterPerpsAdapter implements VenueAdapter {
     });
 
     try {
-      // For now, we support market orders only (matching Drift adapter scope)
+      // For now, we support market orders only to keep the live surface narrow.
       if (params.type !== 'market') {
         throw new Error('JupiterPerpsAdapter: only market orders are supported');
       }

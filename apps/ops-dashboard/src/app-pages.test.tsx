@@ -91,6 +91,14 @@ vi.mock('./components/carry-actions', () => ({
   CarryActions: () => <div>Carry actions</div>,
 }));
 
+vi.mock('./components/submission-ranger-actions', () => ({
+  SubmissionRangerActions: () => <div>Submission Ranger actions</div>,
+}));
+
+vi.mock('./components/submission-requirements-actions', () => ({
+  SubmissionRequirementsActions: () => <div>Submission requirements actions</div>,
+}));
+
 vi.mock('./components/connector-promotion-actions', () => ({
   ConnectorPromotionActions: () => <div>Connector promotion actions</div>,
 }));
@@ -296,6 +304,8 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Readiness Checks')).toBeInTheDocument();
     expect(screen.getByText('Supported Scope')).toBeInTheDocument();
     expect(screen.getByText('Blocked Scope')).toBeInTheDocument();
+    expect(screen.getByText('Submission Requirements')).toBeInTheDocument();
+    expect(screen.getByText('Ranger Actions')).toBeInTheDocument();
     expect(screen.getByText('Verification Evidence')).toBeInTheDocument();
     expect(screen.getByText('Export Bundle')).toBeInTheDocument();
     expect(screen.getByText(/realized APY evidence is not currently persisted/i)).toBeInTheDocument();
@@ -469,7 +479,7 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Connector Inventory')).toBeInTheDocument();
     expect(screen.getByText('Drift Solana Read-Only')).toBeInTheDocument();
     expect(screen.getByText('Derivative-aware venues')).toBeInTheDocument();
-    expect(screen.getByText('Drift-native read-only')).toBeInTheDocument();
+    expect(screen.getByText('Venue-native read-only')).toBeInTheDocument();
     expect(screen.getAllByText('derivative_aware').length).toBeGreaterThan(0);
 
     render(await VenueDetailPage({ params: { venueId: 'drift-solana-readonly' } }));

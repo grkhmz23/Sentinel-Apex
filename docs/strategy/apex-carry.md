@@ -29,17 +29,15 @@ Current Build-A-Bear strategy truth:
 
 Operationally, this means the carry sleeve can now answer whether its strategy profile is Build-A-Bear eligible in principle, independently from whether the current execution path is broad enough for production deployment.
 
-## Phase 6.0 Addendum: Execution Status (Post-Drift Removal)
-
-**⚠️ IMPORTANT:** All Drift protocol adapters have been removed due to hackathon eligibility requirements. The Drift protocol was compromised and is disqualified from prize consideration.
+## Phase 6.0 Addendum: Execution Status
 
 Current execution truth:
 
-- **No live execution connectors are available**
-- All execution is simulation-only (dry-run mode)
+- **Jupiter Perps devnet is the only live execution connector**
+- Dry-run remains the default outside explicit live devnet configuration
 - The backtesting framework is the primary validation method
 - The multi-leg carry orchestration framework remains intact for future venue integration
-- Real Solana transaction execution is suspended pending alternative venue adapters
+- Real Solana transaction execution remains constrained to the current Jupiter devnet lane
 
 Operationally, this means the carry sleeve demonstrates framework completeness through simulation and backtesting, with honest disclosure that no live venue adapters are currently configured.
 
@@ -52,7 +50,7 @@ Current internal derivative state truth:
 - internal derivative orders are treated as canonical internal order inventory when they exist in persisted runtime orders
 - open derivative positions are reconstructed from persisted fills and remain explicitly marked as derived internal state
 - internal health and margin-like state remain unsupported
-- external venue truth adapters are disabled pending alternative venue integration
+- external venue truth adapters remain intentionally narrow and venue-specific
 
 Operationally, this means carry execution feeds a durable internal derivative state layer, but the runtime does not claim external venue truth as canonical internal state.
 
@@ -136,7 +134,7 @@ The strategy is designed to run continuously. Positions are sized for the medium
 
 ### 2.1 Perpetual Funding Arbitrage
 
-**Structure:** Long spot asset on a low-cost spot venue (or hold as collateral), short the corresponding perpetual on Drift or a CEX.
+**Structure:** Long spot asset on a low-cost spot venue (or hold as collateral), short the corresponding perpetual on an approved perp venue.
 
 **Yield source:** The funding payment made by longs to shorts when the perp trades at a premium to spot (positive funding). The carry sleeve sits on the short side and receives these payments at each funding interval (typically every 8 hours).
 
@@ -145,7 +143,7 @@ The strategy is designed to run continuously. Positions are sized for the medium
 - Estimated basis impact at close
 - A minimum spread floor (configurable; default 3% annualized net)
 
-**Primary venue:** CEX or alternative Solana perp venues (Drift removed due to disqualification)
+**Primary venue:** Approved Solana perp venues or CEX venues when explicitly supported
 
 **Holding period:** Until funding rate compresses to or below the spread floor, or a regime shift triggers exit
 

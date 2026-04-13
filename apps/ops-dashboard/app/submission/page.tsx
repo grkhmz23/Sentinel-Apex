@@ -9,11 +9,17 @@ import { DefinitionList } from '../../src/components/definition-list';
 import { ErrorState } from '../../src/components/error-state';
 import { Panel } from '../../src/components/panel';
 import { StatusBadge } from '../../src/components/status-badge';
+import { SubmissionRangerActions } from '../../src/components/submission-ranger-actions';
+import { SubmissionRequirementsActions } from '../../src/components/submission-requirements-actions';
 import { requireDashboardSession } from '../../src/lib/auth.server';
 import { formatDateTime } from '../../src/lib/format';
 import { loadSubmissionPageData } from '../../src/lib/runtime-api.server';
 
 export const dynamic = 'force-dynamic';
+
+const SUBMISSION_DEADLINE_LABEL = 'Apr 17, 2026, 15:59 UTC';
+const EVIDENCE_WINDOW_NOTE =
+  'Trade and performance verification remains scoped to the hackathon build window of March 9, 2026 through April 6, 2026. Submission packaging can continue until April 17, 2026 at 15:59 UTC.';
 
 function submissionReadinessTone(
   status: SubmissionReadinessStatus,
@@ -42,7 +48,7 @@ function submissionCheckTone(
 }
 
 function formatTrack(track: string): string {
-  return track === 'drift_side_track' ? 'Drift Side Track' : 'Build-A-Bear Main Track';
+  return track === 'build_a_bear_main_track' ? 'Build-A-Bear Main Track' : 'Hackathon Track';
 }
 
 function formatAddressScope(scope: string): string {
@@ -94,6 +100,9 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
           <div>
             <p className="eyebrow">Hackathon</p>
             <h1>Submission Dossier</h1>
+            <p className="page__summary">
+              {EVIDENCE_WINDOW_NOTE} Current submission deadline: {SUBMISSION_DEADLINE_LABEL}.
+            </p>
           </div>
         </header>
 
@@ -130,6 +139,46 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
                   value: dossier.vaultAddress === null ? 'Not configured' : dossier.vaultAddress,
                 },
                 {
+                  label: 'Ranger vault',
+                  value: dossier.rangerVaultAddress === null ? 'Not recorded' : dossier.rangerVaultAddress,
+                },
+                {
+                  label: 'Ranger LP mint',
+                  value: dossier.rangerLpMintAddress === null ? 'Not recorded' : dossier.rangerLpMintAddress,
+                },
+                {
+                  label: 'Ranger adaptor',
+                  value: dossier.rangerAdaptorProgramId === null ? 'Not recorded' : dossier.rangerAdaptorProgramId,
+                },
+                {
+                  label: 'Ranger strategy',
+                  value: dossier.rangerStrategyAddress === null ? 'Not recorded' : dossier.rangerStrategyAddress,
+                },
+                {
+                  label: 'Strategy initialized',
+                  value: dossier.rangerStrategyInitialized ? 'Yes' : 'No',
+                },
+                {
+                  label: 'Funds allocated',
+                  value: dossier.rangerFundsAllocated ? 'Yes' : 'No',
+                },
+                {
+                  label: 'Strategy documentation',
+                  value: dossier.strategyDocumentationUrl ?? 'Not recorded',
+                },
+                {
+                  label: 'Code repository',
+                  value: dossier.codeRepositoryUrl ?? 'Not recorded',
+                },
+                {
+                  label: 'Repository visibility',
+                  value: dossier.codeRepositoryVisibility,
+                },
+                {
+                  label: 'Private reviewer added',
+                  value: dossier.privateRepoReviewerAdded ? 'Yes' : 'No',
+                },
+                {
                   label: 'Latest execution reference',
                   value: dossier.latestExecutionReference ?? 'Not recorded',
                 },
@@ -162,6 +211,15 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
               )}
               {dossier.vaultVerificationUrl === null ? null : (
                 <a href={dossier.vaultVerificationUrl} rel="noreferrer" target="_blank">Open vault in Solscan</a>
+              )}
+              {dossier.rangerLpMetadataUri === null ? null : (
+                <a href={dossier.rangerLpMetadataUri} rel="noreferrer" target="_blank">Open LP metadata</a>
+              )}
+              {dossier.strategyDocumentationUrl === null ? null : (
+                <a href={dossier.strategyDocumentationUrl} rel="noreferrer" target="_blank">Open strategy documentation</a>
+              )}
+              {dossier.codeRepositoryUrl === null ? null : (
+                <a href={dossier.codeRepositoryUrl} rel="noreferrer" target="_blank">Open code repository</a>
               )}
               {dossier.latestExecutionReferenceUrl === null ? null : (
                 <a href={dossier.latestExecutionReferenceUrl} rel="noreferrer" target="_blank">Open latest transaction in Solscan</a>
@@ -204,7 +262,7 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
           </Panel>
 
           <Panel
-            subtitle="These boundaries still block a truthful mainnet-ready submission claim"
+            subtitle="These boundaries still block a truthful Ranger-backed submission claim"
             title="Blocked Scope"
           >
             <div className="stack">
@@ -217,6 +275,20 @@ export default async function SubmissionPage(): Promise<JSX.Element> {
         </div>
 
         <div className="grid grid--two-column">
+          <Panel
+            subtitle="Track the non-video hackathon requirements directly in the canonical submission dossier."
+            title="Submission Requirements"
+          >
+            <SubmissionRequirementsActions dossier={dossier} />
+          </Panel>
+
+          <Panel
+            subtitle="Operate the Ranger lifecycle directly from the dashboard using the authenticated submission endpoints."
+            title="Ranger Actions"
+          >
+            <SubmissionRangerActions dossier={dossier} />
+          </Panel>
+
           <Panel
             subtitle="Explicit artifacts recorded for investor, judge, and on-chain verification"
             title="Verification Evidence"

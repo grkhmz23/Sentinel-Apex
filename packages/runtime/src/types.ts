@@ -2221,6 +2221,18 @@ export interface SubmissionDossierView {
   latestExecutionReference: string | null;
   latestExecutionReferenceUrl: string | null;
   latestExecutionAt: string | null;
+  rangerVaultAddress: string | null;
+  rangerLpMintAddress: string | null;
+  rangerVaultProgramId: string | null;
+  rangerAdaptorProgramId: string | null;
+  rangerStrategyAddress: string | null;
+  rangerLpMetadataUri: string | null;
+  rangerStrategyInitialized: boolean;
+  rangerFundsAllocated: boolean;
+  strategyDocumentationUrl: string | null;
+  codeRepositoryUrl: string | null;
+  codeRepositoryVisibility: 'public' | 'private' | 'unknown';
+  privateRepoReviewerAdded: boolean;
   realExecutionCountInWindow: number;
   simulatedExecutionCountInWindow: number;
   realizedApyPct: string | null;
@@ -2288,8 +2300,94 @@ export interface UpsertSubmissionDossierInput {
   cexVenues?: string[];
   cexTradeHistoryProvided?: boolean;
   cexReadOnlyApiKeyProvided?: boolean;
+  rangerVaultAddress?: string | null;
+  rangerLpMintAddress?: string | null;
+  rangerVaultProgramId?: string | null;
+  rangerAdaptorProgramId?: string | null;
+  rangerStrategyAddress?: string | null;
+  rangerLpMetadataUri?: string | null;
+  rangerStrategyInitialized?: boolean;
+  rangerFundsAllocated?: boolean;
+  strategyDocumentationUrl?: string | null;
+  codeRepositoryUrl?: string | null;
+  codeRepositoryVisibility?: 'public' | 'private' | 'unknown';
+  privateRepoReviewerAdded?: boolean;
   notes?: string | null;
   metadata?: Record<string, unknown>;
+}
+
+export interface RangerAccountMetaInput {
+  pubkey: string;
+  isSigner: boolean;
+  isWritable: boolean;
+}
+
+export interface RangerCreateVaultInput {
+  assetMint: string;
+  name: string;
+  description: string;
+  maxCap: string;
+  startAtTs?: number;
+  lockedProfitDegradationDurationSeconds?: number;
+  withdrawalWaitingPeriodSeconds?: number;
+  managerPerformanceFeeBps?: number;
+  adminPerformanceFeeBps?: number;
+  managerManagementFeeBps?: number;
+  adminManagementFeeBps?: number;
+  redemptionFeeBps?: number;
+  issuanceFeeBps?: number;
+  strategyId: string;
+  strategyMetadataUri?: string;
+  lpTokenName?: string;
+  lpTokenSymbol?: string;
+  managerPublicKey?: string;
+  updateSubmissionDossier?: boolean;
+  cluster?: SubmissionCluster;
+}
+
+export interface RangerCreateVaultResult {
+  vaultId: string;
+  vaultAddress: string;
+  shareTokenMint: string | null;
+  signature: string;
+  adminPublicKey: string;
+  managerPublicKey: string;
+}
+
+export interface RangerLpMetadataInput {
+  vaultId: string;
+  name: string;
+  symbol: string;
+  uri: string;
+  updateSubmissionDossier?: boolean;
+}
+
+export interface RangerAddAdaptorInput {
+  vaultId: string;
+  adaptorProgramId: string;
+  updateSubmissionDossier?: boolean;
+}
+
+export interface RangerInitializeStrategyInput {
+  vaultId: string;
+  strategyAddress: string;
+  adaptorProgramId?: string;
+  instructionDiscriminatorHex?: string;
+  additionalArgsHex?: string;
+  remainingAccounts?: RangerAccountMetaInput[];
+  updateSubmissionDossier?: boolean;
+}
+
+export interface RangerAllocateStrategyInput {
+  vaultId: string;
+  strategyAddress: string;
+  amount: string;
+  vaultAssetMint?: string;
+  adaptorProgramId?: string;
+  instructionDiscriminatorHex?: string;
+  additionalArgsHex?: string;
+  remainingAccounts?: RangerAccountMetaInput[];
+  updateSubmissionDossier?: boolean;
 }
 
 export interface RecordSubmissionEvidenceInput {
@@ -2512,6 +2610,12 @@ export interface RuntimeReadApi {
   listOpportunities(limit?: number): Promise<OpportunityView[]>;
   listRecentEvents(limit?: number): Promise<AuditEventView[]>;
   getRuntimeStatus(): Promise<RuntimeStatusView>;
+  createRangerVault?(actorId: string, input: RangerCreateVaultInput): Promise<RangerCreateVaultResult>;
+  createRangerLpMetadata?(actorId: string, input: RangerLpMetadataInput): Promise<{ signature: string }>;
+  addRangerAdaptor?(actorId: string, input: RangerAddAdaptorInput): Promise<{ signature: string }>;
+  initializeRangerStrategy?(actorId: string, input: RangerInitializeStrategyInput): Promise<{ signature: string }>;
+  depositRangerStrategy?(actorId: string, input: RangerAllocateStrategyInput): Promise<{ signature: string }>;
+  withdrawRangerStrategy?(actorId: string, input: RangerAllocateStrategyInput): Promise<{ signature: string }>;
   listCarryRecommendations(limit?: number): Promise<CarryActionView[]>;
   listCarryOpportunityEvaluations(limit?: number): Promise<CarryOpportunityEvaluationView[]>;
   listCarryActions(limit?: number): Promise<CarryActionView[]>;

@@ -639,7 +639,7 @@ export default async function VenueDetailPage(
             )}
           </Panel>
 
-          <Panel subtitle="Field-by-field comparison between internal derivative state and external Drift-native truth" title="Comparison Detail">
+          <Panel subtitle="Field-by-field comparison between internal derivative state and external venue truth" title="Comparison Detail">
             <>
               <DefinitionList
                 items={[

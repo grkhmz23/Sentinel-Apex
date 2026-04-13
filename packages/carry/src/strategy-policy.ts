@@ -198,7 +198,7 @@ function buildDefaultRiskLimits(healthThreshold: string | null): CarryStrategyRi
     {
       key: 'max_single_action_notional_usd',
       value: '25000.00',
-      summary: 'Carry action notional stays bounded while the vault remains simulation-only pending alternative venue integration.'
+      summary: 'Carry action notional stays bounded while live execution remains limited to the current approved devnet lane.'
     },
   ];
 }
@@ -214,7 +214,7 @@ function buildEvidenceSummary(
   ];
   const blockedScope = input?.blockedScope ?? [
     'Mainnet execution remains blocked (devnet only for hackathon).',
-    'Drift protocol disqualified due to compromise.',
+    'No legacy execution venue support outside Jupiter Perps.',
     'New markets, non-USDC base assets, and DEX LP / junior tranche / insurance pool / circular-yield strategies remain blocked.',
     'CEX execution adapters not implemented.',
   ];
@@ -234,7 +234,7 @@ function buildEvidenceSummary(
     summary: input?.summary ?? (
       latestEvidenceSource === 'devnet_execution'
         ? 'The strategy has Jupiter Perpetuals devnet execution evidence.'
-        : 'The strategy policy is configured for Jupiter Perpetuals devnet execution (Drift disqualified - replaced with Jupiter).'
+        : 'The strategy policy is configured for Jupiter Perpetuals devnet execution.'
     ),
   };
 }

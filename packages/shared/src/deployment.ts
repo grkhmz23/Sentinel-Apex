@@ -8,7 +8,7 @@ export const BLOCKED_EXECUTION_SCOPE = Object.freeze([
   'No mainnet execution (Jupiter devnet only)',
   'No spot market trading',
   'No CEX execution',
-  'Drift protocol disqualified',
+  'No legacy perps connector support outside Jupiter Perps',
 ]);
 
 export const READINESS_TRUTH_STATEMENT =
@@ -78,13 +78,13 @@ export function buildDeploymentProfile(
 export function getDevnetExecutionSafetyErrors(
   _env: Record<string, string | undefined>,
 ): string[] {
-  // Live execution is disabled - no devnet venues available
+  // Additional safety checks can be added here as non-Jupiter venues are introduced.
   return [];
 }
 
 export function getDevnetExecutionSafetyWarnings(
   _env: Record<string, string | undefined>,
 ): string[] {
-  // No warnings - simulation mode is the only supported mode
+  // No warnings - current execution posture is already constrained by deployment truth.
   return [];
 }

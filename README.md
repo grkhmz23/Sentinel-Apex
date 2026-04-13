@@ -81,9 +81,7 @@ on-chain vault token issuance.
 
 ## Execution Model
 
-**IMPORTANT: Drift protocol adapters have been removed due to hackathon eligibility requirements. The Drift protocol was compromised and strategies using Drift are disqualified from prize consideration.**
-
-**Jupiter Perpetuals has been integrated as the replacement execution venue.**
+**Jupiter Perpetuals is the current execution venue for live devnet demonstrations.**
 
 Dry-run is the default mode. Live execution is available on Jupiter Perps devnet.
 
@@ -97,7 +95,6 @@ Current execution scope:
 Blocked execution scope:
 
 - Mainnet execution (devnet only for hackathon)
-- Drift protocol (disqualified)
 - CEX execution connectors
 
 ## API Domains
@@ -287,9 +284,9 @@ production deployment stack yet.
 - 🔴 **Ranger SDK integration** - External blocker: Ranger SDK/program IDs not publicly available
   - Integration boundary implemented and ready
   - Simulated mode available for development
-- 🔴 **All live execution venues** - Drift protocol compromised and disqualified from hackathon
-  - Drift adapters removed from codebase
-  - Alternative venue adapters pending integration
+- 🟡 **Live execution scope remains narrow** - Jupiter Perps devnet only
+  - No mainnet execution path yet
+  - No spot hedge execution path yet
 - ✅ **Multi-leg runtime integration** - Complete as of Phase R3 Part 4
 - 🔴 **CEX execution adapters** - Not implemented (optional for submission)
 - 🔴 **On-chain vault program** - Needs Ranger SDK or custom Solana program
@@ -322,7 +319,7 @@ Every report explicitly labels:
 - **Simulated executions**: Mock venue execution
 - **Backtests**: Historical simulation
 - **Missing data**: Explicitly listed, never hidden
-- **Live execution status**: Not available (Drift protocol disqualified)
+- **Live execution status**: Narrow Jupiter Perps devnet scope only
 
 See `docs/runbooks/submission-dossier.md` for detailed workflow.
 - 🔴 **Historical backtest package** - Not implemented

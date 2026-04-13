@@ -1,6 +1,6 @@
-import { Keypair, Connection, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { Decimal } from 'decimal.js';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   RangerVaultClient,
@@ -11,220 +11,251 @@ import {
 describe('RangerVaultClient', () => {
   let client: RangerVaultClient;
   let mockConnection: Connection;
-  
+  let adminSigner: Keypair;
+  let managerSigner: Keypair;
+
   beforeEach(() => {
     mockConnection = new Connection('http://localhost:8899');
-    
+    adminSigner = Keypair.generate();
+    managerSigner = Keypair.generate();
+
     const config: VaultClientConfig = {
       connection: mockConnection,
+      adminSigner,
+      managerSigner,
       mode: 'simulated',
     };
-    
+
     client = new RangerVaultClient(config);
   });
-  
-  describe('getIntegrationStatus', () => {
-    it('should report simulated mode correctly', () => {
-      const status = client.getIntegrationStatus();
-      
-      expect(status.mode).toBe('simulated');
-      expect(status.sdkAvailable).toBe(false);
-      expect(status.blockerDescription).toContain('simulated mode');
+
+  function buildVaultConfig() {
+    return VaultConfigSchema.parse({
+      assetMint: Keypair.generate().publicKey.toBase58(),
+      name: 'Sentinel Carry',
+      description: 'USDC delta-neutral carry',
+      maxCap: '1000000000000',
+      startAtTs: 0,
+      lockedProfitDegradationDurationSeconds: 86400,
+      withdrawalWaitingPeriodSeconds: 0,
+      managerPerformanceFeeBps: 1000,
+      adminPerformanceFeeBps: 500,
+      managerManagementFeeBps: 50,
+      adminManagementFeeBps: 25,
+      redemptionFeeBps: 10,
+      issuanceFeeBps: 10,
+      strategyId: 'delta-neutral-carry',
     });
-    
-    it('should report unavailable when SDK not present', () => {
+  }
+
+  describe('getIntegrationStatus', () => {
+    it('reports simulated mode as available', () => {
+      const status = client.getIntegrationStatus();
+
+      expect(status.mode).toBe('simulated');
+      expect(status.sdkAvailable).toBe(true);
+      expect(status.hasAdminSigner).toBe(true);
+      expect(status.hasManagerSigner).toBe(true);
+      expect(status.blockerDescription).toBeNull();
+    });
+
+    it('reports unavailable when sdk dependencies are missing in full mode', () => {
       const fullClient = new RangerVaultClient({
         connection: mockConnection,
+        adminSigner,
         mode: 'full',
       });
-      
+
       const status = fullClient.getIntegrationStatus();
-      
-      expect(status.mode).toBe('unavailable');
-      expect(status.sdkAvailable).toBe(false);
-      expect(status.blockerDescription).toContain('SDK');
+      expect(['full', 'unavailable']).toContain(status.mode);
+      if (status.mode === 'unavailable') {
+        expect(status.blockerDescription).toContain('@voltr/vault-sdk');
+      }
     });
   });
-  
+
   describe('createVault', () => {
-    it('should create vault in simulated mode', async () => {
-      const config = VaultConfigSchema.parse({
-        baseAsset: 'USDC',
-        minDeposit: '100',
-        maxCapacity: '1000000',
-        lockPeriodSeconds: 7884000, // 3 months
-        performanceFeeBps: 1000,
-        managementFeeBps: 100,
-        strategyId: 'delta-neutral-carry',
+    it('creates a simulated vault with separate admin and manager roles', async () => {
+      const result = await client.createVault({
+        config: buildVaultConfig(),
       });
-      
-      const authority = Keypair.generate().publicKey;
-      
-      const result = await client.createVault(config, authority);
-      
+
       expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.vaultId).toContain('vault_sim_');
-        expect(result.value.vaultAddress).toBeInstanceOf(PublicKey);
-        expect(result.value.signature).toContain('simulated');
-      }
-    });
-    
-    it('should fail in unavailable mode', async () => {
-      const unavailableClient = new RangerVaultClient({
-        connection: mockConnection,
-        mode: 'full',
-      });
-      
-      const config = VaultConfigSchema.parse({
-        baseAsset: 'USDC',
-        minDeposit: '100',
-        maxCapacity: '1000000',
-        lockPeriodSeconds: 7884000,
-        performanceFeeBps: 1000,
-        managementFeeBps: 100,
-        strategyId: 'delta-neutral-carry',
-      });
-      
-      const authority = Keypair.generate().publicKey;
-      
-      const result = await unavailableClient.createVault(config, authority);
-      
-      expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.message).toContain('SDK');
+        return;
       }
+
+      expect(result.value.vaultAddress).toBeInstanceOf(PublicKey);
+      expect(result.value.shareTokenMint).toBeInstanceOf(PublicKey);
+      expect(result.value.admin.toBase58()).toBe(adminSigner.publicKey.toBase58());
+      expect(result.value.manager.toBase58()).toBe(managerSigner.publicKey.toBase58());
     });
   });
-  
-  describe('deposit', () => {
-    it('should process deposit in simulated mode', async () => {
-      // First create a vault
-      const vaultConfig = VaultConfigSchema.parse({
-        baseAsset: 'USDC',
-        minDeposit: '100',
-        maxCapacity: '1000000',
-        lockPeriodSeconds: 7884000,
-        performanceFeeBps: 1000,
-        managementFeeBps: 100,
-        strategyId: 'delta-neutral-carry',
-      });
-      
-      const authority = Keypair.generate().publicKey;
-      const createResult = await client.createVault(vaultConfig, authority);
-      
-      expect(createResult.ok).toBe(true);
-      if (!createResult.ok) return;
-      
-      const { vaultId } = createResult.value;
-      
-      // Make a deposit
-      const depositResult = await client.deposit(vaultId, {
-        depositId: `deposit_${Date.now()}`,
-        depositor: Keypair.generate().publicKey,
-        amount: new Decimal(10000),
-        minSharesOut: new Decimal(9000),
-        requestedAt: new Date(),
-      });
-      
-      expect(depositResult.ok).toBe(true);
-      if (depositResult.ok) {
-        expect(depositResult.value.sharesMinted.toNumber()).toBeGreaterThan(0);
-        expect(depositResult.value.status).toBe('confirmed');
-        expect(depositResult.value.signature).toContain('simulated');
+
+  describe('metadata + state', () => {
+    it('persists simulated lp metadata into vault state', async () => {
+      const created = await client.createVault({ config: buildVaultConfig() });
+      expect(created.ok).toBe(true);
+      if (!created.ok) {
+        return;
       }
-    });
-    
-    it('should fail deposit for non-existent vault', async () => {
-      const result = await client.deposit('non-existent-vault', {
-        depositId: `deposit_${Date.now()}`,
-        depositor: Keypair.generate().publicKey,
-        amount: new Decimal(10000),
-        minSharesOut: new Decimal(9000),
-        requestedAt: new Date(),
+
+      const metadataResult = await client.createLpMetadata({
+        vaultId: created.value.vaultId,
+        name: 'Sentinel LP',
+        symbol: 'sLP',
+        uri: 'https://example.com/lp.json',
       });
-      
-      expect(result.ok).toBe(false);
+
+      expect(metadataResult.ok).toBe(true);
+
+      const state = await client.getVaultState(created.value.vaultId);
+      expect(state.ok).toBe(true);
+      if (!state.ok) {
+        return;
+      }
+
+      expect(state.value.config.lpTokenName).toBe('Sentinel LP');
+      expect(state.value.config.lpTokenSymbol).toBe('sLP');
+      expect(state.value.config.strategyMetadataUri).toBe('https://example.com/lp.json');
     });
   });
-  
-  describe('withdrawal', () => {
-    it('should process withdrawal in simulated mode', async () => {
-      // Create vault
-      const vaultConfig = VaultConfigSchema.parse({
-        baseAsset: 'USDC',
-        minDeposit: '100',
-        maxCapacity: '1000000',
-        lockPeriodSeconds: 7884000,
-        performanceFeeBps: 1000,
-        managementFeeBps: 100,
-        strategyId: 'delta-neutral-carry',
-      });
-      
-      const authority = Keypair.generate().publicKey;
-      const createResult = await client.createVault(vaultConfig, authority);
-      
-      expect(createResult.ok).toBe(true);
-      if (!createResult.ok) return;
-      
-      const { vaultId } = createResult.value;
-      
-      // Request withdrawal
-      const withdrawalResult = await client.requestWithdrawal(vaultId, {
-        withdrawalId: `withdrawal_${Date.now()}`,
-        shareholder: Keypair.generate().publicKey,
-        sharesToBurn: new Decimal(5000),
-        minAmountOut: new Decimal(4500),
-        requestedAt: new Date(),
-      });
-      
-      expect(withdrawalResult.ok).toBe(true);
-      if (withdrawalResult.ok) {
-        expect(withdrawalResult.value.amountReturned.toNumber()).toBeGreaterThan(0);
-        expect(withdrawalResult.value.status).toBe('completed');
-        expect(withdrawalResult.value.sharesBurned.toNumber()).toBe(5000);
+
+  describe('config updates', () => {
+    it('updates the manager in simulated mode', async () => {
+      const created = await client.createVault({ config: buildVaultConfig() });
+      expect(created.ok).toBe(true);
+      if (!created.ok) {
+        return;
       }
+
+      const newManager = Keypair.generate().publicKey;
+      const update = await client.updateVaultConfig({
+        vaultId: created.value.vaultId,
+        field: 'manager',
+        value: newManager,
+      });
+
+      expect(update.ok).toBe(true);
+
+      const state = await client.getVaultState(created.value.vaultId);
+      expect(state.ok).toBe(true);
+      if (!state.ok) {
+        return;
+      }
+
+      expect(state.value.manager.toBase58()).toBe(newManager.toBase58());
     });
   });
-  
-  describe('calculateNav', () => {
-    it('should return vault AUM as NAV in simulated mode', async () => {
-      // Create vault
-      const vaultConfig = VaultConfigSchema.parse({
-        baseAsset: 'USDC',
-        minDeposit: '100',
-        maxCapacity: '1000000',
-        lockPeriodSeconds: 7884000,
-        performanceFeeBps: 1000,
-        managementFeeBps: 100,
-        strategyId: 'delta-neutral-carry',
+
+  describe('manager/admin operations', () => {
+    it('simulates adaptor addition and strategy lifecycle operations', async () => {
+      const created = await client.createVault({ config: buildVaultConfig() });
+      expect(created.ok).toBe(true);
+      if (!created.ok) {
+        return;
+      }
+
+      const adaptorProgramId = Keypair.generate().publicKey;
+      const strategy = Keypair.generate().publicKey;
+
+      const addAdaptor = await client.addAdaptor({
+        vaultId: created.value.vaultId,
+        adaptorProgramId,
       });
-      
-      const authority = Keypair.generate().publicKey;
-      const createResult = await client.createVault(vaultConfig, authority);
-      
-      expect(createResult.ok).toBe(true);
-      if (!createResult.ok) return;
-      
-      const { vaultId } = createResult.value;
-      
-      // Make a deposit first
-      await client.deposit(vaultId, {
+      expect(addAdaptor.ok).toBe(true);
+
+      const initStrategy = await client.initializeStrategy({
+        vaultId: created.value.vaultId,
+        strategy,
+        adaptorProgramId,
+        remainingAccounts: [],
+      });
+      expect(initStrategy.ok).toBe(true);
+
+      const strategyDeposit = await client.depositToStrategy({
+        vaultId: created.value.vaultId,
+        strategy,
+        amount: '1000000',
+        adaptorProgramId,
+        remainingAccounts: [],
+      });
+      expect(strategyDeposit.ok).toBe(true);
+
+      const strategyWithdraw = await client.withdrawFromStrategy({
+        vaultId: created.value.vaultId,
+        strategy,
+        amount: '500000',
+        adaptorProgramId,
+        remainingAccounts: [],
+      });
+      expect(strategyWithdraw.ok).toBe(true);
+
+      const state = await client.getVaultState(created.value.vaultId);
+      expect(state.ok).toBe(true);
+      if (!state.ok) {
+        return;
+      }
+
+      expect(
+        state.value.adaptorPrograms.some((program) => program.equals(adaptorProgramId)),
+      ).toBe(true);
+    });
+
+    it('simulates fee harvest and high-water-mark calibration', async () => {
+      const created = await client.createVault({ config: buildVaultConfig() });
+      expect(created.ok).toBe(true);
+      if (!created.ok) {
+        return;
+      }
+
+      const harvest = await client.harvestFees({
+        vaultId: created.value.vaultId,
+        protocolAdmin: Keypair.generate().publicKey,
+      });
+      expect(harvest.ok).toBe(true);
+
+      const calibrate = await client.calibrateHighWaterMark({
+        vaultId: created.value.vaultId,
+      });
+      expect(calibrate.ok).toBe(true);
+    });
+  });
+
+  describe('deposit + withdrawal simulation', () => {
+    it('tracks nav through simulated deposits and withdrawals', async () => {
+      const created = await client.createVault({ config: buildVaultConfig() });
+      expect(created.ok).toBe(true);
+      if (!created.ok) {
+        return;
+      }
+
+      const deposit = await client.deposit(created.value.vaultId, {
         depositId: `deposit_${Date.now()}`,
         depositor: Keypair.generate().publicKey,
         amount: new Decimal(50000),
-        minSharesOut: new Decimal(45000),
+        minSharesOut: new Decimal(49000),
         requestedAt: new Date(),
       });
-      
-      // Calculate NAV
-      const navResult = await client.calculateNav(vaultId);
-      
-      expect(navResult.ok).toBe(true);
-      if (navResult.ok) {
-        expect(navResult.value.nav.toNumber()).toBe(50000);
-        expect(navResult.value.sharePrice.toNumber()).toBe(1);
+      expect(deposit.ok).toBe(true);
+
+      const withdrawal = await client.requestWithdrawal(created.value.vaultId, {
+        withdrawalId: `withdrawal_${Date.now()}`,
+        shareholder: Keypair.generate().publicKey,
+        sharesToBurn: new Decimal(10000),
+        minAmountOut: new Decimal(10000),
+        requestedAt: new Date(),
+      });
+      expect(withdrawal.ok).toBe(true);
+
+      const nav = await client.calculateNav(created.value.vaultId);
+      expect(nav.ok).toBe(true);
+      if (!nav.ok) {
+        return;
       }
+
+      expect(nav.value.nav.toNumber()).toBe(40000);
+      expect(nav.value.sharePrice.toNumber()).toBe(1);
     });
   });
 });

@@ -37,8 +37,8 @@ export interface StrategyAdapterConfig {
   /** Strategy adapter program ID */
   strategyProgramId: PublicKey;
   
-  /** Drift program ID (for carry strategies) */
-  driftProgramId?: PublicKey;
+  /** Optional perp venue program ID for live strategy integration */
+  perpVenueProgramId?: PublicKey;
   
   /** Execution mode */
   mode: 'full' | 'simulated' | 'readonly';
@@ -109,7 +109,7 @@ export class RangerCarryStrategyAdapter implements StrategyAdapter {
    * Generate rebalance instructions for carry strategy
    * 
    * This would create instructions to:
-   * 1. Adjust perp leg on Drift
+   * 1. Adjust the perp leg on the configured venue
    * 2. Adjust spot leg (if applicable)
    * 3. Rebalance hedge ratio
    */
@@ -154,11 +154,11 @@ export class RangerCarryStrategyAdapter implements StrategyAdapter {
       return context.currentAum;
     }
     
-    // Full mode: Would fetch from Drift and spot venues
-    // EXTERNAL BLOCKER: Requires Drift position decoding
+    // Full mode: Would fetch from the configured perp venue and spot venues
+    // EXTERNAL BLOCKER: Requires venue-specific position decoding
     logger.warn('Real NAV calculation not implemented', {
       vaultId: context.vaultId,
-      reason: 'Drift position fetch not implemented',
+      reason: 'Venue position fetch not implemented',
     });
     
     return context.currentAum;
@@ -265,12 +265,12 @@ export class RangerCarryStrategyAdapter implements StrategyAdapter {
       };
     }
     
-    // Full mode: Would construct actual Drift instruction
-    // EXTERNAL BLOCKER: Requires Drift instruction construction
+    // Full mode: Would construct the actual venue instruction
+    // EXTERNAL BLOCKER: Requires venue-specific instruction construction
     logger.warn('Real instruction construction not implemented', {
       vaultId: context.vaultId,
       allocation,
-      reason: 'Drift instruction builder not integrated',
+      reason: 'Venue instruction builder not integrated',
     });
     
     return null;
@@ -311,7 +311,7 @@ export class RangerStrategyAdapterFactory implements StrategyAdapterFactory {
             maxGrossExposure: new Decimal(1000000), // $1M
             minFundingRateThreshold: new Decimal(0.0001), // 0.01%
             rebalanceThresholdPct: 5,
-            approvedVenues: ['drift'],
+            approvedVenues: ['jupiter-perps'],
             approvedMarkets: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
           }
         );

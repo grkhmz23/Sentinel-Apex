@@ -4,6 +4,8 @@ import {
   type DatabaseConnection,
 } from '@sentinel-apex/db';
 import { createId } from '@sentinel-apex/domain';
+import { RangerVaultClient } from '@sentinel-apex/ranger';
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 
 import {
   acknowledgeNextStatus,
@@ -106,6 +108,12 @@ import type {
   TreasuryVenueView,
   InternalDerivativeSnapshotView,
   PortfolioPnlResult,
+  RangerAddAdaptorInput,
+  RangerAllocateStrategyInput,
+  RangerCreateVaultInput,
+  RangerCreateVaultResult,
+  RangerInitializeStrategyInput,
+  RangerLpMetadataInput,
   RuntimeVerificationOutcome,
   SubmissionDossierView,
   SubmissionEvidenceRecordView,
@@ -136,11 +144,106 @@ function canSatisfyApprovalRequirement(
   return actorRole === 'admin';
 }
 
+function parseKeypairFromEnv(name: string): Keypair | null {
+  const raw = process.env[name];
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Expected ${name} to be a JSON array of secret key bytes.`);
+    }
+    return Keypair.fromSecretKey(Uint8Array.from(parsed));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid ${name}: ${message}`);
+  }
+}
+
+function parseHexOrNull(value: string | undefined): Buffer | null {
+  if (value === undefined) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const normalized = trimmed.startsWith('0x') ? trimmed.slice(2) : trimmed;
+  return Buffer.from(normalized, 'hex');
+}
+
 export class RuntimeControlPlane implements RuntimeReadApi {
   constructor(
     private readonly connection: DatabaseConnection,
     private readonly store: RuntimeStore,
   ) {}
+
+  private createRangerClient(): RangerVaultClient {
+    const rpcEndpoint = process.env['RANGER_RPC_ENDPOINT'] ?? process.env['SOLANA_RPC_ENDPOINT'];
+    if (!rpcEndpoint) {
+      throw new Error('RANGER_RPC_ENDPOINT or SOLANA_RPC_ENDPOINT must be configured.');
+    }
+
+    const adminSigner = parseKeypairFromEnv('RANGER_ADMIN_PRIVATE_KEY');
+    const managerSigner = parseKeypairFromEnv('RANGER_MANAGER_PRIVATE_KEY');
+    const defaultAdaptorProgramId = process.env['RANGER_DEFAULT_ADAPTOR_PROGRAM_ID'];
+    const mode = adminSigner ? 'full' : 'readonly';
+
+    return new RangerVaultClient({
+      connection: new Connection(rpcEndpoint),
+      ...(adminSigner ? { adminSigner } : {}),
+      ...(managerSigner ? { managerSigner } : {}),
+      ...(defaultAdaptorProgramId
+        ? { defaultAdaptorProgramId: new PublicKey(defaultAdaptorProgramId) }
+        : {}),
+      mode,
+    });
+  }
+
+  private async syncSubmissionRangerState(input: {
+    rangerVaultAddress?: string | null;
+    rangerLpMintAddress?: string | null;
+    rangerVaultProgramId?: string | null;
+    rangerAdaptorProgramId?: string | null;
+    rangerStrategyAddress?: string | null;
+    rangerLpMetadataUri?: string | null;
+    rangerStrategyInitialized?: boolean;
+    rangerFundsAllocated?: boolean;
+    cluster?: SubmissionDossierView['cluster'];
+  }): Promise<void> {
+    const update: UpsertSubmissionDossierInput = {};
+    if (input.rangerVaultAddress !== undefined) {
+      update.rangerVaultAddress = input.rangerVaultAddress;
+      update.vaultAddress = input.rangerVaultAddress;
+    }
+    if (input.rangerLpMintAddress !== undefined) {
+      update.rangerLpMintAddress = input.rangerLpMintAddress;
+    }
+    if (input.rangerVaultProgramId !== undefined) {
+      update.rangerVaultProgramId = input.rangerVaultProgramId;
+    }
+    if (input.rangerAdaptorProgramId !== undefined) {
+      update.rangerAdaptorProgramId = input.rangerAdaptorProgramId;
+    }
+    if (input.rangerStrategyAddress !== undefined) {
+      update.rangerStrategyAddress = input.rangerStrategyAddress;
+    }
+    if (input.rangerLpMetadataUri !== undefined) {
+      update.rangerLpMetadataUri = input.rangerLpMetadataUri;
+    }
+    if (input.rangerStrategyInitialized !== undefined) {
+      update.rangerStrategyInitialized = input.rangerStrategyInitialized;
+    }
+    if (input.rangerFundsAllocated !== undefined) {
+      update.rangerFundsAllocated = input.rangerFundsAllocated;
+    }
+    if (input.cluster !== undefined) {
+      update.cluster = input.cluster;
+    }
+    await this.store.upsertSubmissionDossier(update);
+  }
 
   static async connect(connectionString: string): Promise<RuntimeControlPlane> {
     const connection = await createDatabaseConnection(connectionString);
@@ -230,6 +333,303 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.getRuntimeStatus();
   }
 
+  async createRangerVault(
+    actorId: string,
+    input: RangerCreateVaultInput,
+  ): Promise<RangerCreateVaultResult> {
+    const client = this.createRangerClient();
+    const result = await client.createVault({
+      config: {
+        assetMint: input.assetMint,
+        name: input.name,
+        description: input.description,
+        maxCap: input.maxCap,
+        startAtTs: input.startAtTs ?? 0,
+        lockedProfitDegradationDurationSeconds:
+          input.lockedProfitDegradationDurationSeconds ?? 86400,
+        withdrawalWaitingPeriodSeconds: input.withdrawalWaitingPeriodSeconds ?? 0,
+        managerPerformanceFeeBps: input.managerPerformanceFeeBps ?? 1000,
+        adminPerformanceFeeBps: input.adminPerformanceFeeBps ?? 500,
+        managerManagementFeeBps: input.managerManagementFeeBps ?? 50,
+        adminManagementFeeBps: input.adminManagementFeeBps ?? 25,
+        redemptionFeeBps: input.redemptionFeeBps ?? 10,
+        issuanceFeeBps: input.issuanceFeeBps ?? 10,
+        strategyId: input.strategyId,
+        strategyMetadataUri: input.strategyMetadataUri,
+        lpTokenName: input.lpTokenName,
+        lpTokenSymbol: input.lpTokenSymbol,
+      },
+      ...(input.managerPublicKey ? { manager: new PublicKey(input.managerPublicKey) } : {}),
+    });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    if (input.updateSubmissionDossier !== false) {
+      await this.syncSubmissionRangerState({
+        rangerVaultAddress: result.value.vaultAddress.toBase58(),
+        rangerLpMintAddress: result.value.shareTokenMint?.toBase58() ?? null,
+        rangerVaultProgramId: client.getIntegrationStatus().vaultProgramId?.toBase58() ?? null,
+        ...(input.cluster !== undefined ? { cluster: input.cluster } : {}),
+      });
+    }
+
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.ranger_vault_created',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: result.value.vaultId,
+        vaultAddress: result.value.vaultAddress.toBase58(),
+        shareTokenMint: result.value.shareTokenMint?.toBase58() ?? null,
+        signature: result.value.signature,
+        adminPublicKey: result.value.admin.toBase58(),
+        managerPublicKey: result.value.manager.toBase58(),
+      },
+    });
+
+    return {
+      vaultId: result.value.vaultId,
+      vaultAddress: result.value.vaultAddress.toBase58(),
+      shareTokenMint: result.value.shareTokenMint?.toBase58() ?? null,
+      signature: result.value.signature,
+      adminPublicKey: result.value.admin.toBase58(),
+      managerPublicKey: result.value.manager.toBase58(),
+    };
+  }
+
+  async createRangerLpMetadata(
+    actorId: string,
+    input: RangerLpMetadataInput,
+  ): Promise<{ signature: string }> {
+    const client = this.createRangerClient();
+    const result = await client.createLpMetadata({
+      vaultId: input.vaultId,
+      name: input.name,
+      symbol: input.symbol,
+      uri: input.uri,
+    });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    if (input.updateSubmissionDossier !== false) {
+      await this.syncSubmissionRangerState({
+        rangerLpMetadataUri: input.uri,
+      });
+    }
+
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.ranger_lp_metadata_created',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: input.vaultId,
+        uri: input.uri,
+        signature: result.value.signature,
+      },
+    });
+
+    return result.value;
+  }
+
+  async addRangerAdaptor(
+    actorId: string,
+    input: RangerAddAdaptorInput,
+  ): Promise<{ signature: string }> {
+    const client = this.createRangerClient();
+    const adaptorProgramId = new PublicKey(input.adaptorProgramId);
+    const result = await client.addAdaptor({
+      vaultId: input.vaultId,
+      adaptorProgramId,
+    });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    if (input.updateSubmissionDossier !== false) {
+      await this.syncSubmissionRangerState({
+        rangerAdaptorProgramId: adaptorProgramId.toBase58(),
+      });
+    }
+
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.ranger_adaptor_added',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: input.vaultId,
+        adaptorProgramId: adaptorProgramId.toBase58(),
+        signature: result.value.signature,
+      },
+    });
+
+    return result.value;
+  }
+
+  async initializeRangerStrategy(
+    actorId: string,
+    input: RangerInitializeStrategyInput,
+  ): Promise<{ signature: string }> {
+    const client = this.createRangerClient();
+    const strategy = new PublicKey(input.strategyAddress);
+    const adaptorProgramId = input.adaptorProgramId
+      ? new PublicKey(input.adaptorProgramId)
+      : undefined;
+    const result = await client.initializeStrategy({
+      vaultId: input.vaultId,
+      strategy,
+      ...(adaptorProgramId ? { adaptorProgramId } : {}),
+      instructionDiscriminator: parseHexOrNull(input.instructionDiscriminatorHex),
+      additionalArgs: parseHexOrNull(input.additionalArgsHex),
+      remainingAccounts: (input.remainingAccounts ?? []).map((account) => ({
+        pubkey: new PublicKey(account.pubkey),
+        isSigner: account.isSigner,
+        isWritable: account.isWritable,
+      })),
+    });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    if (input.updateSubmissionDossier !== false) {
+      await this.syncSubmissionRangerState({
+        rangerStrategyAddress: strategy.toBase58(),
+        rangerStrategyInitialized: true,
+        ...(adaptorProgramId ? { rangerAdaptorProgramId: adaptorProgramId.toBase58() } : {}),
+      });
+    }
+
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.ranger_strategy_initialized',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: input.vaultId,
+        strategyAddress: strategy.toBase58(),
+        adaptorProgramId: adaptorProgramId?.toBase58() ?? null,
+        signature: result.value.signature,
+      },
+    });
+
+    return result.value;
+  }
+
+  async depositRangerStrategy(
+    actorId: string,
+    input: RangerAllocateStrategyInput,
+  ): Promise<{ signature: string }> {
+    const client = this.createRangerClient();
+    const strategy = new PublicKey(input.strategyAddress);
+    const adaptorProgramId = input.adaptorProgramId
+      ? new PublicKey(input.adaptorProgramId)
+      : undefined;
+    const vaultAssetMint = input.vaultAssetMint ? new PublicKey(input.vaultAssetMint) : undefined;
+    const result = await client.depositToStrategy({
+      vaultId: input.vaultId,
+      strategy,
+      amount: input.amount,
+      ...(vaultAssetMint ? { vaultAssetMint } : {}),
+      ...(adaptorProgramId ? { adaptorProgramId } : {}),
+      instructionDiscriminator: parseHexOrNull(input.instructionDiscriminatorHex),
+      additionalArgs: parseHexOrNull(input.additionalArgsHex),
+      remainingAccounts: (input.remainingAccounts ?? []).map((account) => ({
+        pubkey: new PublicKey(account.pubkey),
+        isSigner: account.isSigner,
+        isWritable: account.isWritable,
+      })),
+    });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    if (input.updateSubmissionDossier !== false) {
+      await this.syncSubmissionRangerState({
+        rangerStrategyAddress: strategy.toBase58(),
+        rangerFundsAllocated: true,
+        ...(adaptorProgramId ? { rangerAdaptorProgramId: adaptorProgramId.toBase58() } : {}),
+      });
+    }
+
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.ranger_strategy_deposit',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: input.vaultId,
+        strategyAddress: strategy.toBase58(),
+        amount: input.amount,
+        adaptorProgramId: adaptorProgramId?.toBase58() ?? null,
+        signature: result.value.signature,
+      },
+    });
+
+    return result.value;
+  }
+
+  async withdrawRangerStrategy(
+    actorId: string,
+    input: RangerAllocateStrategyInput,
+  ): Promise<{ signature: string }> {
+    const client = this.createRangerClient();
+    const strategy = new PublicKey(input.strategyAddress);
+    const adaptorProgramId = input.adaptorProgramId
+      ? new PublicKey(input.adaptorProgramId)
+      : undefined;
+    const vaultAssetMint = input.vaultAssetMint ? new PublicKey(input.vaultAssetMint) : undefined;
+    const result = await client.withdrawFromStrategy({
+      vaultId: input.vaultId,
+      strategy,
+      amount: input.amount,
+      ...(vaultAssetMint ? { vaultAssetMint } : {}),
+      ...(adaptorProgramId ? { adaptorProgramId } : {}),
+      instructionDiscriminator: parseHexOrNull(input.instructionDiscriminatorHex),
+      additionalArgs: parseHexOrNull(input.additionalArgsHex),
+      remainingAccounts: (input.remainingAccounts ?? []).map((account) => ({
+        pubkey: new PublicKey(account.pubkey),
+        isSigner: account.isSigner,
+        isWritable: account.isWritable,
+      })),
+    });
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'vault.ranger_strategy_withdraw',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'carry',
+      data: {
+        vaultId: input.vaultId,
+        strategyAddress: strategy.toBase58(),
+        amount: input.amount,
+        adaptorProgramId: adaptorProgramId?.toBase58() ?? null,
+        signature: result.value.signature,
+      },
+    });
+
+    return result.value;
+  }
+
   async recordVaultDeposit(
     actorId: string,
     input: RecordVaultDepositInput,
@@ -298,6 +698,11 @@ export class RuntimeControlPlane implements RuntimeReadApi {
         addressScope: dossier.addressScope,
         walletAddress: dossier.walletAddress,
         vaultAddress: dossier.vaultAddress,
+        rangerVaultAddress: dossier.rangerVaultAddress,
+        rangerLpMintAddress: dossier.rangerLpMintAddress,
+        rangerStrategyAddress: dossier.rangerStrategyAddress,
+        rangerStrategyInitialized: dossier.rangerStrategyInitialized,
+        rangerFundsAllocated: dossier.rangerFundsAllocated,
         cexExecutionUsed: dossier.cexExecutionUsed,
         cexVenues: dossier.cexVenues,
         readinessStatus: dossier.readiness.status,

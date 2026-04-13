@@ -1,3 +1,14 @@
+import type {
+  RangerAddAdaptorInput,
+  RangerAllocateStrategyInput,
+  RangerCreateVaultInput,
+  RangerCreateVaultResult,
+  RangerInitializeStrategyInput,
+  RangerLpMetadataInput,
+  SubmissionDossierView,
+  UpsertSubmissionDossierInput,
+} from '@sentinel-apex/runtime';
+
 import type { ActionRequestBody } from './types';
 
 async function request<T>(path: string, init: RequestInit): Promise<T> {
@@ -23,6 +34,27 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
 
 async function requestVenues<T>(path: string, init: RequestInit): Promise<T> {
   const response = await fetch(`/api/venues${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: T;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+async function requestSubmission<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(`/api/submission${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
@@ -97,6 +129,69 @@ export async function triggerCarryEvaluation(): Promise<unknown> {
   }
 
   return payload.data;
+}
+
+export async function createRangerVault(
+  input: RangerCreateVaultInput,
+): Promise<RangerCreateVaultResult> {
+  return requestSubmission('/ranger/vault', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateSubmissionDossier(
+  input: UpsertSubmissionDossierInput,
+): Promise<SubmissionDossierView> {
+  return requestSubmission('', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function createRangerLpMetadata(
+  input: RangerLpMetadataInput,
+): Promise<{ signature: string }> {
+  return requestSubmission('/ranger/lp-metadata', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function addRangerAdaptor(
+  input: RangerAddAdaptorInput,
+): Promise<{ signature: string }> {
+  return requestSubmission('/ranger/adaptor', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function initializeRangerStrategy(
+  input: RangerInitializeStrategyInput,
+): Promise<{ signature: string }> {
+  return requestSubmission('/ranger/strategy/init', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function depositRangerStrategy(
+  input: RangerAllocateStrategyInput,
+): Promise<{ signature: string }> {
+  return requestSubmission('/ranger/strategy/deposit', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function withdrawRangerStrategy(
+  input: RangerAllocateStrategyInput,
+): Promise<{ signature: string }> {
+  return requestSubmission('/ranger/strategy/withdraw', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export async function approveCarryAction(actionId: string): Promise<unknown> {

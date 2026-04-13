@@ -138,7 +138,7 @@ export default async function VenuesPage(): Promise<JSX.Element> {
           <Panel subtitle="Depth of account, balance, exposure, and reference truth across the venue inventory" title="Truth Depth">
             <DefinitionList
               items={[
-                { label: 'Drift-native read-only', value: String(truthSummary.connectorDepth.drift_native_readonly) },
+                { label: 'Venue-native read-only', value: String(truthSummary.connectorDepth.drift_native_readonly) },
                 { label: 'Generic RPC read-only', value: String(truthSummary.connectorDepth.generic_rpc_readonly) },
                 { label: 'Execution-capable depth', value: String(truthSummary.connectorDepth.execution_capable) },
                 { label: 'Complete snapshots', value: String(truthSummary.completeSnapshots) },

@@ -90,7 +90,6 @@ const envSchema = z
     FEATURE_FLAG_LIVE_EXECUTION: envBoolean,
 
     // ── Solana / on-chain ────────────────────────────────────────────────────
-    // Note: Drift adapters removed due to hackathon eligibility requirements
     SOLANA_RPC_ENDPOINT: z.string().optional(),
 
     // ── Jupiter Perpetuals ───────────────────────────────────────────────────

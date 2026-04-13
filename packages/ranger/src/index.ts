@@ -1,17 +1,9 @@
 /**
- * @sentinel-apex/ranger — Ranger Earn Integration
- * 
- * This package provides integration with Ranger Earn vault infrastructure.
- * 
- * IMPORTANT: This is an integration boundary. The actual Ranger SDK may not be
- * publicly available. This package provides:
- * 
- * 1. Strong interfaces for Ranger-compatible operations
- * 2. Working simulated mode for development/testing
- * 3. Clear documentation of external blockers
- * 
- * EXTERNAL BLOCKER: Ranger SDK/program IDs not publicly documented.
- * The implementation provides the strongest truthful integration boundary possible.
+ * @sentinel-apex/ranger — Ranger Earn integration
+ *
+ * This package now targets the public Voltr/Ranger SDK surface documented by
+ * Ranger. It keeps a simulated mode for local tests and can degrade gracefully
+ * when optional SDK dependencies are not installed yet.
  */
 
 // =============================================================================
@@ -19,6 +11,16 @@
 // =============================================================================
 
 export type {
+  CreateVaultReceipt,
+  CreateVaultRequest,
+  LpMetadataRequest,
+  AddAdaptorRequest,
+  InitializeStrategyRequest,
+  AllocateStrategyRequest,
+  HarvestFeesRequest,
+  CalibrateHighWaterMarkRequest,
+  AccountMetaInput,
+  RangerVaultConfigField,
   VaultId,
   StrategyId,
   ShareTokenMint,
@@ -31,6 +33,7 @@ export type {
   DepositReceipt,
   WithdrawalRequest,
   WithdrawalReceipt,
+  VaultConfigUpdateRequest,
   StrategyExecutionContext,
   StrategyInstruction,
   StrategyAdapter,
@@ -83,4 +86,4 @@ export {
 // =============================================================================
 
 export const RANGER_INTEGRATION_VERSION = '0.1.0';
-export const RANGER_INTEGRATION_STATUS = 'integration-boundary';
+export const RANGER_INTEGRATION_STATUS = 'sdk-backed';

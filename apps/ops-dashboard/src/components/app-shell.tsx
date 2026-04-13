@@ -66,7 +66,7 @@ export function AppShell(
                 <h2>Execution truth stays server-side.</h2>
                 <p className="shell-topbar__summary">
                   Frontend mutations proxy to the backend API. Long-running runtime control, reconciliation,
-                  and venue-native Drift evidence ingestion stay in Render services only.
+                  and venue-native execution evidence ingestion stay in Render services only.
                 </p>
               </div>
               <div className="shell-topbar__aside">

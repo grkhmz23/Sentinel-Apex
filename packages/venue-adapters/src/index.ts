@@ -103,7 +103,6 @@ export type { SimulatedVenueConfig } from './simulation/simulated-venue-adapter.
 export { SimulatedVenueAdapter } from './simulation/simulated-venue-adapter.js';
 export type { SimulatedTreasuryVenueConfig } from './simulation/simulated-treasury-venue-adapter.js';
 export { SimulatedTreasuryVenueAdapter } from './simulation/simulated-treasury-venue-adapter.js';
-// Note: Drift adapters removed due to hackathon eligibility requirements (Drift protocol compromised)
 export type { JupiterPerpsAdapterConfig } from './real/jupiter-perps-adapter.js';
 export { JupiterPerpsAdapter } from './real/jupiter-perps-adapter.js';
 export type { SolanaRpcReadonlyTruthAdapterConfig } from './real/solana-rpc-readonly-truth-adapter.js';

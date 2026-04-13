@@ -26,7 +26,7 @@ describe('RangerCarryStrategyAdapter', () => {
       maxGrossExposure: new Decimal(1000000),
       minFundingRateThreshold: new Decimal(0.0001),
       rebalanceThresholdPct: 5,
-      approvedVenues: ['drift'],
+      approvedVenues: ['jupiter-perps'],
       approvedMarkets: ['BTC-PERP'],
     });
   });
@@ -45,7 +45,7 @@ describe('RangerCarryStrategyAdapter', () => {
         authority: PublicKey.default,
         currentAum: new Decimal(100000),
         targetAllocations: new Map([
-          ['drift:BTC-PERP:long', new Decimal(50000)],
+          ['jupiter-perps:BTC-PERP:long', new Decimal(50000)],
         ]),
       };
       
@@ -62,7 +62,7 @@ describe('RangerCarryStrategyAdapter', () => {
         authority: PublicKey.default,
         currentAum: new Decimal(100000),
         targetAllocations: new Map([
-          ['drift:BTC-PERP:long', new Decimal(1500000)], // Exceeds max
+          ['jupiter-perps:BTC-PERP:long', new Decimal(1500000)], // Exceeds max
         ]),
       };
       
@@ -115,8 +115,8 @@ describe('RangerCarryStrategyAdapter', () => {
         authority: PublicKey.default,
         currentAum: new Decimal(100000),
         targetAllocations: new Map([
-          ['drift:BTC-PERP:long', new Decimal(50000)],
-          ['drift:BTC-PERP:short', new Decimal(-50000)],
+          ['jupiter-perps:BTC-PERP:long', new Decimal(50000)],
+          ['jupiter-perps:BTC-PERP:short', new Decimal(-50000)],
         ]),
       };
       

@@ -1901,7 +1901,7 @@ export function createCarryStrategyProfile(
       supportLabel: 'devnet_real_execution_narrow_scope',
       supportedScope: [
         'USDC-denominated carry strategy metadata and policy enforcement.',
-        'Drift devnet carry execution evidence for BTC-PERP reduce-only market orders only.',
+        'Jupiter Perpetuals devnet execution evidence for BTC-PERP, ETH-PERP, and SOL-PERP.',
       ],
       blockedScope: [
         'Mainnet deployment remains blocked.',
@@ -1911,7 +1911,7 @@ export function createCarryStrategyProfile(
       latestExecutionReference: 'drift-devnet:signature-1',
       latestConfirmationStatus: 'confirmed_full',
       latestEvidenceSource: 'devnet_execution',
-      summary: 'Latest strategy evidence includes a persisted Drift devnet execution reference plus the current confirmation state for the narrow real execution path.',
+      summary: 'Latest strategy evidence includes a persisted Jupiter Perpetuals devnet execution reference plus the current confirmation state for the current real execution path.',
     },
     eligibility: {
       status: 'eligible',
@@ -1990,6 +1990,18 @@ export function createSubmissionDossier(
     latestExecutionReference: 'signature-1',
     latestExecutionReferenceUrl: 'https://solscan.io/tx/signature-1',
     latestExecutionAt: '2026-03-20T12:01:05.000Z',
+    rangerVaultAddress: 'submission-vault-1',
+    rangerLpMintAddress: 'submission-lp-mint-1',
+    rangerVaultProgramId: 'vVoLTRjQmtFpiYoegx285Ze4gsLJ8ZxgFKVcuvmG1a8',
+    rangerAdaptorProgramId: 'EW35URAx3LiM13fFK3QxAXfGemHso9HWPixrv7YDY4AM',
+    rangerStrategyAddress: 'submission-strategy-1',
+    rangerLpMetadataUri: 'https://example.com/sentinel-lp.json',
+    rangerStrategyInitialized: true,
+    rangerFundsAllocated: true,
+    strategyDocumentationUrl: 'https://example.com/apex-carry-strategy-docs',
+    codeRepositoryUrl: 'https://github.com/sentinel/apex',
+    codeRepositoryVisibility: 'private',
+    privateRepoReviewerAdded: true,
     realExecutionCountInWindow: 2,
     simulatedExecutionCountInWindow: 4,
     realizedApyPct: null,
@@ -1999,7 +2011,7 @@ export function createSubmissionDossier(
     cexReadOnlyApiKeyProvided: false,
     supportedScope: [
       'USDC-denominated carry strategy metadata and policy enforcement.',
-      'Drift devnet carry execution evidence for BTC-PERP reduce-only market orders only.',
+      'Jupiter Perpetuals devnet execution evidence for BTC-PERP, ETH-PERP, and SOL-PERP.',
     ],
     blockedScope: [
       'Mainnet deployment remains blocked.',

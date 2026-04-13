@@ -166,8 +166,8 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
     this.venueId = config.venueId;
     this.venueName = config.venueName;
     this.authRequirementsSummary = config.authRequirementsSummary ?? [
-      'DRIFT_RPC_ENDPOINT',
-      'DRIFT_READONLY_ACCOUNT_ADDRESS',
+      'SOLANA_RPC_ENDPOINT',
+      'SOLANA_ACCOUNT_ADDRESS',
     ];
     this.recentSignatureLimit = config.recentSignatureLimit ?? DEFAULT_RECENT_SIGNATURE_LIMIT;
   }
@@ -186,7 +186,7 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
 
   async getVenueCapabilitySnapshot(): Promise<VenueCapabilitySnapshot> {
     const missingPrerequisites = this.config.accountAddress === undefined || this.config.accountAddress === ''
-      ? ['Set DRIFT_READONLY_ACCOUNT_ADDRESS to enable account, balance, and recent-reference snapshots.']
+      ? ['Set SOLANA_ACCOUNT_ADDRESS to enable account, balance, and recent-reference snapshots.']
       : [];
 
     return {
@@ -245,17 +245,17 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
           snapshotSuccessful: true,
           healthy: true,
           healthState: 'healthy',
-          summary: `RPC connectivity confirmed via getVersion (${rpcVersion}). Account-level truth is unavailable until DRIFT_READONLY_ACCOUNT_ADDRESS is configured.`,
+          summary: `RPC connectivity confirmed via getVersion (${rpcVersion}). Account-level truth is unavailable until SOLANA_ACCOUNT_ADDRESS is configured.`,
           errorMessage: null,
           capturedAt,
           snapshotCompleteness: 'minimal',
           truthCoverage: {
-            accountState: unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to capture account identity.'),
-            balanceState: unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to capture balance state.'),
+            accountState: unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to capture account identity.'),
+            balanceState: unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to capture balance state.'),
             capacityState: unsupportedCoverage('Generic Solana RPC does not expose treasury-style venue capacity.'),
-            exposureState: unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to derive balance-backed exposure.'),
+            exposureState: unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to derive balance-backed exposure.'),
             derivativeAccountState: unsupportedCoverage(
-              'Configure DRIFT_READONLY_ACCOUNT_ADDRESS to inspect candidate derivative account metadata.',
+              'Configure SOLANA_ACCOUNT_ADDRESS to inspect candidate derivative account metadata.',
             ),
             derivativePositionState: unsupportedCoverage(
               'Generic Solana RPC does not decode venue-native derivative positions without a venue SDK or IDL.',
@@ -264,9 +264,9 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
               'Generic Solana RPC does not decode venue-native margin or health state without a venue SDK or IDL.',
             ),
             orderState: unsupportedCoverage(
-              'Configure DRIFT_READONLY_ACCOUNT_ADDRESS to capture reference-only order context from recent signatures.',
+              'Configure SOLANA_ACCOUNT_ADDRESS to capture reference-only order context from recent signatures.',
             ),
-            executionReferences: unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to inspect recent transaction references.'),
+            executionReferences: unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to inspect recent transaction references.'),
           },
           sourceMetadata,
           accountState: null,
@@ -458,29 +458,29 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
               reason: `Snapshot failed before account identity could be captured: ${message}`,
               limitations: [],
             }
-            : unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to capture account identity.'),
+            : unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to capture account identity.'),
           balanceState: accountConfigured
             ? {
               status: 'partial',
               reason: `Snapshot failed before balance state could be captured: ${message}`,
               limitations: ['SPL token balances are only available when account-level RPC reads succeed.'],
             }
-            : unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to capture balance state.'),
+            : unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to capture balance state.'),
           capacityState: unsupportedCoverage('Generic Solana RPC does not expose treasury-style venue capacity.'),
           exposureState: accountConfigured
             ? {
               status: 'partial',
               reason: `Snapshot failed before exposure could be derived: ${message}`,
-              limitations: ['Exposure is balance-derived and does not include Drift-native derivative positions.'],
+              limitations: ['Exposure is balance-derived and does not include venue-native derivative positions.'],
             }
-            : unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to derive balance-backed exposure.'),
+            : unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to derive balance-backed exposure.'),
           derivativeAccountState: accountConfigured
             ? {
               status: 'partial',
               reason: `Snapshot failed before derivative-account metadata could be captured: ${message}`,
               limitations: ['Generic Solana RPC metadata does not decode venue-native account authority or subaccount state.'],
             }
-            : unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to inspect candidate derivative account metadata.'),
+            : unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to inspect candidate derivative account metadata.'),
           derivativePositionState: unsupportedCoverage(
             'Generic Solana RPC does not decode venue-native derivative positions without a venue SDK or IDL.',
           ),
@@ -494,7 +494,7 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
               limitations: ['Order state is limited to reference-only recent signatures and does not include venue-native open orders.'],
             }
             : unsupportedCoverage(
-              'Configure DRIFT_READONLY_ACCOUNT_ADDRESS to capture reference-only order context from recent signatures.',
+              'Configure SOLANA_ACCOUNT_ADDRESS to capture reference-only order context from recent signatures.',
             ),
           executionReferences: accountConfigured
             ? {
@@ -502,7 +502,7 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
               reason: `Snapshot failed before recent references could be captured: ${message}`,
               limitations: ['Execution references are limited to recent account signatures.'],
             }
-            : unsupportedCoverage('Configure DRIFT_READONLY_ACCOUNT_ADDRESS to inspect recent transaction references.'),
+            : unsupportedCoverage('Configure SOLANA_ACCOUNT_ADDRESS to inspect recent transaction references.'),
         },
         sourceMetadata,
         accountState: null,
@@ -570,19 +570,19 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
         ? {
           status: 'available',
           reason: null,
-          limitations: ['Exposure is balance-derived and does not include Drift-native derivative positions.'],
+          limitations: ['Exposure is balance-derived and does not include venue-native derivative positions.'],
         }
         : {
           status: 'partial',
           reason: balanceCoverageReason,
-          limitations: ['Exposure is balance-derived and does not include Drift-native derivative positions.'],
+          limitations: ['Exposure is balance-derived and does not include venue-native derivative positions.'],
         },
       derivativeAccountState: derivativeAccountCoverage,
       derivativePositionState: unsupportedCoverage(
-        'Generic Solana RPC does not decode venue-native derivative positions without a Drift or venue-specific decode path.',
+        'Generic Solana RPC does not decode venue-native derivative positions without a venue-specific decode path.',
       ),
       derivativeHealthState: unsupportedCoverage(
-        'Generic Solana RPC does not decode venue-native margin or health state without a Drift or venue-specific decode path.',
+        'Generic Solana RPC does not decode venue-native margin or health state without a venue-specific decode path.',
       ),
       orderState: orderCoverage,
       executionReferences: input.signatureError === null
@@ -747,7 +747,7 @@ export class SolanaRpcReadonlyTruthAdapter implements VenueTruthAdapter {
       notes.push('Tracked account is a generic Solana wallet account rather than a venue-native derivative account.');
     } else if (accountModel === 'program_account') {
       notes.push('Program-owned account metadata was captured from raw RPC.');
-      notes.push('Venue-native decode is unavailable in the current repo because no Drift or Anchor decoder is present.');
+      notes.push('Venue-native decode is unavailable in the current repo because no venue-specific decoder is present.');
     } else if (accountModel === 'executable_program') {
       notes.push('Tracked account is executable program code, not a venue-native trading account.');
     }

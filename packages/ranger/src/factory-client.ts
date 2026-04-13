@@ -1,10 +1,9 @@
 /**
  * Ranger Vault Factory Client
- * 
- * Client for creating and managing vaults through the Ranger vault factory.
- * 
- * EXTERNAL BLOCKER: Ranger vault factory program ID and instruction format
- * are not publicly documented. This implements the interface boundary.
+ *
+ * Compatibility wrapper around vault creation and submission-evidence helpers.
+ * Ranger now documents direct vault initialization through the SDK; this class
+ * remains as a light helper for older call sites.
  */
 
 import { Connection, PublicKey, Keypair } from '@solana/web3.js';
@@ -30,7 +29,7 @@ export interface FactoryClientConfig {
   /** Solana connection */
   connection: Connection;
   
-  /** Vault factory program ID */
+  /** Optional legacy program ID hint retained for compatibility */
   factoryProgramId?: PublicKey;
   
   /** Signer keypair */
@@ -58,18 +57,15 @@ export class RangerVaultFactoryClient {
   }
   
   /**
-   * Check if factory is available
+   * Check if vault creation helpers are available
    */
   isAvailable(): boolean {
-    if (this.config.mode === 'simulated') {
-      return true;
-    }
-    return !!this.config.factoryProgramId;
+    return this.config.mode === 'simulated' || this.config.mode === 'full';
   }
   
   /**
-   * Create a new vault through the factory
-   * 
+   * Create a new vault through the compatibility wrapper.
+   *
    * Returns the vault ID and on-chain address
    */
   async createVault(
@@ -82,7 +78,7 @@ export class RangerVaultFactoryClient {
     signature: string;
   }, Error>> {
     if (!this.isAvailable()) {
-      return Err(new Error('Vault factory not available: program ID not configured'));
+      return Err(new Error('Ranger vault creation helper not available.'));
     }
     
     if (this.config.mode === 'simulated') {
@@ -91,13 +87,14 @@ export class RangerVaultFactoryClient {
       return Ok(result.value);
     }
     
-    // Full mode: Would invoke Ranger vault factory
-    // EXTERNAL BLOCKER: Ranger factory instruction format unknown
+    // Full mode is handled by RangerVaultClient now.
     logger.error('Real vault factory creation not implemented', {
-      reason: 'Ranger factory program format not available',
+      reason: 'Use RangerVaultClient.createVault for full SDK-backed creation',
     });
     
-    return Err(new Error('Real vault factory not implemented: SDK unavailable'));
+    return Err(
+      new Error('Use RangerVaultClient.createVault for real Ranger vault creation.'),
+    );
   }
   
   /**
@@ -114,9 +111,7 @@ export class RangerVaultFactoryClient {
   }
   
   /**
-   * Get vault PDA (Program Derived Address)
-   * 
-   * In a real implementation, this would derive the PDA from seeds
+   * Get vault address in simulated mode.
    */
   async getVaultAddress(vaultId: VaultId): Promise<Result<PublicKey, Error>> {
     // For simulated mode, generate deterministic key
@@ -144,16 +139,17 @@ export class RangerVaultFactoryClient {
       return Err(new Error('Vault does not have a share token mint'));
     }
     
-    if (!vaultState.strategyProgram) {
-      return Err(new Error('Vault does not have a strategy program'));
+    if (vaultState.adaptorPrograms.length === 0) {
+      return Err(new Error('Vault does not have any adaptor programs attached'));
     }
-    
+
     const evidence: VaultSubmissionEvidence = {
       vaultId,
-      vaultAddress: vaultState.authority, // Would be actual vault PDA
+      vaultAddress: vaultState.admin,
       shareTokenMint: vaultState.shareTokenMint,
-      strategyProgram: vaultState.strategyProgram,
-      authority: vaultState.authority,
+      adaptorPrograms: vaultState.adaptorPrograms,
+      admin: vaultState.admin,
+      manager: vaultState.manager,
       creationSignature: 'pending', // Would fetch from creation tx
       state: vaultState,
       depositSummary: {
@@ -199,8 +195,8 @@ export class RangerVaultFactoryClient {
       vaultAddress: vaultKeypair.publicKey.toBase58(),
       shareTokenMint: mintKeypair.publicKey.toBase58(),
       creator: creator.toBase58(),
-      baseAsset: config.baseAsset,
-      maxCapacity: config.maxCapacity,
+      assetMint: config.assetMint,
+      maxCap: config.maxCap,
     });
     
     return Ok({

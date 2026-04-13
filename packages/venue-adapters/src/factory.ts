@@ -55,7 +55,7 @@ const _liveAdapterRegistry = new Map<string, LiveAdapterFactory>();
 
 /**
  * Register a factory function for a given live venue.
- * This allows external packages (e.g. a Drift adapter) to plug in without
+ * This allows external packages (e.g. a venue-specific adapter) to plug in without
  * modifying this file.
  */
 export function registerLiveAdapter(venueId: string, factory: LiveAdapterFactory): void {
