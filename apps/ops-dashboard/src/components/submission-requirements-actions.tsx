@@ -2,11 +2,11 @@
 
 import { useState } from 'react';
 
-import { updateSubmissionDossier } from '../lib/runtime-api.client';
-import { useOptionalRefresh } from '../lib/navigation-hooks';
-import { useOperator } from './operator-context';
-
 import type { SubmissionDossierView } from '@sentinel-apex/runtime';
+
+import { useOperator } from './operator-context';
+import { useOptionalRefresh } from '../lib/navigation-hooks';
+import { updateSubmissionDossier } from '../lib/runtime-api.client';
 
 interface SubmissionRequirementsActionsProps {
   dossier: SubmissionDossierView;

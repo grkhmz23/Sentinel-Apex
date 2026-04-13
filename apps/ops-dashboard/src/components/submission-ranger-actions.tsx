@@ -2,6 +2,14 @@
 
 import { useState } from 'react';
 
+import type {
+  RangerAccountMetaInput,
+  SubmissionCluster,
+  SubmissionDossierView,
+} from '@sentinel-apex/runtime';
+
+import { useOperator } from './operator-context';
+import { useOptionalRefresh } from '../lib/navigation-hooks';
 import {
   addRangerAdaptor,
   createRangerLpMetadata,
@@ -10,14 +18,6 @@ import {
   initializeRangerStrategy,
   withdrawRangerStrategy,
 } from '../lib/runtime-api.client';
-import { useOptionalRefresh } from '../lib/navigation-hooks';
-import { useOperator } from './operator-context';
-
-import type {
-  RangerAccountMetaInput,
-  SubmissionCluster,
-  SubmissionDossierView,
-} from '@sentinel-apex/runtime';
 
 interface SubmissionRangerActionsProps {
   dossier: SubmissionDossierView;
