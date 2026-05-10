@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { createConfig } from '../env.js';
+import { createConfig, ENCRYPT_PRE_ALPHA_ACK_VALUE } from '../env.js';
 import { ConfigValidationError } from '../errors.js';
 
 // =============================================================================
@@ -284,5 +284,52 @@ describe('config/env — PUSD base asset validation', () => {
     expect(cfg.VAULT_BASE_ASSET).toBe('PUSD');
     expect(cfg.PUSD_MINT).toBe(validMint);
     expect(cfg.PUSD_DECIMALS).toBe(6);
+  });
+});
+
+describe('config/env — Encrypt pre-alpha validation', () => {
+  const validPublicKey = 'So11111111111111111111111111111111111111112';
+
+  it('allows Encrypt to remain disabled without program ids', () => {
+    const cfg = createConfig(BASE_TEST_ENV);
+    expect(cfg.ENCRYPT_ENABLED).toBe(false);
+    expect(cfg.ENCRYPT_CLUSTER).toBe('devnet');
+  });
+
+  it('fails closed when Encrypt is enabled without the pre-alpha acknowledgement', () => {
+    expect(() =>
+      createConfig({
+        ...BASE_TEST_ENV,
+        ENCRYPT_ENABLED: 'true',
+        ENCRYPT_PROGRAM_ID: validPublicKey,
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it('rejects an invalid Encrypt program id', () => {
+    expect(() =>
+      createConfig({
+        ...BASE_TEST_ENV,
+        ENCRYPT_ENABLED: 'true',
+        ENCRYPT_PRE_ALPHA_ACK: ENCRYPT_PRE_ALPHA_ACK_VALUE,
+        ENCRYPT_PROGRAM_ID: 'not-a-solana-public-key',
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it('accepts valid devnet Encrypt pre-alpha configuration', () => {
+    const cfg = createConfig({
+      ...BASE_TEST_ENV,
+      ENCRYPT_ENABLED: 'true',
+      ENCRYPT_CLUSTER: 'devnet',
+      ENCRYPT_PROGRAM_ID: validPublicKey,
+      ENCRYPT_CONFIG_PDA: validPublicKey,
+      ENCRYPT_NETWORK_ENCRYPTION_KEY: validPublicKey,
+      ENCRYPT_PRE_ALPHA_ACK: ENCRYPT_PRE_ALPHA_ACK_VALUE,
+    });
+
+    expect(cfg.ENCRYPT_ENABLED).toBe(true);
+    expect(cfg.ENCRYPT_CLUSTER).toBe('devnet');
+    expect(cfg.ENCRYPT_PROGRAM_ID).toBe(validPublicKey);
   });
 });

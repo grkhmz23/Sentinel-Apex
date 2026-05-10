@@ -10,6 +10,9 @@ import type {
   CarryExecutionDetailView,
   CarryExecutionView,
   CarryVenueView,
+  EncryptedStrategyAuditEventView,
+  EncryptedStrategyStateView,
+  EncryptStatusView,
   RebalanceBundleDetailView,
   RebalanceBundleView,
   RebalanceEscalationQueueItemView,
@@ -59,6 +62,7 @@ import type {
   CarryPageData,
   EscalationsPageData,
   DashboardPageState,
+  EncryptPageData,
   MismatchListFilters,
   OperationsPageData,
   OverviewPageData,
@@ -85,6 +89,7 @@ const EVENTS_API_PREFIX = '/api/v1/events';
 const SUBMISSION_API_PREFIX = '/api/v1/submission';
 const TREASURY_API_PREFIX = '/api/v1/treasury';
 const PUSD_API_PREFIX = '/api/v1/pusd';
+const ENCRYPT_API_PREFIX = '/api/v1/encrypt';
 const VENUES_API_PREFIX = '/api/v1/venues';
 
 async function fetchRuntimeApi<T>(
@@ -182,6 +187,31 @@ async function fetchPusdApi<T>(
 
   if (!response.ok) {
     throw new Error(payload.error?.message ?? `PUSD API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+async function fetchEncryptApi<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${ENCRYPT_API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Encrypt API request failed: ${response.status}`);
   }
 
   return payload.data;
@@ -313,6 +343,20 @@ export async function listPusdVaultSnapshots(limit = 20): Promise<PusdVaultSnaps
 
 export async function listPusdOperatorIntents(limit = 20): Promise<PusdOperatorIntentView[]> {
   return fetchPusdApi<PusdOperatorIntentView[]>(`/intents${buildSearchParams({ limit })}`);
+}
+
+export async function getEncryptStatus(): Promise<EncryptStatusView> {
+  return fetchEncryptApi<EncryptStatusView>('/status');
+}
+
+export async function getEncryptedStrategyState(): Promise<EncryptedStrategyStateView | null> {
+  return fetchEncryptApi<EncryptedStrategyStateView | null>('/strategy-state');
+}
+
+export async function listEncryptedStrategyAuditEvents(
+  limit = 20,
+): Promise<EncryptedStrategyAuditEventView[]> {
+  return fetchEncryptApi<EncryptedStrategyAuditEventView[]>(`/audit${buildSearchParams({ limit })}`);
 }
 
 export async function listAuditEvents(limit = 20): Promise<AuditEventView[]> {
@@ -895,6 +939,30 @@ export async function loadPusdPageData(): Promise<DashboardPageState<PusdPageDat
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load PUSD vault data.',
+    };
+  }
+}
+
+export async function loadEncryptPageData(): Promise<DashboardPageState<EncryptPageData>> {
+  try {
+    const [status, strategyState, auditEvents] = await Promise.all([
+      getEncryptStatus(),
+      getEncryptedStrategyState(),
+      listEncryptedStrategyAuditEvents(20),
+    ]);
+
+    return {
+      data: {
+        status,
+        strategyState,
+        auditEvents,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load Encrypt pre-alpha data.',
     };
   }
 }

@@ -911,6 +911,10 @@ describe('runtime-backed API routes', () => {
     delete process.env['VAULT_BASE_ASSET'];
     delete process.env['PUSD_MINT'];
     delete process.env['PUSD_DECIMALS'];
+    delete process.env['ENCRYPT_ENABLED'];
+    delete process.env['ENCRYPT_CLUSTER'];
+    delete process.env['ENCRYPT_PROGRAM_ID'];
+    delete process.env['ENCRYPT_PRE_ALPHA_ACK'];
   });
 
   it('queues a real runtime cycle through the worker and exposes persisted data through the API', async () => {
@@ -1041,6 +1045,72 @@ describe('runtime-backed API routes', () => {
 
     const events = await controlPlane.listRecentEvents(10);
     expect(events.some((event) => event.eventType === 'pusd.operator_intent.rebalance')).toBe(true);
+  });
+
+  it('exposes Encrypt pre-alpha status and protects mutating endpoints', async () => {
+    process.env['VAULT_BASE_ASSET'] = 'PUSD';
+    process.env['PUSD_MINT'] = 'So11111111111111111111111111111111111111112';
+    process.env['PUSD_DECIMALS'] = '6';
+    process.env['ENCRYPT_ENABLED'] = 'true';
+    process.env['ENCRYPT_CLUSTER'] = 'devnet';
+    process.env['ENCRYPT_PROGRAM_ID'] = 'So11111111111111111111111111111111111111112';
+    process.env['ENCRYPT_PRE_ALPHA_ACK'] = 'I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY';
+
+    const statusResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/encrypt/status',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(statusResponse.statusCode).toBe(200);
+    expect(statusResponse.json<{ data: { preAlphaMode: boolean; productionPrivacyReady: boolean } }>().data)
+      .toMatchObject({
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+      });
+
+    const forbiddenResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/strategy-state',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/encrypt/strategy-state'),
+      payload: { strategyId: 'pusd-treasury-vault-prealpha', privateKey: 'never' },
+    });
+    expect(forbiddenResponse.statusCode).toBe(400);
+
+    const unauthenticatedResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/strategy-state/update',
+      headers: { 'x-api-key': TEST_API_KEY },
+      payload: { strategyId: 'pusd-treasury-vault-prealpha' },
+    });
+    expect(unauthenticatedResponse.statusCode).toBe(403);
+
+    const stateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/strategy-state',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/encrypt/strategy-state'),
+      payload: { strategyId: 'pusd-treasury-vault-prealpha', publicRiskStatus: 'normal' },
+    });
+    expect(stateResponse.statusCode).toBe(201);
+    const stateBody = stateResponse.json<{ data: { stateId: string; productionPrivacyReady: boolean } }>();
+    expect(stateBody.data.productionPrivacyReady).toBe(false);
+
+    const revealResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/reveal-request',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/encrypt/reveal-request'),
+      payload: { strategyStateId: stateBody.data.stateId, reason: 'operator review' },
+    });
+    expect(revealResponse.statusCode).toBe(201);
+
+    const auditResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/encrypt/audit',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(auditResponse.statusCode).toBe(200);
+    expect(auditResponse.json<{ data: Array<{ eventType: string }> }>().data.some(
+      (event) => event.eventType === 'encrypt.reveal_requested',
+    )).toBe(true);
   });
 
   it('exposes protocol vault state and persists deposit lots plus lock-aware redemption requests through the API', async () => {

@@ -1421,7 +1421,7 @@ export interface PusdOperatorIntentView {
 }
 
 export interface PusdVaultView {
-  phase: 'PUSD-1';
+  phase: 'PUSD-1' | 'PUSD+Encrypt-1';
   title: string;
   baseAsset: 'PUSD';
   baseAssetMint: string;
@@ -1438,6 +1438,98 @@ export interface PusdVaultView {
     liveExecutionEnabled: false;
     simulationOnly: true;
   };
+}
+
+export type EncryptCiphertextStatus =
+  | 'not_created'
+  | 'pending'
+  | 'verified'
+  | 'reveal_requested'
+  | 'reveal_completed'
+  | 'failed';
+
+export interface EncryptCapabilitiesView {
+  supportsCiphertextAccounts: boolean;
+  supportsGraphExecution: boolean;
+  supportsThresholdDecrypt: boolean;
+  preAlphaMode: true;
+  productionPrivacyReady: false;
+  realEncryption: false;
+  adapterMode: 'pre-alpha-mock-adapter';
+}
+
+export interface EncryptedStrategyStateView {
+  stateId: string;
+  strategyId: string;
+  vaultAssetSymbol: 'PUSD';
+  vaultAssetMint: string;
+  encryptEnabled: boolean;
+  encryptCluster: string;
+  preAlphaMode: true;
+  productionPrivacyReady: false;
+  realEncryption: false;
+  adapterMode: string;
+  strategyCommitment: string;
+  ciphertextRefs: Record<string, string>;
+  ciphertextStatus: EncryptCiphertextStatus;
+  publicRiskStatus: string;
+  publicSummary: Record<string, unknown>;
+  auditEvidence: Record<string, unknown>;
+  createdBy: string | null;
+  updatedBy: string | null;
+  lastUpdateSlot: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EncryptedStrategyRevealRequestView {
+  requestId: string;
+  strategyStateId: string;
+  requestedBy: string;
+  reason: string;
+  status: EncryptCiphertextStatus;
+  auditEvidence: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EncryptedStrategyAuditEventView {
+  eventId: string;
+  strategyStateId: string | null;
+  eventType: string;
+  actorId: string;
+  evidence: Record<string, unknown>;
+  occurredAt: string;
+  createdAt: string;
+}
+
+export interface EncryptStatusView {
+  enabled: boolean;
+  cluster: string;
+  phase: 'Encrypt-1';
+  title: 'Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha';
+  preAlphaMode: true;
+  productionPrivacyReady: false;
+  realEncryption: false;
+  capabilities: EncryptCapabilitiesView;
+  latestState: EncryptedStrategyStateView | null;
+  safety: {
+    sensitiveProductionDataAllowed: false;
+    signingEnabled: false;
+    sendTransactionEnabled: false;
+    liveExecutionEnabled: false;
+  };
+}
+
+export interface CreateEncryptedStrategyStateRequest {
+  strategyId?: string;
+  publicRiskStatus?: string;
+  demoValues?: Record<string, unknown>;
+}
+
+export interface CreateEncryptRevealRequestInput {
+  strategyStateId: string;
+  reason: string;
 }
 
 export interface CreatePusdOperatorIntentInput {
@@ -2660,6 +2752,21 @@ export interface RuntimeReadApi {
   getPusdTreasuryState(): Promise<TreasurySummaryView | null>;
   listPusdVaultSnapshots(limit?: number): Promise<PusdVaultSnapshotView[]>;
   listPusdOperatorIntents(limit?: number): Promise<PusdOperatorIntentView[]>;
+  getEncryptStatus(): Promise<EncryptStatusView>;
+  getEncryptedStrategyState(): Promise<EncryptedStrategyStateView | null>;
+  createEncryptedStrategyState(
+    actorId: string,
+    input: CreateEncryptedStrategyStateRequest,
+  ): Promise<EncryptedStrategyStateView>;
+  updateEncryptedStrategyState(
+    actorId: string,
+    input: CreateEncryptedStrategyStateRequest,
+  ): Promise<EncryptedStrategyStateView>;
+  createEncryptRevealRequest(
+    actorId: string,
+    input: CreateEncryptRevealRequestInput,
+  ): Promise<EncryptedStrategyRevealRequestView>;
+  listEncryptedStrategyAuditEvents(limit?: number): Promise<EncryptedStrategyAuditEventView[]>;
   getSubmissionDossier(): Promise<SubmissionDossierView>;
   listSubmissionEvidence(): Promise<SubmissionEvidenceRecordView[]>;
   getSubmissionExportBundle(): Promise<SubmissionExportBundleView>;

@@ -7,6 +7,8 @@ import {
   applyMigrations,
   auditEvents,
   createDatabaseConnection,
+  encryptedStrategyAuditEvents,
+  encryptedStrategyStates,
   orders as orderRowsTable,
   pusdVaultSnapshots,
   venueConnectorSnapshots,
@@ -882,6 +884,59 @@ describe('SentinelRuntime', () => {
 
       const events = await runtimeStore.db.select().from(auditEvents);
       expect(events.some((event) => event.eventType === 'pusd.vault_snapshot.captured')).toBe(true);
+
+      const orderRows = await runtimeStore.db.select().from(orderRowsTable);
+      expect(orderRows).toHaveLength(0);
+    } finally {
+      await runtime.close();
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          Reflect.deleteProperty(process.env, key);
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
+
+  it('creates Encrypt pre-alpha strategy state during a PUSD cycle without live orders', async () => {
+    const previous = {
+      VAULT_BASE_ASSET: process.env['VAULT_BASE_ASSET'],
+      PUSD_MINT: process.env['PUSD_MINT'],
+      PUSD_DECIMALS: process.env['PUSD_DECIMALS'],
+      PUSD_VAULT_OWNER: process.env['PUSD_VAULT_OWNER'],
+      JUPITER_PERPS_ENABLED: process.env['JUPITER_PERPS_ENABLED'],
+      ENCRYPT_ENABLED: process.env['ENCRYPT_ENABLED'],
+      ENCRYPT_CLUSTER: process.env['ENCRYPT_CLUSTER'],
+      ENCRYPT_PROGRAM_ID: process.env['ENCRYPT_PROGRAM_ID'],
+      ENCRYPT_PRE_ALPHA_ACK: process.env['ENCRYPT_PRE_ALPHA_ACK'],
+    };
+    process.env['VAULT_BASE_ASSET'] = 'PUSD';
+    process.env['PUSD_MINT'] = 'So11111111111111111111111111111111111111112';
+    process.env['PUSD_DECIMALS'] = '6';
+    delete process.env['PUSD_VAULT_OWNER'];
+    process.env['JUPITER_PERPS_ENABLED'] = 'true';
+    process.env['ENCRYPT_ENABLED'] = 'true';
+    process.env['ENCRYPT_CLUSTER'] = 'devnet';
+    process.env['ENCRYPT_PROGRAM_ID'] = 'So11111111111111111111111111111111111111112';
+    process.env['ENCRYPT_PRE_ALPHA_ACK'] = 'I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY';
+
+    const connectionString = await createRuntimeConnectionString();
+    const runtime = await SentinelRuntime.createDeterministic(connectionString);
+
+    try {
+      const outcome = await runtime.runCycle('encrypt-pusd-test');
+      const runtimeStore = (runtime as unknown as { options: { store: RuntimeStore } }).options.store;
+
+      expect(outcome.intentsExecuted).toBe(0);
+      const states = await runtimeStore.db.select().from(encryptedStrategyStates);
+      expect(states).toHaveLength(1);
+      expect(states[0]?.['productionPrivacyReady']).toBe(false);
+      expect(states[0]?.['realEncryption']).toBe(false);
+      expect(states[0]?.['ciphertextStatus']).toBe('verified');
+
+      const encryptEvents = await runtimeStore.db.select().from(encryptedStrategyAuditEvents);
+      expect(encryptEvents.some((event) => event['eventType'] === 'encrypt.strategy_state.updated')).toBe(true);
 
       const orderRows = await runtimeStore.db.select().from(orderRowsTable);
       expect(orderRows).toHaveLength(0);

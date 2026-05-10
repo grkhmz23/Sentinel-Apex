@@ -27,7 +27,7 @@
     "test": "turbo run test --concurrency=4",
     "test:ci": "turbo run test --concurrency=1",
     "test:workspace": "vitest run --config vitest.config.ts",
-    "lint": "turbo run lint --concurrency=4",
+    "lint": "turbo run lint --concurrency=2",
     "lint:ci": "turbo run lint --concurrency=1",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,mjs,json,yaml,yml,md}\" --ignore-path .gitignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,mjs,json,yaml,yml,md}\" --ignore-path .gitignore",

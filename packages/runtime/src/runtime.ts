@@ -21,7 +21,12 @@ import {
   type CarryOpportunityCandidate,
   type CarryPositionSnapshot,
 } from '@sentinel-apex/carry';
-import { buildVaultAssetConfig, type VaultAssetConfig } from '@sentinel-apex/config';
+import {
+  buildVaultAssetConfig,
+  ENCRYPT_PRE_ALPHA_ACK_VALUE,
+  isSolanaPublicKey,
+  type VaultAssetConfig,
+} from '@sentinel-apex/config';
 import {
   applyMigrations,
   createDatabaseConnection,
@@ -71,8 +76,7 @@ import {
   type VenueTruthSnapshot,
 } from '@sentinel-apex/venue-adapters';
 
-// Jupiter Perps is the only live execution venue currently exposed by this runtime.
-
+import { EncryptedStrategyService, type EncryptRuntimeConfig } from './encrypt/index.js';
 import { RuntimeHealthMonitor } from './health-monitor.js';
 import {
   buildInternalDerivativeSnapshot,
@@ -119,6 +123,8 @@ import type {
   VenueTruthProfile,
   VenueTruthSummaryView,
 } from './types.js';
+
+// Jupiter Perps is the only live execution venue currently exposed by this runtime.
 
 function severityForRiskStatus(status: string): string {
   switch (status) {
@@ -1156,11 +1162,49 @@ export interface SentinelRuntimeOptions {
   treasuryExecutionPlanner: TreasuryExecutionPlanner;
   treasuryPolicy: TreasuryPolicy;
   vaultAssetConfig: VaultAssetConfig;
+  encryptConfig: EncryptRuntimeConfig;
   executionMode: 'dry-run' | 'live';
   liveExecutionEnabled: boolean;
   sleeveId: string;
   internalDerivativeTargets: Map<string, InternalDerivativeTrackedVenueConfig>;
   logger: Logger;
+}
+
+function buildEncryptRuntimeConfig(env: NodeJS.ProcessEnv = process.env): EncryptRuntimeConfig {
+  const enabled = env['ENCRYPT_ENABLED'] === 'true' || env['ENCRYPT_ENABLED'] === '1';
+  const cluster = (env['ENCRYPT_CLUSTER'] ?? 'devnet') as EncryptRuntimeConfig['cluster'];
+  if (!['devnet', 'testnet', 'mainnet-beta'].includes(cluster)) {
+    throw new Error('ENCRYPT_CLUSTER must be devnet, testnet, or mainnet-beta.');
+  }
+  if (!enabled) {
+    return {
+      enabled: false,
+      cluster,
+      programId: env['ENCRYPT_PROGRAM_ID'] ?? null,
+      configPda: env['ENCRYPT_CONFIG_PDA'] ?? null,
+      networkEncryptionKey: env['ENCRYPT_NETWORK_ENCRYPTION_KEY'] ?? null,
+      preAlphaAck: false,
+    };
+  }
+  if (env['ENCRYPT_PRE_ALPHA_ACK'] !== ENCRYPT_PRE_ALPHA_ACK_VALUE) {
+    throw new Error(`ENCRYPT_PRE_ALPHA_ACK must be exactly "${ENCRYPT_PRE_ALPHA_ACK_VALUE}".`);
+  }
+  if (env['ENCRYPT_PROGRAM_ID'] === undefined || !isSolanaPublicKey(env['ENCRYPT_PROGRAM_ID'])) {
+    throw new Error('ENCRYPT_PROGRAM_ID is required and must be a valid Solana public key when ENCRYPT_ENABLED=true.');
+  }
+  for (const key of ['ENCRYPT_CONFIG_PDA', 'ENCRYPT_NETWORK_ENCRYPTION_KEY'] as const) {
+    if (env[key] !== undefined && !isSolanaPublicKey(env[key])) {
+      throw new Error(`${key} must be a valid Solana public key when provided.`);
+    }
+  }
+  return {
+    enabled: true,
+    cluster,
+    programId: env['ENCRYPT_PROGRAM_ID'],
+    configPda: env['ENCRYPT_CONFIG_PDA'] ?? null,
+    networkEncryptionKey: env['ENCRYPT_NETWORK_ENCRYPTION_KEY'] ?? null,
+    preAlphaAck: true,
+  };
 }
 
 export class SentinelRuntime {
@@ -1206,6 +1250,7 @@ export class SentinelRuntime {
       assetConfigInput.PUSD_DECIMALS = Number.parseInt(process.env['PUSD_DECIMALS'], 10);
     }
     const vaultAssetConfig = buildVaultAssetConfig(assetConfigInput);
+    const encryptConfig = buildEncryptRuntimeConfig();
     const pusdMode = vaultAssetConfig.baseAsset.symbol === 'PUSD';
     const sleeveId = overrides.sleeveId ?? (pusdMode ? 'treasury' : 'carry');
 
@@ -1399,6 +1444,7 @@ export class SentinelRuntime {
       treasuryExecutionPlanner: new TreasuryExecutionPlanner(),
       treasuryPolicy,
       vaultAssetConfig,
+      encryptConfig,
       executionMode,
       liveExecutionEnabled,
       sleeveId,
@@ -3375,6 +3421,113 @@ export class SentinelRuntime {
         readStatus,
         sourceRunId: input.sourceRunId,
         liveExecutionDisabled: true,
+      },
+    });
+
+    if (this.options.encryptConfig.enabled) {
+      await this.captureEncryptedStrategyState({
+        sourceRunId: input.sourceRunId,
+        vaultAssetMint: asset.mint,
+        balanceAmount,
+        treasurySummary: input.treasurySummary,
+        riskStatus: input.riskStatus,
+      });
+    }
+  }
+
+  private async captureEncryptedStrategyState(input: {
+    sourceRunId: string | null;
+    vaultAssetMint: string;
+    balanceAmount: string;
+    treasurySummary: TreasurySummaryView;
+    riskStatus: string;
+  }): Promise<void> {
+    const service = new EncryptedStrategyService();
+    const result = service.createEncryptedStrategyState({
+      strategyId: 'pusd-treasury-vault-prealpha',
+      vaultAssetSymbol: 'PUSD',
+      vaultAssetMint: input.vaultAssetMint,
+      encryptCluster: this.options.encryptConfig.cluster,
+      publicRiskStatus: input.riskStatus,
+      privateFields: {
+        totalVaultBalanceBucket: input.balanceAmount === '0' ? 'pre-alpha-demo-bucket-empty' : 'pre-alpha-demo-bucket-funded',
+        allocationWeights: {
+          idlePusd: '40',
+          simulatedPusdUsdcLiquidityCarry: '35',
+          simulatedPusdLendingCarry: '25',
+        },
+        riskThresholds: {
+          maxDrawdownPct: '5',
+          maxVenueConcentrationPct: '50',
+        },
+        rebalanceThreshold: '2.5',
+        pendingRebalanceAmount: '0',
+        simulatedVenueExposure: {
+          idlePusd: input.treasurySummary.reserveStatus.idleCapitalUsd,
+          allocatedPusd: input.treasurySummary.reserveStatus.allocatedCapitalUsd,
+          simulatedOnly: 'true',
+        },
+        maxSingleIntentSize: '10000',
+        maxDailyMovement: '25000',
+      },
+      auditEvidence: {
+        sourceRunId: input.sourceRunId,
+        demoValuesOnly: true,
+        noProductionPrivacy: true,
+        liveExecutionDisabled: true,
+      },
+      actorId: 'sentinel-runtime',
+    });
+
+    const publicSummary = service.buildPublicStrategySummary(result);
+    const state = await this.options.store.persistEncryptedStrategyState({
+      stateId: 'pusd-treasury-vault-prealpha',
+      strategyId: 'pusd-treasury-vault-prealpha',
+      vaultAssetMint: input.vaultAssetMint,
+      encryptEnabled: true,
+      encryptCluster: this.options.encryptConfig.cluster,
+      strategyCommitment: result.strategyCommitment,
+      ciphertextRefs: { ...result.ciphertextRefs },
+      ciphertextStatus: result.ciphertextStatus,
+      publicRiskStatus: input.riskStatus,
+      publicSummary,
+      auditEvidence: {
+        sourceRunId: input.sourceRunId,
+        adapterMode: result.capabilities.adapterMode,
+        productionPrivacyReady: false,
+        realEncryption: false,
+      },
+      actorId: 'sentinel-runtime',
+      lastUpdateSlot: null,
+    });
+
+    await this.options.store.recordEncryptedStrategyAuditEvent({
+      strategyStateId: state.stateId,
+      eventType: 'encrypt.strategy_state.updated',
+      actorId: 'sentinel-runtime',
+      evidence: {
+        strategyCommitment: state.strategyCommitment,
+        ciphertextStatus: state.ciphertextStatus,
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+        sourceRunId: input.sourceRunId,
+      },
+    });
+
+    await this.options.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'encrypt.strategy_state.updated',
+      occurredAt: new Date().toISOString(),
+      actorType: 'system',
+      actorId: 'sentinel-runtime',
+      sleeveId: 'treasury',
+      ...(input.sourceRunId === null ? {} : { correlationId: input.sourceRunId }),
+      data: {
+        strategyStateId: state.stateId,
+        strategyCommitment: state.strategyCommitment,
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+        realEncryption: false,
       },
     });
   }

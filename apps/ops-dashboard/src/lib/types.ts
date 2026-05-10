@@ -29,6 +29,9 @@ import type {
   RuntimeRemediationActionType,
   RuntimeRecoveryEventView,
   AuditEventView,
+  EncryptedStrategyAuditEventView,
+  EncryptedStrategyStateView,
+  EncryptStatusView,
   PusdOperatorIntentView,
   PusdVaultSnapshotView,
   PusdVaultView,
@@ -157,6 +160,12 @@ export interface PusdPageData {
   snapshots: PusdVaultSnapshotView[];
   intents: PusdOperatorIntentView[];
   auditEvents: AuditEventView[];
+}
+
+export interface EncryptPageData {
+  status: EncryptStatusView;
+  strategyState: EncryptedStrategyStateView | null;
+  auditEvents: EncryptedStrategyAuditEventView[];
 }
 
 export interface CarryPageData {

@@ -15,6 +15,9 @@ import type {
   ConnectorPromotionEventView,
   ConnectorPromotionSummaryView,
   ConnectorReadinessEvidenceView,
+  EncryptedStrategyAuditEventView,
+  EncryptedStrategyStateView,
+  EncryptStatusView,
   RebalanceBundleDetailView,
   RebalanceBundleEscalationEventView,
   RebalanceBundleEscalationTransitionView,
@@ -1886,6 +1889,84 @@ export function createPusdVault(
       liveExecutionEnabled: false,
       simulationOnly: true,
     },
+    ...overrides,
+  };
+}
+
+export function createEncryptedStrategyState(
+  overrides: Partial<EncryptedStrategyStateView> = {},
+): EncryptedStrategyStateView {
+  return {
+    stateId: 'pusd-treasury-vault-prealpha',
+    strategyId: 'pusd-treasury-vault-prealpha',
+    vaultAssetSymbol: 'PUSD',
+    vaultAssetMint: 'So11111111111111111111111111111111111111112',
+    encryptEnabled: true,
+    encryptCluster: 'devnet',
+    preAlphaMode: true,
+    productionPrivacyReady: false,
+    realEncryption: false,
+    adapterMode: 'pre-alpha-mock-adapter',
+    strategyCommitment: 'encrypt_pre_alpha_commitment_abc123',
+    ciphertextRefs: {
+      allocationWeights: 'encrypt_pre_alpha_ct_allocation_weights',
+      riskThresholds: 'encrypt_pre_alpha_ct_risk_thresholds',
+      rebalanceThreshold: 'encrypt_pre_alpha_ct_rebalance_threshold',
+    },
+    ciphertextStatus: 'verified',
+    publicRiskStatus: 'normal',
+    publicSummary: { preAlphaMode: true },
+    auditEvidence: { demoValuesOnly: true },
+    createdBy: 'sentinel-runtime',
+    updatedBy: 'sentinel-runtime',
+    lastUpdateSlot: null,
+    createdAt: '2026-03-20T12:05:00.000Z',
+    updatedAt: '2026-03-20T12:05:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createEncryptStatus(overrides: Partial<EncryptStatusView> = {}): EncryptStatusView {
+  const latestState = createEncryptedStrategyState();
+  return {
+    enabled: true,
+    cluster: 'devnet',
+    phase: 'Encrypt-1',
+    title: 'Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha',
+    preAlphaMode: true,
+    productionPrivacyReady: false,
+    realEncryption: false,
+    capabilities: {
+      supportsCiphertextAccounts: true,
+      supportsGraphExecution: false,
+      supportsThresholdDecrypt: false,
+      preAlphaMode: true,
+      productionPrivacyReady: false,
+      realEncryption: false,
+      adapterMode: 'pre-alpha-mock-adapter',
+    },
+    latestState,
+    safety: {
+      sensitiveProductionDataAllowed: false,
+      signingEnabled: false,
+      sendTransactionEnabled: false,
+      liveExecutionEnabled: false,
+    },
+    ...overrides,
+  };
+}
+
+export function createEncryptedStrategyAuditEvent(
+  overrides: Partial<EncryptedStrategyAuditEventView> = {},
+): EncryptedStrategyAuditEventView {
+  return {
+    eventId: 'encrypt-event-1',
+    strategyStateId: 'pusd-treasury-vault-prealpha',
+    eventType: 'encrypt.strategy_state.updated',
+    actorId: 'sentinel-runtime',
+    evidence: { preAlphaMode: true },
+    occurredAt: '2026-03-20T12:06:00.000Z',
+    createdAt: '2026-03-20T12:06:00.000Z',
     ...overrides,
   };
 }

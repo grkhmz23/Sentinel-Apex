@@ -40,6 +40,9 @@ export const ExecutionMode = {
   LIVE: 'live' as const satisfies ExecutionMode,
 } as const;
 
+export const ENCRYPT_PRE_ALPHA_ACK_VALUE =
+  'I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY';
+
 const assetDecimals = z.coerce.number().int().min(0).max(18).optional();
 
 export interface AuthConfig {
@@ -106,6 +109,20 @@ const envSchema = z
       message: 'PUSD_VAULT_OWNER must be a valid Solana public key',
     }).optional(),
 
+    // ── Encrypt pre-alpha strategy-state layer ──────────────────────────────
+    ENCRYPT_ENABLED: envBoolean,
+    ENCRYPT_CLUSTER: z.enum(['devnet', 'testnet', 'mainnet-beta']).default('devnet'),
+    ENCRYPT_PROGRAM_ID: z.string().refine(isSolanaPublicKey, {
+      message: 'ENCRYPT_PROGRAM_ID must be a valid Solana public key',
+    }).optional(),
+    ENCRYPT_CONFIG_PDA: z.string().refine(isSolanaPublicKey, {
+      message: 'ENCRYPT_CONFIG_PDA must be a valid Solana public key',
+    }).optional(),
+    ENCRYPT_NETWORK_ENCRYPTION_KEY: z.string().refine(isSolanaPublicKey, {
+      message: 'ENCRYPT_NETWORK_ENCRYPTION_KEY must be a valid Solana public key',
+    }).optional(),
+    ENCRYPT_PRE_ALPHA_ACK: z.string().optional(),
+
     // ── Solana / on-chain ────────────────────────────────────────────────────
     SOLANA_RPC_ENDPOINT: z.string().optional(),
 
@@ -161,6 +178,23 @@ const envSchema = z
           code: z.ZodIssueCode.custom,
           path: ['PUSD_DECIMALS'],
           message: 'PUSD_DECIMALS is required when VAULT_BASE_ASSET=PUSD',
+        });
+      }
+    }
+
+    if (data.ENCRYPT_ENABLED) {
+      if (data.ENCRYPT_PRE_ALPHA_ACK !== ENCRYPT_PRE_ALPHA_ACK_VALUE) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ENCRYPT_PRE_ALPHA_ACK'],
+          message: `ENCRYPT_PRE_ALPHA_ACK must be exactly "${ENCRYPT_PRE_ALPHA_ACK_VALUE}" when ENCRYPT_ENABLED=true`,
+        });
+      }
+      if (data.ENCRYPT_PROGRAM_ID === undefined || data.ENCRYPT_PROGRAM_ID === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ENCRYPT_PROGRAM_ID'],
+          message: 'ENCRYPT_PROGRAM_ID is required when ENCRYPT_ENABLED=true',
         });
       }
     }

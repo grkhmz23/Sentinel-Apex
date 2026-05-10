@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 
 import {
@@ -37,7 +39,13 @@ import type {
   ConnectorPromotionEventView,
   ConnectorPromotionOverviewView,
   ConnectorReadinessEvidenceView,
+  CreateEncryptedStrategyStateRequest,
+  CreateEncryptRevealRequestInput,
   CreatePusdOperatorIntentInput,
+  EncryptedStrategyAuditEventView,
+  EncryptedStrategyRevealRequestView,
+  EncryptedStrategyStateView,
+  EncryptStatusView,
   OpportunityView,
   OrderView,
   PnlSummaryView,
@@ -358,6 +366,174 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     });
 
     return intent;
+  }
+
+  async getEncryptStatus(): Promise<EncryptStatusView> {
+    const latestState = await this.store.getLatestEncryptedStrategyState();
+    return {
+      enabled: process.env['ENCRYPT_ENABLED'] === 'true' || process.env['ENCRYPT_ENABLED'] === '1',
+      cluster: process.env['ENCRYPT_CLUSTER'] ?? 'devnet',
+      phase: 'Encrypt-1',
+      title: 'Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha',
+      preAlphaMode: true,
+      productionPrivacyReady: false,
+      realEncryption: false,
+      capabilities: {
+        supportsCiphertextAccounts: true,
+        supportsGraphExecution: false,
+        supportsThresholdDecrypt: false,
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+        realEncryption: false,
+        adapterMode: 'pre-alpha-mock-adapter',
+      },
+      latestState,
+      safety: {
+        sensitiveProductionDataAllowed: false,
+        signingEnabled: false,
+        sendTransactionEnabled: false,
+        liveExecutionEnabled: false,
+      },
+    };
+  }
+
+  async getEncryptedStrategyState(): Promise<EncryptedStrategyStateView | null> {
+    return this.store.getLatestEncryptedStrategyState();
+  }
+
+  async createEncryptedStrategyState(
+    actorId: string,
+    input: CreateEncryptedStrategyStateRequest,
+  ): Promise<EncryptedStrategyStateView> {
+    return this.upsertEncryptedStrategyState(actorId, input, 'encrypt.strategy_state.created');
+  }
+
+  async updateEncryptedStrategyState(
+    actorId: string,
+    input: CreateEncryptedStrategyStateRequest,
+  ): Promise<EncryptedStrategyStateView> {
+    return this.upsertEncryptedStrategyState(actorId, input, 'encrypt.strategy_state.updated');
+  }
+
+  async createEncryptRevealRequest(
+    actorId: string,
+    input: CreateEncryptRevealRequestInput,
+  ): Promise<EncryptedStrategyRevealRequestView> {
+    if (input.strategyStateId.trim() === '') {
+      throw new Error('strategyStateId is required.');
+    }
+    if (input.reason.trim() === '') {
+      throw new Error('reason is required.');
+    }
+    const request = await this.store.createEncryptedStrategyRevealRequest({
+      strategyStateId: input.strategyStateId,
+      requestedBy: actorId,
+      reason: input.reason,
+      auditEvidence: {
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+        revealDoesNotExposeSecrets: true,
+      },
+    });
+    await this.store.recordEncryptedStrategyAuditEvent({
+      strategyStateId: input.strategyStateId,
+      eventType: 'encrypt.reveal_requested',
+      actorId,
+      evidence: {
+        requestId: request.requestId,
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+      },
+    });
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'encrypt.reveal_requested',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'treasury',
+      data: {
+        requestId: request.requestId,
+        strategyStateId: input.strategyStateId,
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+      },
+    });
+    return request;
+  }
+
+  async listEncryptedStrategyAuditEvents(limit = 50): Promise<EncryptedStrategyAuditEventView[]> {
+    return this.store.listEncryptedStrategyAuditEvents(limit);
+  }
+
+  private async upsertEncryptedStrategyState(
+    actorId: string,
+    input: CreateEncryptedStrategyStateRequest,
+    eventType: string,
+  ): Promise<EncryptedStrategyStateView> {
+    const vault = await this.store.getPusdVault();
+    const strategyId = input.strategyId ?? 'pusd-treasury-vault-prealpha';
+    const publicRiskStatus = input.publicRiskStatus ?? 'nominal';
+    const commitmentPayload = {
+      strategyId,
+      vaultAssetSymbol: 'PUSD',
+      vaultAssetMint: vault.baseAssetMint,
+      publicRiskStatus,
+      demoValues: input.demoValues ?? {},
+      adapterMode: 'pre-alpha-mock-adapter',
+      productionPrivacyReady: false,
+    };
+    const commitmentHash = createHash('sha256')
+      .update(JSON.stringify(commitmentPayload))
+      .digest('hex');
+    const refPrefix = commitmentHash.slice(0, 16);
+    const state = await this.store.persistEncryptedStrategyState({
+      stateId: 'pusd-treasury-vault-prealpha',
+      strategyId,
+      vaultAssetMint: vault.baseAssetMint,
+      encryptEnabled: true,
+      encryptCluster: process.env['ENCRYPT_CLUSTER'] ?? 'devnet',
+      strategyCommitment: `encrypt_pre_alpha_commitment_${commitmentHash}`,
+      ciphertextRefs: {
+        totalVaultBalanceBucket: `encrypt_pre_alpha_ct_${refPrefix}_total_balance_bucket`,
+        allocationWeights: `encrypt_pre_alpha_ct_${refPrefix}_allocation_weights`,
+        riskThresholds: `encrypt_pre_alpha_ct_${refPrefix}_risk_thresholds`,
+        rebalanceThreshold: `encrypt_pre_alpha_ct_${refPrefix}_rebalance_threshold`,
+        pendingRebalanceAmount: `encrypt_pre_alpha_ct_${refPrefix}_pending_rebalance`,
+        simulatedVenueExposure: `encrypt_pre_alpha_ct_${refPrefix}_sim_exposure`,
+        maxSingleIntentSize: `encrypt_pre_alpha_ct_${refPrefix}_max_single_intent`,
+        maxDailyMovement: `encrypt_pre_alpha_ct_${refPrefix}_max_daily_movement`,
+      },
+      ciphertextStatus: 'verified',
+      publicRiskStatus,
+      publicSummary: {
+        strategyId,
+        vaultAssetSymbol: 'PUSD',
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+        realEncryption: false,
+        demoValuesOnly: true,
+      },
+      auditEvidence: {
+        operatorSubmitted: true,
+        demoValuesOnly: true,
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+      },
+      actorId,
+      lastUpdateSlot: null,
+    });
+    await this.store.recordEncryptedStrategyAuditEvent({
+      strategyStateId: state.stateId,
+      eventType,
+      actorId,
+      evidence: {
+        strategyCommitment: state.strategyCommitment,
+        ciphertextStatus: state.ciphertextStatus,
+        preAlphaMode: true,
+      },
+    });
+    return state;
   }
 
   async getSubmissionDossier(): Promise<SubmissionDossierView> {

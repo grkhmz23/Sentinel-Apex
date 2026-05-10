@@ -39,6 +39,9 @@ import {
   carryVenueSnapshots,
   cexImportedTrades,
   cexTradeImports,
+  encryptedStrategyAuditEvents,
+  encryptedStrategyRevealRequests,
+  encryptedStrategyStates,
   executionEvents,
   executionGuardrailsConfig,
   executionGuardrailViolations,
@@ -144,6 +147,9 @@ import type {
   PusdOperatorIntentView,
   PusdVaultSnapshotView,
   PusdVaultView,
+  EncryptedStrategyAuditEventView,
+  EncryptedStrategyRevealRequestView,
+  EncryptedStrategyStateView,
   ProjectionStatus,
   PortfolioSnapshotView,
   PortfolioSummaryView,
@@ -2936,6 +2942,63 @@ function mapPusdOperatorIntentRow(row: typeof pusdOperatorIntents.$inferSelect):
     payload: asJsonObject(row.payload),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapEncryptedStrategyStateRow(
+  row: typeof encryptedStrategyStates.$inferSelect,
+): EncryptedStrategyStateView {
+  return {
+    stateId: row.stateId,
+    strategyId: row.strategyId,
+    vaultAssetSymbol: 'PUSD',
+    vaultAssetMint: row.vaultAssetMint,
+    encryptEnabled: row.encryptEnabled,
+    encryptCluster: row.encryptCluster,
+    preAlphaMode: true,
+    productionPrivacyReady: false,
+    realEncryption: false,
+    adapterMode: row.adapterMode,
+    strategyCommitment: row.strategyCommitment,
+    ciphertextRefs: row.ciphertextRefs as Record<string, string>,
+    ciphertextStatus: row.ciphertextStatus as EncryptedStrategyStateView['ciphertextStatus'],
+    publicRiskStatus: row.publicRiskStatus,
+    publicSummary: row.publicSummary as Record<string, unknown>,
+    auditEvidence: row.auditEvidence as Record<string, unknown>,
+    createdBy: row.createdBy,
+    updatedBy: row.updatedBy,
+    lastUpdateSlot: row.lastUpdateSlot,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapEncryptedStrategyRevealRequestRow(
+  row: typeof encryptedStrategyRevealRequests.$inferSelect,
+): EncryptedStrategyRevealRequestView {
+  return {
+    requestId: row.requestId,
+    strategyStateId: row.strategyStateId,
+    requestedBy: row.requestedBy,
+    reason: row.reason,
+    status: row.status as EncryptedStrategyRevealRequestView['status'],
+    auditEvidence: row.auditEvidence as Record<string, unknown>,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapEncryptedStrategyAuditEventRow(
+  row: typeof encryptedStrategyAuditEvents.$inferSelect,
+): EncryptedStrategyAuditEventView {
+  return {
+    eventId: row.eventId,
+    strategyStateId: row.strategyStateId,
+    eventType: row.eventType,
+    actorId: row.actorId,
+    evidence: row.evidence as Record<string, unknown>,
+    occurredAt: row.occurredAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -12849,8 +12912,10 @@ export class RuntimeStore {
     }
 
     return {
-      phase: 'PUSD-1',
-      title: 'Sentinel Apex Private PUSD Treasury Vault — Phase PUSD-1',
+      phase: process.env['ENCRYPT_ENABLED'] === 'true' ? 'PUSD+Encrypt-1' : 'PUSD-1',
+      title: process.env['ENCRYPT_ENABLED'] === 'true'
+        ? 'Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha'
+        : 'Sentinel Apex Private PUSD Treasury Vault — Phase PUSD-1',
       baseAsset: 'PUSD',
       baseAssetMint,
       baseAssetDecimals,
@@ -12867,6 +12932,152 @@ export class RuntimeStore {
         simulationOnly: true,
       },
     };
+  }
+
+  async persistEncryptedStrategyState(input: {
+    stateId?: string;
+    strategyId: string;
+    vaultAssetMint: string;
+    encryptEnabled: boolean;
+    encryptCluster: string;
+    strategyCommitment: string;
+    ciphertextRefs: Record<string, string>;
+    ciphertextStatus: EncryptedStrategyStateView['ciphertextStatus'];
+    publicRiskStatus: string;
+    publicSummary: Record<string, unknown>;
+    auditEvidence: Record<string, unknown>;
+    actorId: string | null;
+    lastUpdateSlot: string | null;
+  }): Promise<EncryptedStrategyStateView> {
+    const now = new Date();
+    const stateId = input.stateId ?? createId();
+    const [row] = await this.db
+      .insert(encryptedStrategyStates)
+      .values({
+        stateId,
+        strategyId: input.strategyId,
+        vaultAssetSymbol: 'PUSD',
+        vaultAssetMint: input.vaultAssetMint,
+        encryptEnabled: input.encryptEnabled,
+        encryptCluster: input.encryptCluster,
+        preAlphaMode: true,
+        productionPrivacyReady: false,
+        realEncryption: false,
+        adapterMode: 'pre-alpha-mock-adapter',
+        strategyCommitment: input.strategyCommitment,
+        ciphertextRefs: input.ciphertextRefs,
+        ciphertextStatus: input.ciphertextStatus,
+        publicRiskStatus: input.publicRiskStatus,
+        publicSummary: input.publicSummary,
+        auditEvidence: input.auditEvidence,
+        createdBy: input.actorId,
+        updatedBy: input.actorId,
+        lastUpdateSlot: input.lastUpdateSlot,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: encryptedStrategyStates.stateId,
+        set: {
+          strategyCommitment: input.strategyCommitment,
+          ciphertextRefs: input.ciphertextRefs,
+          ciphertextStatus: input.ciphertextStatus,
+          publicRiskStatus: input.publicRiskStatus,
+          publicSummary: input.publicSummary,
+          auditEvidence: input.auditEvidence,
+          updatedBy: input.actorId,
+          lastUpdateSlot: input.lastUpdateSlot,
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.persistEncryptedStrategyState: state was not persisted');
+    }
+    return mapEncryptedStrategyStateRow(row);
+  }
+
+  async getLatestEncryptedStrategyState(): Promise<EncryptedStrategyStateView | null> {
+    const [row] = await this.db
+      .select()
+      .from(encryptedStrategyStates)
+      .orderBy(desc(encryptedStrategyStates.updatedAt))
+      .limit(1);
+
+    return row === undefined ? null : mapEncryptedStrategyStateRow(row);
+  }
+
+  async createEncryptedStrategyRevealRequest(input: {
+    strategyStateId: string;
+    requestedBy: string;
+    reason: string;
+    auditEvidence: Record<string, unknown>;
+  }): Promise<EncryptedStrategyRevealRequestView> {
+    const now = new Date();
+    const [row] = await this.db
+      .insert(encryptedStrategyRevealRequests)
+      .values({
+        requestId: createId(),
+        strategyStateId: input.strategyStateId,
+        requestedBy: input.requestedBy,
+        reason: input.reason,
+        status: 'reveal_requested',
+        auditEvidence: input.auditEvidence,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createEncryptedStrategyRevealRequest: request was not persisted');
+    }
+
+    await this.db
+      .update(encryptedStrategyStates)
+      .set({
+        ciphertextStatus: 'reveal_requested',
+        updatedBy: input.requestedBy,
+        updatedAt: now,
+      })
+      .where(eq(encryptedStrategyStates.stateId, input.strategyStateId));
+
+    return mapEncryptedStrategyRevealRequestRow(row);
+  }
+
+  async recordEncryptedStrategyAuditEvent(input: {
+    strategyStateId: string | null;
+    eventType: string;
+    actorId: string;
+    evidence: Record<string, unknown>;
+  }): Promise<EncryptedStrategyAuditEventView> {
+    const [row] = await this.db
+      .insert(encryptedStrategyAuditEvents)
+      .values({
+        eventId: createId(),
+        strategyStateId: input.strategyStateId,
+        eventType: input.eventType,
+        actorId: input.actorId,
+        evidence: input.evidence,
+        occurredAt: new Date(),
+        createdAt: new Date(),
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.recordEncryptedStrategyAuditEvent: event was not persisted');
+    }
+    return mapEncryptedStrategyAuditEventRow(row);
+  }
+
+  async listEncryptedStrategyAuditEvents(limit = 50): Promise<EncryptedStrategyAuditEventView[]> {
+    const rows = await this.db
+      .select()
+      .from(encryptedStrategyAuditEvents)
+      .orderBy(desc(encryptedStrategyAuditEvents.occurredAt))
+      .limit(limit);
+
+    return rows.map(mapEncryptedStrategyAuditEventRow);
   }
 
   async getTreasuryCashBalanceUsd(): Promise<string | null> {

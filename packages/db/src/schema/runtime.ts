@@ -832,6 +832,75 @@ export const pusdOperatorIntents = pgTable(
   }),
 );
 
+export const encryptedStrategyStates = pgTable(
+  'encrypted_strategy_states',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    stateId: text('state_id').notNull().unique(),
+    strategyId: text('strategy_id').notNull(),
+    vaultAssetSymbol: text('vault_asset_symbol').notNull(),
+    vaultAssetMint: text('vault_asset_mint').notNull(),
+    encryptEnabled: boolean('encrypt_enabled').notNull().default(false),
+    encryptCluster: text('encrypt_cluster').notNull(),
+    preAlphaMode: boolean('pre_alpha_mode').notNull().default(true),
+    productionPrivacyReady: boolean('production_privacy_ready').notNull().default(false),
+    realEncryption: boolean('real_encryption').notNull().default(false),
+    adapterMode: text('adapter_mode').notNull(),
+    strategyCommitment: text('strategy_commitment').notNull(),
+    ciphertextRefs: jsonb('ciphertext_refs').notNull().default({}),
+    ciphertextStatus: text('ciphertext_status').notNull(),
+    publicRiskStatus: text('public_risk_status').notNull(),
+    publicSummary: jsonb('public_summary').notNull().default({}),
+    auditEvidence: jsonb('audit_evidence').notNull().default({}),
+    createdBy: text('created_by'),
+    updatedBy: text('updated_by'),
+    lastUpdateSlot: text('last_update_slot'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    strategyIdIdx: index('encrypted_strategy_states_strategy_id_idx').on(t.strategyId),
+    updatedAtIdx: index('encrypted_strategy_states_updated_at_idx').on(t.updatedAt),
+  }),
+);
+
+export const encryptedStrategyRevealRequests = pgTable(
+  'encrypted_strategy_reveal_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requestId: text('request_id').notNull().unique(),
+    strategyStateId: text('strategy_state_id').notNull(),
+    requestedBy: text('requested_by').notNull(),
+    reason: text('reason').notNull(),
+    status: text('status').notNull().default('reveal_requested'),
+    auditEvidence: jsonb('audit_evidence').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    strategyStateIdIdx: index('encrypted_strategy_reveal_requests_state_idx').on(t.strategyStateId),
+    createdAtIdx: index('encrypted_strategy_reveal_requests_created_at_idx').on(t.createdAt),
+  }),
+);
+
+export const encryptedStrategyAuditEvents = pgTable(
+  'encrypted_strategy_audit_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventId: text('event_id').notNull().unique(),
+    strategyStateId: text('strategy_state_id'),
+    eventType: text('event_type').notNull(),
+    actorId: text('actor_id').notNull(),
+    evidence: jsonb('evidence').notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    strategyStateIdIdx: index('encrypted_strategy_audit_events_state_idx').on(t.strategyStateId),
+    occurredAtIdx: index('encrypted_strategy_audit_events_occurred_at_idx').on(t.occurredAt),
+  }),
+);
+
 export const runtimeCommands = pgTable(
   'runtime_commands',
   {

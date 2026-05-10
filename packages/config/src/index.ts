@@ -3,6 +3,7 @@ export {
   config,
   createAuthConfig,
   createConfig,
+  ENCRYPT_PRE_ALPHA_ACK_VALUE,
   ExecutionMode,
   ExecutionModeEnum,
   LogLevelEnum,

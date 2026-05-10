@@ -14,6 +14,9 @@ import {
   createCarryExecution,
   createCarryStrategyProfile,
   createCarryVenue,
+  createEncryptedStrategyAuditEvent,
+  createEncryptedStrategyState,
+  createEncryptStatus,
     createCommand,
     createDashboardSession,
     createMismatch,
@@ -55,6 +58,7 @@ import CarryActionDetailPage from '../app/carry/actions/[actionId]/page';
 import CarryExecutionDetailPage from '../app/carry/executions/[executionId]/page';
 import CarryExecutionsPage from '../app/carry/executions/page';
 import CarryPage from '../app/carry/page';
+import EncryptPage from '../app/encrypt/page';
 import MismatchDetailPage from '../app/mismatches/[mismatchId]/page';
 import MismatchesPage from '../app/mismatches/page';
 import OverviewPage from '../app/page';
@@ -268,6 +272,14 @@ vi.mock('./lib/runtime-api.server', () => ({
     },
     error: null,
   })),
+  loadEncryptPageData: vi.fn(async () => ({
+    data: {
+      status: createEncryptStatus(),
+      strategyState: createEncryptedStrategyState(),
+      auditEvents: [createEncryptedStrategyAuditEvent()],
+    },
+    error: null,
+  })),
   loadTreasuryActionDetailPageData: vi.fn(async () => ({
     data: {
       detail: createTreasuryActionDetail(),
@@ -473,6 +485,16 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('live execution disabled')).toBeInTheDocument();
     expect(screen.getByText('Operator Intents')).toBeInTheDocument();
     expect(screen.getByText('Audit Evidence')).toBeInTheDocument();
+  });
+
+  it('renders Encrypt pre-alpha strategy-state posture and public private split', async () => {
+    render(await EncryptPage());
+
+    expect(screen.getByText('Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha')).toBeInTheDocument();
+    expect(screen.getAllByText('pre-alpha').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('productionPrivacyReady=false').length).toBeGreaterThan(0);
+    expect(screen.getByText('Public / Private Split')).toBeInTheDocument();
+    expect(screen.getByText('Ciphertext References')).toBeInTheDocument();
   });
 
   it('renders treasury action, execution, and venue detail workflows', async () => {

@@ -5,6 +5,7 @@ import { backtestRoutes } from './backtest.js';
 import { carryRoutes } from './carry.js';
 import { cexVerificationRoutes } from './cex-verification.js';
 import { controlRoutes } from './control.js';
+import { encryptRoutes } from './encrypt.js';
 import { eventRoutes } from './events.js';
 import { healthRoutes } from './health.js';
 import { opportunityRoutes } from './opportunities.js';
@@ -117,6 +118,7 @@ export async function registerRoutes(
   await orderRoutes(app, controlPlane);
   await positionRoutes(app, controlPlane);
   await pusdRoutes(app, controlPlane);
+  await encryptRoutes(app, controlPlane);
   await opportunityRoutes(app, controlPlane);
   await eventRoutes(app, controlPlane);
   await runtimeRoutes(app, controlPlane);

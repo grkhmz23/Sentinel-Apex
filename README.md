@@ -42,6 +42,31 @@ The ops dashboard exposes the PUSD vault at `/pusd`.
 
 See `docs/PHASE_PUSD_1_PRIVATE_TREASURY_VAULT.md`.
 
+## Phase Encrypt-1 Configuration
+
+Encrypt can be enabled as a pre-alpha strategy-state layer for the PUSD vault.
+This does not provide production privacy yet and must only use demo/test values:
+
+```bash
+ENCRYPT_ENABLED=true
+ENCRYPT_CLUSTER=devnet
+ENCRYPT_PROGRAM_ID=<Encrypt pre-alpha program public key>
+ENCRYPT_PRE_ALPHA_ACK=I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY
+```
+
+The Encrypt API surface is:
+
+- `GET /api/v1/encrypt/status`
+- `GET /api/v1/encrypt/strategy-state`
+- `POST /api/v1/encrypt/strategy-state`
+- `POST /api/v1/encrypt/strategy-state/update`
+- `POST /api/v1/encrypt/reveal-request`
+- `GET /api/v1/encrypt/audit`
+
+The ops dashboard exposes the Encrypt pre-alpha strategy-state surface at `/encrypt`.
+
+See `docs/PHASE_ENCRYPT_1_PRIVATE_STRATEGY_STATE.md`.
+
 The current in-repo vault profile is:
 
 - Vault: `Apex USDC Delta-Neutral Carry Vault`
