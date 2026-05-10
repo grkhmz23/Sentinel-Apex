@@ -18,6 +18,7 @@
     "build:api": "pnpm --filter @sentinel-apex/api... build",
     "build:worker": "pnpm --filter @sentinel-apex/runtime-worker... build",
     "dev": "turbo run dev --parallel",
+    "demo:seed": "node scripts/demo-seed.js",
     "encrypt:sdk-demo": "pnpm --filter @sentinel-apex/runtime exec tsx ../../scripts/encrypt-sdk-demo.ts",
     "worker:dev": "pnpm --filter @sentinel-apex/runtime-worker dev",
     "db:start": "./scripts/db-start.sh",

@@ -46,7 +46,7 @@ export default async function PusdPage(): Promise<JSX.Element> {
             <h1>Sentinel Apex Private PUSD Treasury Vault</h1>
             <p className="page__summary">
               PUSD-denominated vault accounting, read-only balance evidence, dry-run treasury strategy,
-              and operator intent workflow. Live execution is disabled.
+              and operator intent workflow. Demo seed data is non-sensitive and live execution is disabled.
             </p>
             <div className="page__header-meta">
               <StatusBadge label="simulation/dry-run" tone="warn" />
@@ -57,6 +57,12 @@ export default async function PusdPage(): Promise<JSX.Element> {
         </header>
 
         <div className="metric-grid">
+          <MetricCard
+            detail="PUSD is the vault base asset for this demo"
+            label="Vault asset"
+            tone="accent"
+            value="PUSD"
+          />
           <MetricCard
             detail={`Mint ${vault.baseAssetMint}`}
             label="PUSD balance"
@@ -76,6 +82,12 @@ export default async function PusdPage(): Promise<JSX.Element> {
             value={<StatusBadge label={latestBalance?.readStatus ?? 'missing'} tone={latestBalance?.readStatus === 'ok' ? 'good' : 'warn'} />}
           />
           <MetricCard
+            detail="Snapshots are balance evidence, not treasury movement"
+            label="Accounting mode"
+            tone="good"
+            value="Read-only"
+          />
+          <MetricCard
             detail="No signing or sendTransaction path is enabled"
             label="Execution posture"
             tone="bad"
@@ -91,6 +103,9 @@ export default async function PusdPage(): Promise<JSX.Element> {
                 { label: 'PUSD mint', value: vault.baseAssetMint },
                 { label: 'Decimals', value: String(vault.baseAssetDecimals) },
                 { label: 'Vault owner', value: vault.vaultOwnerAddress ?? 'Not configured' },
+                { label: 'Accounting mode', value: 'Read-only evidence' },
+                { label: 'Operator mode', value: 'Dry-run/operator intent' },
+                { label: 'Live execution', value: vault.liveExecutionEnabled ? 'Enabled' : 'Disabled' },
                 { label: 'Signing', value: vault.safety.signingEnabled ? 'Enabled' : 'Disabled' },
                 { label: 'sendTransaction', value: vault.safety.sendTransactionEnabled ? 'Enabled' : 'Disabled' },
               ]}

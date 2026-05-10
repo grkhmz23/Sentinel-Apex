@@ -107,6 +107,25 @@ Live PUSD execution, signing, `sendTransaction`, and Ika remain disabled.
 See `docs/PHASE_ENCRYPT_2A_SDK_PREALPHA_SPIKE.md` and
 `docs/PHASE_ENCRYPT_2B_DEVNET_SDK_DEMO.md`.
 
+## Hackathon Demo Flow
+
+Seed deterministic, non-sensitive demo evidence before recording:
+
+```bash
+pnpm demo:seed
+pnpm dev
+```
+
+Then open the ops dashboard:
+
+- `/pusd`: show PUSD as the vault asset, read-only accounting evidence, a dry-run operator intent, and live execution disabled.
+- `/encrypt`: show Encrypt pre-alpha status, `productionPrivacyReady=false`, `realEncryption=false`, ciphertext refs, strategy commitment, and SDK demo evidence.
+
+The seed writes `.tmp/demo-evidence.json`, which is ignored by git. It does not
+create orders, sign transactions, call `sendTransaction`, enable Ika, or claim
+production privacy. See `docs/DEMO_VIDEO_SCRIPT.md` for the 60-second and
+90-second narration.
+
 The current in-repo vault profile is:
 
 - Vault: `Apex USDC Delta-Neutral Carry Vault`

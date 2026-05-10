@@ -51,6 +51,11 @@ import type {
   PusdVaultView,
 } from '@sentinel-apex/runtime';
 
+import {
+  createDemoEncryptPageData,
+  createDemoPusdPageData,
+  hasDemoEvidenceSeed,
+} from './demo-evidence.server';
 import { getDashboardApiBaseUrl, getDashboardApiKey } from './env.server';
 
 import type {
@@ -931,6 +936,13 @@ export async function loadPusdPageData(): Promise<DashboardPageState<PusdPageDat
       listAuditEvents(30),
     ]);
 
+    if (hasDemoEvidenceSeed() && (vault.balance === null || snapshots.length === 0 || intents.length === 0)) {
+      return {
+        data: createDemoPusdPageData(),
+        error: null,
+      };
+    }
+
     return {
       data: {
         vault,
@@ -941,6 +953,13 @@ export async function loadPusdPageData(): Promise<DashboardPageState<PusdPageDat
       error: null,
     };
   } catch (error) {
+    if (hasDemoEvidenceSeed()) {
+      return {
+        data: createDemoPusdPageData(),
+        error: null,
+      };
+    }
+
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load PUSD vault data.',
@@ -957,6 +976,13 @@ export async function loadEncryptPageData(): Promise<DashboardPageState<EncryptP
       listEncryptSdkDemoEvidence(10),
     ]);
 
+    if (hasDemoEvidenceSeed() && (strategyState === null || sdkEvidence.length === 0)) {
+      return {
+        data: createDemoEncryptPageData(),
+        error: null,
+      };
+    }
+
     return {
       data: {
         status,
@@ -967,6 +993,13 @@ export async function loadEncryptPageData(): Promise<DashboardPageState<EncryptP
       error: null,
     };
   } catch (error) {
+    if (hasDemoEvidenceSeed()) {
+      return {
+        data: createDemoEncryptPageData(),
+        error: null,
+      };
+    }
+
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load Encrypt pre-alpha data.',
