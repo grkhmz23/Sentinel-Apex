@@ -8,6 +8,8 @@ export const ENCRYPT_FORBIDDEN_FIELDS = [
   'signer',
   'rawStrategy',
   'productionStrategy',
+  'vaultBalance',
+  'realAllocation',
   'inputs',
 ] as const;
 
@@ -114,6 +116,7 @@ export interface EncryptSdkDemoEvidence {
   endpointHost: string | null;
   chain: 'Solana';
   programId: string | null;
+  strategyCommitment: string;
   success: boolean;
   sdkAvailable: boolean;
   sdkConfigured: boolean;

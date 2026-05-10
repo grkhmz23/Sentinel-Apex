@@ -1,6 +1,10 @@
 import { PublicKey } from '@solana/web3.js';
 
-import { buildEncryptSdkDemoInput, encodeEncryptSdkDemoInput } from './sdk-demo-input.js';
+import {
+  buildEncryptSdkDemoInput,
+  buildEncryptSdkDemoStrategyCommitment,
+  encodeEncryptSdkDemoInput,
+} from './sdk-demo-input.js';
 
 import type {
   EncryptGrpcModule,
@@ -45,6 +49,7 @@ function evidenceBase(config: EncryptSdkPreAlphaConfig, strategyId: string): Omi
   EncryptSdkDemoEvidence,
   'success' | 'sdkAvailable' | 'sdkConfigured' | 'ciphertextIdentifiers' | 'errorCode' | 'errorMessage'
 > {
+  const input = buildEncryptSdkDemoInput(strategyId);
   return {
     strategyId,
     sdkMode: 'sdk-prealpha',
@@ -52,6 +57,7 @@ function evidenceBase(config: EncryptSdkPreAlphaConfig, strategyId: string): Omi
     endpointHost: endpointHost(config.grpcEndpoint),
     chain: 'Solana',
     programId: config.programId,
+    strategyCommitment: buildEncryptSdkDemoStrategyCommitment(input),
     requestedAt: new Date().toISOString(),
     preAlphaMode: true,
     productionPrivacyReady: false,

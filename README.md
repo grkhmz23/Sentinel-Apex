@@ -67,10 +67,11 @@ The ops dashboard exposes the Encrypt pre-alpha strategy-state surface at `/encr
 
 See `docs/PHASE_ENCRYPT_1_PRIVATE_STRATEGY_STATE.md`.
 
-## Phase Encrypt-2A SDK Pre-Alpha Demo
+## Phase Encrypt-2B SDK Pre-Alpha Demo
 
 The optional SDK-backed demo path is disabled by default. It uses
 `@encrypt.xyz/pre-alpha-solana-client` only with fixed, non-sensitive demo inputs.
+Adapter mode remains the default; `sdk-prealpha` is explicit demo mode.
 
 ```bash
 ENCRYPT_ENABLED=true
@@ -85,6 +86,15 @@ ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY=<Encrypt pre-alpha network encryption publ
 ENCRYPT_SDK_STRICT=false
 ```
 
+Run the Codespaces CLI demo:
+
+```bash
+pnpm encrypt:sdk-demo
+```
+
+The CLI prints sanitized evidence and writes `.tmp/encrypt-sdk-demo-evidence.json`.
+The file is ignored by git and must not contain raw strategy payloads or secrets.
+
 Additional SDK demo API:
 
 - `POST /api/v1/encrypt/sdk-demo/create-input`
@@ -92,8 +102,10 @@ Additional SDK demo API:
 
 This proves a controlled Encrypt pre-alpha SDK touchpoint. It does not prove production privacy:
 `productionPrivacyReady=false` and `realEncryption=false` remain explicit.
+Live PUSD execution, signing, `sendTransaction`, and Ika remain disabled.
 
-See `docs/PHASE_ENCRYPT_2A_SDK_PREALPHA_SPIKE.md`.
+See `docs/PHASE_ENCRYPT_2A_SDK_PREALPHA_SPIKE.md` and
+`docs/PHASE_ENCRYPT_2B_DEVNET_SDK_DEMO.md`.
 
 The current in-repo vault profile is:
 

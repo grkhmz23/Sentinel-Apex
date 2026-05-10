@@ -59,6 +59,7 @@ describe('SdkPreAlphaEncryptClient', () => {
       nonSensitive: true,
       preAlphaPlaintextRisk: true,
     });
+    expect(evidence.strategyCommitment).toMatch(/^encrypt-sdk-demo-commitment:/);
   });
 
   it('returns structured failure evidence when the SDK request fails', async () => {
@@ -80,6 +81,8 @@ describe('SdkPreAlphaEncryptClient', () => {
 
   it('builds only the allowed non-sensitive demo fields and rejects forbidden fields', () => {
     const input = buildEncryptSdkDemoInput('sdk-demo-fields-test');
+    const secondInput = buildEncryptSdkDemoInput('sdk-demo-fields-test');
+    expect(input).toEqual(secondInput);
     expect(input).toMatchObject({
       demoOnly: true,
       nonSensitive: true,

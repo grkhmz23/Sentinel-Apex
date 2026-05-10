@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { EncryptSdkDemoInput } from './types.js';
 
 export function buildEncryptSdkDemoInput(strategyId = 'pusd-treasury-vault-sdk-prealpha-demo'): EncryptSdkDemoInput {
@@ -23,4 +25,9 @@ export function encodeEncryptSdkDemoInput(input: EncryptSdkDemoInput): Buffer {
     preAlphaPlaintextRisk: input.preAlphaPlaintextRisk,
     fields: input.fields,
   }), 'utf8');
+}
+
+export function buildEncryptSdkDemoStrategyCommitment(input: EncryptSdkDemoInput): string {
+  const digest = createHash('sha256').update(encodeEncryptSdkDemoInput(input)).digest('hex');
+  return `encrypt-sdk-demo-commitment:${digest}`;
 }

@@ -1142,9 +1142,17 @@ describe('runtime-backed API routes', () => {
       method: 'POST',
       url: '/api/v1/encrypt/sdk-demo/create-input',
       headers: operatorHeaders('operator', 'POST', '/api/v1/encrypt/sdk-demo/create-input'),
-      payload: { inputs: [{ value: 'not accepted' }] },
+      payload: { vaultBalance: '1000000', realAllocation: { venue: 'private' } },
     });
     expect(forbiddenResponse.statusCode).toBe(400);
+
+    const plaintextResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/sdk-demo/create-input',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/encrypt/sdk-demo/create-input'),
+      payload: { plaintext: { allocationWeightBps: 9999 } },
+    });
+    expect(plaintextResponse.statusCode).toBe(400);
 
     const response = await app.inject({
       method: 'POST',
@@ -1153,12 +1161,19 @@ describe('runtime-backed API routes', () => {
       payload: { strategyId: 'pusd-sdk-demo-test' },
     });
     expect(response.statusCode).toBe(201);
-    expect(response.json<{ data: { productionPrivacyReady: boolean; realEncryption: boolean; demoOnly: boolean } }>().data)
+    expect(response.json<{ data: {
+      productionPrivacyReady: boolean;
+      realEncryption: boolean;
+      demoOnly: boolean;
+      strategyCommitment: string;
+    } }>().data)
       .toMatchObject({
         productionPrivacyReady: false,
         realEncryption: false,
         demoOnly: true,
       });
+    expect(response.json<{ data: { strategyCommitment: string } }>().data.strategyCommitment)
+      .toMatch(/^encrypt-sdk-demo-commitment:/);
 
     const evidenceResponse = await app.inject({
       method: 'GET',

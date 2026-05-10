@@ -46,6 +46,9 @@ export const ENCRYPT_SDK_DEMO_ACK_VALUE =
   'I_UNDERSTAND_ENCRYPT_SDK_PREALPHA_USES_NON_SENSITIVE_DEMO_DATA_ONLY';
 
 const assetDecimals = z.coerce.number().int().min(0).max(18).optional();
+const grpcEndpoint = z.string().min(1).regex(/^[A-Za-z0-9.-]+:\d{1,5}$/, {
+  message: 'ENCRYPT_GRPC_ENDPOINT must be a host:port endpoint',
+}).optional();
 
 export interface AuthConfig {
   NODE_ENV: NodeEnv;
@@ -125,7 +128,7 @@ const envSchema = z
     }).optional(),
     ENCRYPT_PRE_ALPHA_ACK: z.string().optional(),
     ENCRYPT_SDK_MODE: z.enum(['adapter', 'sdk-prealpha']).default('adapter'),
-    ENCRYPT_GRPC_ENDPOINT: z.string().min(1).optional(),
+    ENCRYPT_GRPC_ENDPOINT: grpcEndpoint,
     ENCRYPT_SOLANA_RPC_URL: z.string().url({
       message: 'ENCRYPT_SOLANA_RPC_URL must be a valid URL',
     }).optional(),

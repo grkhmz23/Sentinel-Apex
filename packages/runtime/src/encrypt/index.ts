@@ -1,7 +1,11 @@
 export { EncryptedStrategyService } from './encrypted-strategy-service.js';
 export { createEncryptSdkPreAlphaClient, createEncryptStrategyClient } from './encrypt-client-factory.js';
 export { PreAlphaEncryptClient, PRE_ALPHA_ENCRYPT_CAPABILITIES } from './prealpha-encrypt-client.js';
-export { buildEncryptSdkDemoInput, encodeEncryptSdkDemoInput } from './sdk-demo-input.js';
+export {
+  buildEncryptSdkDemoInput,
+  buildEncryptSdkDemoStrategyCommitment,
+  encodeEncryptSdkDemoInput,
+} from './sdk-demo-input.js';
 export { SdkPreAlphaEncryptClient } from './sdk-prealpha-client.js';
 export { rejectForbiddenEncryptFields } from './types.js';
 

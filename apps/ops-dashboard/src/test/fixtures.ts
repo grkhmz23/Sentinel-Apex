@@ -1973,6 +1973,7 @@ export function createEncryptSdkDemoEvidence(
     endpointHost: 'pre-alpha-dev-1.encrypt.ika-network.net',
     chain: 'Solana',
     programId: 'So11111111111111111111111111111111111111112',
+    strategyCommitment: 'encrypt-sdk-demo-commitment:fixture',
     success: true,
     sdkAvailable: true,
     sdkConfigured: true,

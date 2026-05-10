@@ -1545,6 +1545,7 @@ export interface EncryptSdkDemoEvidenceView {
   endpointHost: string | null;
   chain: 'Solana';
   programId: string | null;
+  strategyCommitment: string;
   success: boolean;
   sdkAvailable: boolean;
   sdkConfigured: boolean;

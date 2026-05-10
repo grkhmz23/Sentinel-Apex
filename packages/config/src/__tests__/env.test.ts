@@ -364,6 +364,21 @@ describe('config/env — Encrypt pre-alpha validation', () => {
     ).toThrow(ConfigValidationError);
   });
 
+  it('rejects invalid sdk-prealpha gRPC endpoints', () => {
+    expect(() =>
+      createConfig({
+        ...BASE_TEST_ENV,
+        ENCRYPT_ENABLED: 'true',
+        ENCRYPT_PRE_ALPHA_ACK: ENCRYPT_PRE_ALPHA_ACK_VALUE,
+        ENCRYPT_PROGRAM_ID: validPublicKey,
+        ENCRYPT_SDK_MODE: 'sdk-prealpha',
+        ENCRYPT_SDK_DEMO_ACK: ENCRYPT_SDK_DEMO_ACK_VALUE,
+        ENCRYPT_GRPC_ENDPOINT: 'https://pre-alpha-dev-1.encrypt.ika-network.net',
+        ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY: validPublicKey,
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
   it('accepts valid sdk-prealpha demo configuration', () => {
     const cfg = createConfig({
       ...BASE_TEST_ENV,

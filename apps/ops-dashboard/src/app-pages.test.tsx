@@ -282,7 +282,16 @@ vi.mock('./lib/runtime-api.server', () => ({
       status: createEncryptStatus(),
       strategyState: createEncryptedStrategyState(),
       auditEvents: [createEncryptedStrategyAuditEvent()],
-      sdkEvidence: [createEncryptSdkDemoEvidence()],
+      sdkEvidence: [
+        createEncryptSdkDemoEvidence(),
+        createEncryptSdkDemoEvidence({
+          success: false,
+          ciphertextIdentifiers: [],
+          errorCode: 'UNAVAILABLE',
+          errorMessage: 'grpc endpoint unavailable',
+          requestedAt: '2026-03-20T12:05:00.000Z',
+        }),
+      ],
     },
     error: null,
   })),
@@ -502,7 +511,12 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Public / Private Split')).toBeInTheDocument();
     expect(screen.getByText('Ciphertext References')).toBeInTheDocument();
     expect(screen.getByText('Encrypt SDK Pre-Alpha Demo')).toBeInTheDocument();
+    expect(screen.getByText(/Encrypt pre-alpha SDK demo/)).toBeInTheDocument();
+    expect(screen.getAllByText('realEncryption').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('false').length).toBeGreaterThan(0);
     expect(screen.getByText('Create demo ciphertext input')).toBeInTheDocument();
+    expect(screen.getByText('SDK Demo Result')).toBeInTheDocument();
+    expect(screen.getByText('grpc endpoint unavailable')).toBeInTheDocument();
   });
 
   it('renders treasury action, execution, and venue detail workflows', async () => {

@@ -21,6 +21,8 @@ const forbiddenFields = [
   'signer',
   'rawStrategy',
   'productionStrategy',
+  'vaultBalance',
+  'realAllocation',
   'inputs',
 ] as const;
 
@@ -71,7 +73,7 @@ function validateRevealBody(body: unknown): CreateEncryptRevealRequestInput {
 
 function validateSdkDemoBody(body: unknown): CreateEncryptSdkDemoRequest {
   const record = assertObjectBody(body);
-  if (record['demoValues'] !== undefined || record['privateFields'] !== undefined) {
+  if (record['demoValues'] !== undefined || record['privateFields'] !== undefined || record['plaintext'] !== undefined) {
     throw new Error('SDK demo endpoint does not accept caller-supplied plaintext strategy values.');
   }
   if (process.env['ENCRYPT_SDK_DEMO_ACK'] !== ENCRYPT_SDK_DEMO_ACK_VALUE) {

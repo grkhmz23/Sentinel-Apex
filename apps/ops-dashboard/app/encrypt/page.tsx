@@ -27,17 +27,19 @@ export default async function EncryptPage(): Promise<JSX.Element> {
 
   const { status, strategyState, auditEvents, sdkEvidence } = state.data;
   const ciphertextRefs = strategyState?.ciphertextRefs ?? {};
+  const latestSdkEvidence = sdkEvidence[0] ?? null;
+  const recentSdkEvidence = sdkEvidence.slice(0, 5);
 
   return (
     <AppShell session={session}>
       <div className="page">
         <header className="page__header page__header--hero">
           <div className="page__header-copy">
-            <p className="eyebrow">Phase Encrypt-2A</p>
+            <p className="eyebrow">Phase Encrypt-2B</p>
             <h1>Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha</h1>
             <p className="page__summary">
-              PUSD remains the vault asset. Encrypt is wired as a pre-alpha confidential strategy-state
-              layer with ciphertext references and commitments. Production privacy is not ready.
+              Encrypt pre-alpha SDK demo — non-sensitive inputs only. PUSD remains the vault asset,
+              and this page proves a controlled SDK touchpoint without production privacy claims.
             </p>
             <div className="page__header-meta">
               <StatusBadge label={status.enabled ? 'Encrypt enabled' : 'Encrypt disabled'} tone={status.enabled ? 'warn' : 'neutral'} />
@@ -49,28 +51,28 @@ export default async function EncryptPage(): Promise<JSX.Element> {
 
         <div className="metric-grid">
           <MetricCard
-            detail={`Cluster ${status.cluster}`}
-            label="Encrypt posture"
+            detail={`Cluster ${status.cluster}; endpoint ${status.grpcEndpointHost ?? 'not configured'}`}
+            label="SDK mode"
             tone={status.enabled ? 'warn' : 'neutral'}
-            value={status.enabled ? 'Enabled' : 'Disabled'}
+            value={status.sdkMode}
+          />
+          <MetricCard
+            detail={`Program ${status.programId ?? 'not configured'}`}
+            label="SDK configured"
+            tone={status.sdkConfigured ? 'warn' : 'neutral'}
+            value={status.sdkConfigured ? 'yes' : 'no'}
           />
           <MetricCard
             detail="No production confidentiality guarantees in pre-alpha"
-            label="Production privacy"
+            label="productionPrivacyReady"
             tone="bad"
-            value="Not ready"
-          />
-          <MetricCard
-            detail={strategyState === null ? 'No strategy commitment yet' : strategyState.strategyCommitment}
-            label="Strategy commitment"
-            tone="accent"
-            value={strategyState === null ? 'Missing' : 'Present'}
+            value={String(status.productionPrivacyReady)}
           />
           <MetricCard
             detail="No signing or sendTransaction for PUSD movement"
-            label="Execution posture"
+            label="realEncryption"
             tone="bad"
-            value="Disabled"
+            value={String(status.realEncryption)}
           />
         </div>
 
@@ -134,30 +136,52 @@ export default async function EncryptPage(): Promise<JSX.Element> {
           {sdkEvidence.length === 0 ? (
             <EmptyState message="No Encrypt SDK pre-alpha demo evidence is persisted yet." title="No SDK demo evidence" />
           ) : (
+            <div className="stack">
+              <section>
+                <h2>SDK Demo Result</h2>
+                {latestSdkEvidence === null ? (
+                  <EmptyState message="No SDK demo result is available." title="No result" />
+                ) : (
+                  <DefinitionList
+                    items={[
+                      { label: 'Status', value: <StatusBadge label={latestSdkEvidence.success ? 'success' : 'failed'} tone={latestSdkEvidence.success ? 'good' : 'bad'} /> },
+                      { label: 'Ciphertext identifiers', value: latestSdkEvidence.ciphertextIdentifiers.length === 0 ? 'none' : latestSdkEvidence.ciphertextIdentifiers.join(', ') },
+                      { label: 'Strategy commitment', value: latestSdkEvidence.strategyCommitment },
+                      { label: 'Timestamp', value: formatDateTime(latestSdkEvidence.requestedAt) },
+                      { label: 'Sanitized error', value: latestSdkEvidence.errorMessage ?? 'none' },
+                    ]}
+                  />
+                )}
+              </section>
             <TableSurface caption="Encrypt SDK pre-alpha demo evidence">
               <table className="table">
                 <thead>
                   <tr>
+                    <th>SDK mode</th>
                     <th>Status</th>
+                    <th>Created at</th>
                     <th>Ciphertext identifiers</th>
-                    <th>Timestamp</th>
-                    <th>Evidence</th>
+                    <th>Strategy commitment</th>
+                    <th>Sanitized error</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sdkEvidence.map((event) => (
+                  {recentSdkEvidence.map((event) => (
                     <tr key={`${event.strategyId}-${event.requestedAt}`}>
+                      <td>{event.sdkMode}</td>
                       <td>
                         <StatusBadge label={event.success ? 'success' : 'failed'} tone={event.success ? 'good' : 'bad'} />
                       </td>
-                      <td>{event.ciphertextIdentifiers.length === 0 ? 'none' : event.ciphertextIdentifiers.join(', ')}</td>
                       <td>{formatDateTime(event.requestedAt)}</td>
-                      <td>{event.errorMessage ?? 'SDK demo input created'}</td>
+                      <td>{event.ciphertextIdentifiers.length === 0 ? 'none' : event.ciphertextIdentifiers.join(', ')}</td>
+                      <td>{event.strategyCommitment}</td>
+                      <td>{event.errorMessage ?? 'none'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </TableSurface>
+            </div>
           )}
         </Panel>
 

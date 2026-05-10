@@ -85,6 +85,7 @@ desktop.ini
 # ── Temporary files ───────────────────────────────────────────────────────────
 tmp/
 temp/
+.tmp/
 *.tmp
 *.bak
 *.swp
