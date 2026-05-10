@@ -24,7 +24,7 @@ export default async function EncryptPage(): Promise<JSX.Element> {
     );
   }
 
-  const { status, strategyState, auditEvents } = state.data;
+  const { status, strategyState, auditEvents, sdkEvidence } = state.data;
   const ciphertextRefs = strategyState?.ciphertextRefs ?? {};
 
   return (
@@ -32,7 +32,7 @@ export default async function EncryptPage(): Promise<JSX.Element> {
       <div className="page">
         <header className="page__header page__header--hero">
           <div className="page__header-copy">
-            <p className="eyebrow">Phase Encrypt-1</p>
+            <p className="eyebrow">Phase Encrypt-2A</p>
             <h1>Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha</h1>
             <p className="page__summary">
               PUSD remains the vault asset. Encrypt is wired as a pre-alpha confidential strategy-state
@@ -80,6 +80,11 @@ export default async function EncryptPage(): Promise<JSX.Element> {
                 { label: 'preAlphaMode', value: String(status.preAlphaMode) },
                 { label: 'productionPrivacyReady', value: String(status.productionPrivacyReady) },
                 { label: 'realEncryption', value: String(status.realEncryption) },
+                { label: 'SDK mode', value: status.sdkMode },
+                { label: 'SDK available', value: String(status.sdkAvailable) },
+                { label: 'SDK configured', value: String(status.sdkConfigured) },
+                { label: 'gRPC endpoint host', value: status.grpcEndpointHost ?? 'not configured' },
+                { label: 'program id', value: status.programId ?? 'not configured' },
                 { label: 'ciphertext accounts', value: String(status.capabilities.supportsCiphertextAccounts) },
                 { label: 'graph execution', value: String(status.capabilities.supportsGraphExecution) },
                 { label: 'threshold decrypt', value: String(status.capabilities.supportsThresholdDecrypt) },
@@ -104,6 +109,56 @@ export default async function EncryptPage(): Promise<JSX.Element> {
             )}
           </Panel>
         </div>
+
+        <Panel subtitle="Real SDK touchpoint using fixed, non-sensitive demo values only" title="Encrypt SDK Pre-Alpha Demo">
+          <div className="grid grid--two-column">
+            <DefinitionList
+              items={[
+                { label: 'SDK mode', value: status.sdkMode },
+                { label: 'Configured', value: status.sdkConfigured ? 'yes' : 'no' },
+                { label: 'Available', value: status.sdkAvailable ? 'yes' : 'no' },
+                { label: 'productionPrivacyReady', value: String(status.productionPrivacyReady) },
+                { label: 'realEncryption', value: String(status.realEncryption) },
+                { label: 'Warning', value: 'Demo inputs only. Do not use real treasury values. Pre-alpha SDK path proves integration, not production privacy.' },
+              ]}
+            />
+            <div className="stack">
+              <button className="button" type="button">Create demo ciphertext input</button>
+              <p className="muted">
+                Operator API: POST /api/v1/encrypt/sdk-demo/create-input. The endpoint uses a fixed
+                demo input builder and rejects arbitrary plaintext strategy payloads.
+              </p>
+            </div>
+          </div>
+          {sdkEvidence.length === 0 ? (
+            <EmptyState message="No Encrypt SDK pre-alpha demo evidence is persisted yet." title="No SDK demo evidence" />
+          ) : (
+            <TableSurface caption="Encrypt SDK pre-alpha demo evidence">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Ciphertext identifiers</th>
+                    <th>Timestamp</th>
+                    <th>Evidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sdkEvidence.map((event) => (
+                    <tr key={`${event.strategyId}-${event.requestedAt}`}>
+                      <td>
+                        <StatusBadge label={event.success ? 'success' : 'failed'} tone={event.success ? 'good' : 'bad'} />
+                      </td>
+                      <td>{event.ciphertextIdentifiers.length === 0 ? 'none' : event.ciphertextIdentifiers.join(', ')}</td>
+                      <td>{formatDateTime(event.requestedAt)}</td>
+                      <td>{event.errorMessage ?? 'SDK demo input created'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableSurface>
+          )}
+        </Panel>
 
         <div className="grid grid--two-column">
           <Panel subtitle="Private-by-design strategy fields are represented only by pre-alpha references" title="Public / Private Split">

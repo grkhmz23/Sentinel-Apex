@@ -1,7 +1,9 @@
-import { createHash } from 'node:crypto';
-
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 
+import {
+  ENCRYPT_PRE_ALPHA_ACK_VALUE,
+  ENCRYPT_SDK_DEMO_ACK_VALUE,
+} from '@sentinel-apex/config';
 import {
   applyMigrations,
   createDatabaseConnection,
@@ -10,6 +12,7 @@ import {
 import { createId } from '@sentinel-apex/domain';
 import { RangerVaultClient } from '@sentinel-apex/ranger';
 
+import { EncryptedStrategyService } from './encrypt/index.js';
 import {
   acknowledgeNextStatus,
   remediationFailureNextStatus,
@@ -22,6 +25,7 @@ import {
 } from './mismatch-lifecycle.js';
 import { DatabaseAuditWriter, RuntimeStore } from './store.js';
 
+import type { EncryptRuntimeConfig } from './encrypt/index.js';
 import type {
   AllocatorDecisionDetailView,
   AllocatorRunView,
@@ -41,10 +45,12 @@ import type {
   ConnectorReadinessEvidenceView,
   CreateEncryptedStrategyStateRequest,
   CreateEncryptRevealRequestInput,
+  CreateEncryptSdkDemoRequest,
   CreatePusdOperatorIntentInput,
   EncryptedStrategyAuditEventView,
   EncryptedStrategyRevealRequestView,
   EncryptedStrategyStateView,
+  EncryptSdkDemoEvidenceView,
   EncryptStatusView,
   OpportunityView,
   OrderView,
@@ -155,6 +161,38 @@ function canSatisfyApprovalRequirement(
   }
 
   return actorRole === 'admin';
+}
+
+function encryptEnabled(): boolean {
+  return process.env['ENCRYPT_ENABLED'] === 'true' || process.env['ENCRYPT_ENABLED'] === '1';
+}
+
+function encryptSdkMode(): 'adapter' | 'sdk-prealpha' {
+  return process.env['ENCRYPT_SDK_MODE'] === 'sdk-prealpha' ? 'sdk-prealpha' : 'adapter';
+}
+
+function endpointHost(endpoint: string | null): string | null {
+  if (endpoint === null) {
+    return null;
+  }
+  return endpoint.split(':')[0] ?? endpoint;
+}
+
+function buildControlPlaneEncryptConfig(): EncryptRuntimeConfig {
+  return {
+    enabled: encryptEnabled(),
+    cluster: (process.env['ENCRYPT_CLUSTER'] ?? 'devnet') as 'devnet' | 'testnet' | 'mainnet-beta',
+    programId: process.env['ENCRYPT_PROGRAM_ID'] ?? null,
+    configPda: process.env['ENCRYPT_CONFIG_PDA'] ?? null,
+    networkEncryptionKey: process.env['ENCRYPT_NETWORK_ENCRYPTION_KEY'] ?? null,
+    preAlphaAck: process.env['ENCRYPT_PRE_ALPHA_ACK'] === ENCRYPT_PRE_ALPHA_ACK_VALUE,
+    sdkMode: encryptSdkMode(),
+    grpcEndpoint: process.env['ENCRYPT_GRPC_ENDPOINT'] ?? null,
+    solanaRpcUrl: process.env['ENCRYPT_SOLANA_RPC_URL'] ?? null,
+    networkEncryptionPublicKey: process.env['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'] ?? null,
+    sdkDemoAck: process.env['ENCRYPT_SDK_DEMO_ACK'] === ENCRYPT_SDK_DEMO_ACK_VALUE,
+    sdkStrict: process.env['ENCRYPT_SDK_STRICT'] === 'true' || process.env['ENCRYPT_SDK_STRICT'] === '1',
+  };
 }
 
 function toMultiLegPlanStatus(status: string): MultiLegPlanView['status'] {
@@ -370,14 +408,27 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async getEncryptStatus(): Promise<EncryptStatusView> {
     const latestState = await this.store.getLatestEncryptedStrategyState();
+    const encryptConfig = buildControlPlaneEncryptConfig();
+    const sdkConfigured = encryptConfig.sdkMode === 'sdk-prealpha' &&
+      encryptConfig.grpcEndpoint !== null &&
+      encryptConfig.programId !== null &&
+      encryptConfig.networkEncryptionPublicKey !== null &&
+      encryptConfig.sdkDemoAck;
+    const sdkAvailable = await new EncryptedStrategyService(encryptConfig).getSdkAvailable();
     return {
-      enabled: process.env['ENCRYPT_ENABLED'] === 'true' || process.env['ENCRYPT_ENABLED'] === '1',
-      cluster: process.env['ENCRYPT_CLUSTER'] ?? 'devnet',
-      phase: 'Encrypt-1',
+      enabled: encryptConfig.enabled,
+      cluster: encryptConfig.cluster,
+      phase: encryptConfig.sdkMode === 'sdk-prealpha' ? 'Encrypt-2A' : 'Encrypt-1',
       title: 'Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha',
       preAlphaMode: true,
       productionPrivacyReady: false,
       realEncryption: false,
+      sdkMode: encryptConfig.sdkMode,
+      sdkAvailable,
+      sdkConfigured,
+      sdkLastCheck: new Date().toISOString(),
+      grpcEndpointHost: endpointHost(encryptConfig.grpcEndpoint),
+      programId: encryptConfig.programId,
       capabilities: {
         supportsCiphertextAccounts: true,
         supportsGraphExecution: false,
@@ -385,7 +436,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
         preAlphaMode: true,
         productionPrivacyReady: false,
         realEncryption: false,
-        adapterMode: 'pre-alpha-mock-adapter',
+        adapterMode: encryptConfig.sdkMode === 'sdk-prealpha' ? 'sdk-prealpha' : 'pre-alpha-mock-adapter',
       },
       latestState,
       safety: {
@@ -466,6 +517,48 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     return this.store.listEncryptedStrategyAuditEvents(limit);
   }
 
+  async createEncryptSdkDemoInput(
+    actorId: string,
+    input: CreateEncryptSdkDemoRequest,
+  ): Promise<EncryptSdkDemoEvidenceView> {
+    const encryptConfig = buildControlPlaneEncryptConfig();
+    if (!encryptConfig.enabled || encryptConfig.sdkMode !== 'sdk-prealpha' || !encryptConfig.sdkDemoAck) {
+      throw new Error('Encrypt SDK pre-alpha demo mode is not enabled or acknowledged.');
+    }
+    const evidence = await new EncryptedStrategyService(encryptConfig).createSdkDemoInput({
+      ...(input.strategyId === undefined ? {} : { strategyId: input.strategyId }),
+      actorId,
+    });
+    await this.store.recordEncryptedStrategyAuditEvent({
+      strategyStateId: null,
+      eventType: 'encrypt.sdk_demo.create_input',
+      actorId,
+      evidence: { ...evidence },
+    });
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'encrypt.sdk_demo.create_input',
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'treasury',
+      data: evidence,
+    });
+    return evidence;
+  }
+
+  async listEncryptSdkDemoEvidence(limit = 25): Promise<EncryptSdkDemoEvidenceView[]> {
+    const events = await this.store.listEncryptedStrategyAuditEvents(Math.max(limit * 3, limit));
+    return events
+      .filter((event) => event.eventType === 'encrypt.sdk_demo.create_input')
+      .map((event) => event.evidence as unknown)
+      .filter((evidence): evidence is EncryptSdkDemoEvidenceView => {
+        const record = evidence as Record<string, unknown>;
+        return record['sdkMode'] === 'sdk-prealpha' && typeof record['success'] === 'boolean';
+      })
+      .slice(0, limit);
+  }
+
   private async upsertEncryptedStrategyState(
     actorId: string,
     input: CreateEncryptedStrategyStateRequest,
@@ -474,52 +567,61 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     const vault = await this.store.getPusdVault();
     const strategyId = input.strategyId ?? 'pusd-treasury-vault-prealpha';
     const publicRiskStatus = input.publicRiskStatus ?? 'nominal';
-    const commitmentPayload = {
+    const encryptConfig = buildControlPlaneEncryptConfig();
+    const service = new EncryptedStrategyService(encryptConfig);
+    const result = await service.createEncryptedStrategyState({
       strategyId,
       vaultAssetSymbol: 'PUSD',
       vaultAssetMint: vault.baseAssetMint,
+      encryptCluster: encryptConfig.cluster,
       publicRiskStatus,
-      demoValues: input.demoValues ?? {},
-      adapterMode: 'pre-alpha-mock-adapter',
-      productionPrivacyReady: false,
-    };
-    const commitmentHash = createHash('sha256')
-      .update(JSON.stringify(commitmentPayload))
-      .digest('hex');
-    const refPrefix = commitmentHash.slice(0, 16);
+      privateFields: {
+        totalVaultBalanceBucket: 'pre-alpha-demo-operator-submitted',
+        allocationWeights: {
+          idlePusd: '40',
+          simulatedPusdUsdcLiquidityCarry: '35',
+          simulatedPusdLendingCarry: '25',
+        },
+        riskThresholds: {
+          maxDrawdownPct: '5',
+          maxVenueConcentrationPct: '50',
+        },
+        rebalanceThreshold: '2.5',
+        pendingRebalanceAmount: '0',
+        simulatedVenueExposure: {
+          demoOnly: 'true',
+        },
+        maxSingleIntentSize: '10000',
+        maxDailyMovement: '25000',
+      },
+      auditEvidence: {
+        demoValues: input.demoValues ?? {},
+        demoValuesOnly: true,
+        sdkMode: encryptConfig.sdkMode,
+      },
+      actorId,
+    });
+    const publicSummary = service.buildPublicStrategySummary(result);
     const state = await this.store.persistEncryptedStrategyState({
       stateId: 'pusd-treasury-vault-prealpha',
       strategyId,
       vaultAssetMint: vault.baseAssetMint,
       encryptEnabled: true,
-      encryptCluster: process.env['ENCRYPT_CLUSTER'] ?? 'devnet',
-      strategyCommitment: `encrypt_pre_alpha_commitment_${commitmentHash}`,
-      ciphertextRefs: {
-        totalVaultBalanceBucket: `encrypt_pre_alpha_ct_${refPrefix}_total_balance_bucket`,
-        allocationWeights: `encrypt_pre_alpha_ct_${refPrefix}_allocation_weights`,
-        riskThresholds: `encrypt_pre_alpha_ct_${refPrefix}_risk_thresholds`,
-        rebalanceThreshold: `encrypt_pre_alpha_ct_${refPrefix}_rebalance_threshold`,
-        pendingRebalanceAmount: `encrypt_pre_alpha_ct_${refPrefix}_pending_rebalance`,
-        simulatedVenueExposure: `encrypt_pre_alpha_ct_${refPrefix}_sim_exposure`,
-        maxSingleIntentSize: `encrypt_pre_alpha_ct_${refPrefix}_max_single_intent`,
-        maxDailyMovement: `encrypt_pre_alpha_ct_${refPrefix}_max_daily_movement`,
-      },
-      ciphertextStatus: 'verified',
+      encryptCluster: encryptConfig.cluster,
+      strategyCommitment: result.strategyCommitment,
+      ciphertextRefs: { ...result.ciphertextRefs },
+      ciphertextStatus: result.ciphertextStatus,
       publicRiskStatus,
-      publicSummary: {
-        strategyId,
-        vaultAssetSymbol: 'PUSD',
-        preAlphaMode: true,
-        productionPrivacyReady: false,
-        realEncryption: false,
-        demoValuesOnly: true,
-      },
+      publicSummary,
       auditEvidence: {
         operatorSubmitted: true,
         demoValuesOnly: true,
+        sdkMode: encryptConfig.sdkMode,
+        sdkEvidence: result.sdkEvidence ?? null,
         preAlphaMode: true,
         productionPrivacyReady: false,
       },
+      adapterMode: result.capabilities.adapterMode,
       actorId,
       lastUpdateSlot: null,
     });
@@ -530,6 +632,8 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       evidence: {
         strategyCommitment: state.strategyCommitment,
         ciphertextStatus: state.ciphertextStatus,
+        sdkMode: encryptConfig.sdkMode,
+        sdkEvidence: result.sdkEvidence ?? null,
         preAlphaMode: true,
       },
     });

@@ -915,6 +915,10 @@ describe('runtime-backed API routes', () => {
     delete process.env['ENCRYPT_CLUSTER'];
     delete process.env['ENCRYPT_PROGRAM_ID'];
     delete process.env['ENCRYPT_PRE_ALPHA_ACK'];
+    delete process.env['ENCRYPT_SDK_MODE'];
+    delete process.env['ENCRYPT_GRPC_ENDPOINT'];
+    delete process.env['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'];
+    delete process.env['ENCRYPT_SDK_DEMO_ACK'];
   });
 
   it('queues a real runtime cycle through the worker and exposes persisted data through the API', async () => {
@@ -1110,6 +1114,60 @@ describe('runtime-backed API routes', () => {
     expect(auditResponse.statusCode).toBe(200);
     expect(auditResponse.json<{ data: Array<{ eventType: string }> }>().data.some(
       (event) => event.eventType === 'encrypt.reveal_requested',
+    )).toBe(true);
+  });
+
+  it('protects the Encrypt SDK pre-alpha demo endpoint and records sanitized failure evidence', async () => {
+    process.env['VAULT_BASE_ASSET'] = 'PUSD';
+    process.env['PUSD_MINT'] = 'So11111111111111111111111111111111111111112';
+    process.env['PUSD_DECIMALS'] = '6';
+    process.env['ENCRYPT_ENABLED'] = 'true';
+    process.env['ENCRYPT_CLUSTER'] = 'devnet';
+    process.env['ENCRYPT_PROGRAM_ID'] = 'So11111111111111111111111111111111111111112';
+    process.env['ENCRYPT_PRE_ALPHA_ACK'] = 'I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY';
+    process.env['ENCRYPT_SDK_MODE'] = 'sdk-prealpha';
+    process.env['ENCRYPT_GRPC_ENDPOINT'] = 'localhost:1';
+    process.env['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'] = 'So11111111111111111111111111111111111111112';
+    process.env['ENCRYPT_SDK_DEMO_ACK'] = 'I_UNDERSTAND_ENCRYPT_SDK_PREALPHA_USES_NON_SENSITIVE_DEMO_DATA_ONLY';
+
+    const unauthenticatedResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/sdk-demo/create-input',
+      headers: { 'x-api-key': TEST_API_KEY },
+      payload: {},
+    });
+    expect(unauthenticatedResponse.statusCode).toBe(403);
+
+    const forbiddenResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/sdk-demo/create-input',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/encrypt/sdk-demo/create-input'),
+      payload: { inputs: [{ value: 'not accepted' }] },
+    });
+    expect(forbiddenResponse.statusCode).toBe(400);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/encrypt/sdk-demo/create-input',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/encrypt/sdk-demo/create-input'),
+      payload: { strategyId: 'pusd-sdk-demo-test' },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json<{ data: { productionPrivacyReady: boolean; realEncryption: boolean; demoOnly: boolean } }>().data)
+      .toMatchObject({
+        productionPrivacyReady: false,
+        realEncryption: false,
+        demoOnly: true,
+      });
+
+    const evidenceResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/encrypt/sdk-demo/evidence',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(evidenceResponse.statusCode).toBe(200);
+    expect(evidenceResponse.json<{ data: Array<{ strategyId: string }> }>().data.some(
+      (event) => event.strategyId === 'pusd-sdk-demo-test',
     )).toBe(true);
   });
 

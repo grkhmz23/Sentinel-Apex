@@ -16,6 +16,7 @@ import {
   createCarryVenue,
   createEncryptedStrategyAuditEvent,
   createEncryptedStrategyState,
+  createEncryptSdkDemoEvidence,
   createEncryptStatus,
     createCommand,
     createDashboardSession,
@@ -277,6 +278,7 @@ vi.mock('./lib/runtime-api.server', () => ({
       status: createEncryptStatus(),
       strategyState: createEncryptedStrategyState(),
       auditEvents: [createEncryptedStrategyAuditEvent()],
+      sdkEvidence: [createEncryptSdkDemoEvidence()],
     },
     error: null,
   })),
@@ -495,6 +497,8 @@ describe('ops dashboard pages', () => {
     expect(screen.getAllByText('productionPrivacyReady=false').length).toBeGreaterThan(0);
     expect(screen.getByText('Public / Private Split')).toBeInTheDocument();
     expect(screen.getByText('Ciphertext References')).toBeInTheDocument();
+    expect(screen.getByText('Encrypt SDK Pre-Alpha Demo')).toBeInTheDocument();
+    expect(screen.getByText('Create demo ciphertext input')).toBeInTheDocument();
   });
 
   it('renders treasury action, execution, and venue detail workflows', async () => {

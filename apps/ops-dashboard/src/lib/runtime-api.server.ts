@@ -11,6 +11,7 @@ import type {
   CarryExecutionView,
   CarryVenueView,
   EncryptedStrategyAuditEventView,
+  EncryptSdkDemoEvidenceView,
   EncryptedStrategyStateView,
   EncryptStatusView,
   RebalanceBundleDetailView,
@@ -357,6 +358,10 @@ export async function listEncryptedStrategyAuditEvents(
   limit = 20,
 ): Promise<EncryptedStrategyAuditEventView[]> {
   return fetchEncryptApi<EncryptedStrategyAuditEventView[]>(`/audit${buildSearchParams({ limit })}`);
+}
+
+export async function listEncryptSdkDemoEvidence(limit = 10): Promise<EncryptSdkDemoEvidenceView[]> {
+  return fetchEncryptApi<EncryptSdkDemoEvidenceView[]>(`/sdk-demo/evidence${buildSearchParams({ limit })}`);
 }
 
 export async function listAuditEvents(limit = 20): Promise<AuditEventView[]> {
@@ -945,10 +950,11 @@ export async function loadPusdPageData(): Promise<DashboardPageState<PusdPageDat
 
 export async function loadEncryptPageData(): Promise<DashboardPageState<EncryptPageData>> {
   try {
-    const [status, strategyState, auditEvents] = await Promise.all([
+    const [status, strategyState, auditEvents, sdkEvidence] = await Promise.all([
       getEncryptStatus(),
       getEncryptedStrategyState(),
       listEncryptedStrategyAuditEvents(20),
+      listEncryptSdkDemoEvidence(10),
     ]);
 
     return {
@@ -956,6 +962,7 @@ export async function loadEncryptPageData(): Promise<DashboardPageState<EncryptP
         status,
         strategyState,
         auditEvents,
+        sdkEvidence,
       },
       error: null,
     };

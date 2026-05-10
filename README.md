@@ -67,6 +67,34 @@ The ops dashboard exposes the Encrypt pre-alpha strategy-state surface at `/encr
 
 See `docs/PHASE_ENCRYPT_1_PRIVATE_STRATEGY_STATE.md`.
 
+## Phase Encrypt-2A SDK Pre-Alpha Demo
+
+The optional SDK-backed demo path is disabled by default. It uses
+`@encrypt.xyz/pre-alpha-solana-client` only with fixed, non-sensitive demo inputs.
+
+```bash
+ENCRYPT_ENABLED=true
+ENCRYPT_CLUSTER=devnet
+ENCRYPT_PRE_ALPHA_ACK=I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY
+ENCRYPT_SDK_MODE=sdk-prealpha
+ENCRYPT_SDK_DEMO_ACK=I_UNDERSTAND_ENCRYPT_SDK_PREALPHA_USES_NON_SENSITIVE_DEMO_DATA_ONLY
+ENCRYPT_GRPC_ENDPOINT=pre-alpha-dev-1.encrypt.ika-network.net:443
+ENCRYPT_SOLANA_RPC_URL=https://api.devnet.solana.com
+ENCRYPT_PROGRAM_ID=4ebfzWdKnrnGseuQpezXdG8yCdHqwQ1SSBHD3bWArND8
+ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY=<Encrypt pre-alpha network encryption public key>
+ENCRYPT_SDK_STRICT=false
+```
+
+Additional SDK demo API:
+
+- `POST /api/v1/encrypt/sdk-demo/create-input`
+- `GET /api/v1/encrypt/sdk-demo/evidence`
+
+This proves a controlled Encrypt pre-alpha SDK touchpoint. It does not prove production privacy:
+`productionPrivacyReady=false` and `realEncryption=false` remain explicit.
+
+See `docs/PHASE_ENCRYPT_2A_SDK_PREALPHA_SPIKE.md`.
+
 The current in-repo vault profile is:
 
 - Vault: `Apex USDC Delta-Neutral Carry Vault`

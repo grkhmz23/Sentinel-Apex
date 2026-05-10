@@ -30,6 +30,7 @@ import type {
   RuntimeRecoveryEventView,
   AuditEventView,
   EncryptedStrategyAuditEventView,
+  EncryptSdkDemoEvidenceView,
   EncryptedStrategyStateView,
   EncryptStatusView,
   PusdOperatorIntentView,
@@ -166,6 +167,7 @@ export interface EncryptPageData {
   status: EncryptStatusView;
   strategyState: EncryptedStrategyStateView | null;
   auditEvents: EncryptedStrategyAuditEventView[];
+  sdkEvidence: EncryptSdkDemoEvidenceView[];
 }
 
 export interface CarryPageData {

@@ -24,6 +24,7 @@ import {
 import {
   buildVaultAssetConfig,
   ENCRYPT_PRE_ALPHA_ACK_VALUE,
+  ENCRYPT_SDK_DEMO_ACK_VALUE,
   isSolanaPublicKey,
   type VaultAssetConfig,
 } from '@sentinel-apex/config';
@@ -1173,8 +1174,12 @@ export interface SentinelRuntimeOptions {
 function buildEncryptRuntimeConfig(env: NodeJS.ProcessEnv = process.env): EncryptRuntimeConfig {
   const enabled = env['ENCRYPT_ENABLED'] === 'true' || env['ENCRYPT_ENABLED'] === '1';
   const cluster = (env['ENCRYPT_CLUSTER'] ?? 'devnet') as EncryptRuntimeConfig['cluster'];
+  const sdkMode = (env['ENCRYPT_SDK_MODE'] ?? 'adapter') as EncryptRuntimeConfig['sdkMode'];
   if (!['devnet', 'testnet', 'mainnet-beta'].includes(cluster)) {
     throw new Error('ENCRYPT_CLUSTER must be devnet, testnet, or mainnet-beta.');
+  }
+  if (!['adapter', 'sdk-prealpha'].includes(sdkMode)) {
+    throw new Error('ENCRYPT_SDK_MODE must be adapter or sdk-prealpha.');
   }
   if (!enabled) {
     return {
@@ -1184,6 +1189,12 @@ function buildEncryptRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Encryp
       configPda: env['ENCRYPT_CONFIG_PDA'] ?? null,
       networkEncryptionKey: env['ENCRYPT_NETWORK_ENCRYPTION_KEY'] ?? null,
       preAlphaAck: false,
+      sdkMode,
+      grpcEndpoint: env['ENCRYPT_GRPC_ENDPOINT'] ?? null,
+      solanaRpcUrl: env['ENCRYPT_SOLANA_RPC_URL'] ?? null,
+      networkEncryptionPublicKey: env['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'] ?? null,
+      sdkDemoAck: false,
+      sdkStrict: env['ENCRYPT_SDK_STRICT'] === 'true' || env['ENCRYPT_SDK_STRICT'] === '1',
     };
   }
   if (env['ENCRYPT_PRE_ALPHA_ACK'] !== ENCRYPT_PRE_ALPHA_ACK_VALUE) {
@@ -1197,6 +1208,22 @@ function buildEncryptRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Encryp
       throw new Error(`${key} must be a valid Solana public key when provided.`);
     }
   }
+  if (sdkMode === 'sdk-prealpha') {
+    if (env['ENCRYPT_SDK_DEMO_ACK'] !== ENCRYPT_SDK_DEMO_ACK_VALUE) {
+      throw new Error(`ENCRYPT_SDK_DEMO_ACK must be exactly "${ENCRYPT_SDK_DEMO_ACK_VALUE}".`);
+    }
+    if (env['ENCRYPT_GRPC_ENDPOINT'] === undefined || env['ENCRYPT_GRPC_ENDPOINT'] === '') {
+      throw new Error('ENCRYPT_GRPC_ENDPOINT is required when ENCRYPT_SDK_MODE=sdk-prealpha.');
+    }
+    if (
+      env['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'] === undefined ||
+      !isSolanaPublicKey(env['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'])
+    ) {
+      throw new Error(
+        'ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY is required and must be a valid Solana public key when ENCRYPT_SDK_MODE=sdk-prealpha.',
+      );
+    }
+  }
   return {
     enabled: true,
     cluster,
@@ -1204,6 +1231,12 @@ function buildEncryptRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Encryp
     configPda: env['ENCRYPT_CONFIG_PDA'] ?? null,
     networkEncryptionKey: env['ENCRYPT_NETWORK_ENCRYPTION_KEY'] ?? null,
     preAlphaAck: true,
+    sdkMode,
+    grpcEndpoint: env['ENCRYPT_GRPC_ENDPOINT'] ?? null,
+    solanaRpcUrl: env['ENCRYPT_SOLANA_RPC_URL'] ?? null,
+    networkEncryptionPublicKey: env['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'] ?? null,
+    sdkDemoAck: env['ENCRYPT_SDK_DEMO_ACK'] === ENCRYPT_SDK_DEMO_ACK_VALUE,
+    sdkStrict: env['ENCRYPT_SDK_STRICT'] === 'true' || env['ENCRYPT_SDK_STRICT'] === '1',
   };
 }
 
@@ -3442,8 +3475,8 @@ export class SentinelRuntime {
     treasurySummary: TreasurySummaryView;
     riskStatus: string;
   }): Promise<void> {
-    const service = new EncryptedStrategyService();
-    const result = service.createEncryptedStrategyState({
+    const service = new EncryptedStrategyService(this.options.encryptConfig);
+    const result = await service.createEncryptedStrategyState({
       strategyId: 'pusd-treasury-vault-prealpha',
       vaultAssetSymbol: 'PUSD',
       vaultAssetMint: input.vaultAssetMint,
@@ -3494,9 +3527,12 @@ export class SentinelRuntime {
       auditEvidence: {
         sourceRunId: input.sourceRunId,
         adapterMode: result.capabilities.adapterMode,
+        sdkMode: this.options.encryptConfig.sdkMode,
+        sdkEvidence: result.sdkEvidence ?? null,
         productionPrivacyReady: false,
         realEncryption: false,
       },
+      adapterMode: result.capabilities.adapterMode,
       actorId: 'sentinel-runtime',
       lastUpdateSlot: null,
     });
@@ -3508,6 +3544,8 @@ export class SentinelRuntime {
       evidence: {
         strategyCommitment: state.strategyCommitment,
         ciphertextStatus: state.ciphertextStatus,
+        sdkMode: this.options.encryptConfig.sdkMode,
+        sdkEvidence: result.sdkEvidence ?? null,
         preAlphaMode: true,
         productionPrivacyReady: false,
         sourceRunId: input.sourceRunId,

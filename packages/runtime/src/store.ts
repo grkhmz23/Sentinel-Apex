@@ -12946,6 +12946,7 @@ export class RuntimeStore {
     publicRiskStatus: string;
     publicSummary: Record<string, unknown>;
     auditEvidence: Record<string, unknown>;
+    adapterMode?: EncryptedStrategyStateView['adapterMode'];
     actorId: string | null;
     lastUpdateSlot: string | null;
   }): Promise<EncryptedStrategyStateView> {
@@ -12963,7 +12964,7 @@ export class RuntimeStore {
         preAlphaMode: true,
         productionPrivacyReady: false,
         realEncryption: false,
-        adapterMode: 'pre-alpha-mock-adapter',
+        adapterMode: input.adapterMode ?? 'pre-alpha-mock-adapter',
         strategyCommitment: input.strategyCommitment,
         ciphertextRefs: input.ciphertextRefs,
         ciphertextStatus: input.ciphertextStatus,
@@ -12985,6 +12986,7 @@ export class RuntimeStore {
           publicRiskStatus: input.publicRiskStatus,
           publicSummary: input.publicSummary,
           auditEvidence: input.auditEvidence,
+          adapterMode: input.adapterMode ?? 'pre-alpha-mock-adapter',
           updatedBy: input.actorId,
           lastUpdateSlot: input.lastUpdateSlot,
           updatedAt: now,

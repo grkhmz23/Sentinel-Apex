@@ -42,6 +42,8 @@ export const ExecutionMode = {
 
 export const ENCRYPT_PRE_ALPHA_ACK_VALUE =
   'I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY';
+export const ENCRYPT_SDK_DEMO_ACK_VALUE =
+  'I_UNDERSTAND_ENCRYPT_SDK_PREALPHA_USES_NON_SENSITIVE_DEMO_DATA_ONLY';
 
 const assetDecimals = z.coerce.number().int().min(0).max(18).optional();
 
@@ -122,6 +124,16 @@ const envSchema = z
       message: 'ENCRYPT_NETWORK_ENCRYPTION_KEY must be a valid Solana public key',
     }).optional(),
     ENCRYPT_PRE_ALPHA_ACK: z.string().optional(),
+    ENCRYPT_SDK_MODE: z.enum(['adapter', 'sdk-prealpha']).default('adapter'),
+    ENCRYPT_GRPC_ENDPOINT: z.string().min(1).optional(),
+    ENCRYPT_SOLANA_RPC_URL: z.string().url({
+      message: 'ENCRYPT_SOLANA_RPC_URL must be a valid URL',
+    }).optional(),
+    ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY: z.string().refine(isSolanaPublicKey, {
+      message: 'ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY must be a valid Solana public key',
+    }).optional(),
+    ENCRYPT_SDK_DEMO_ACK: z.string().optional(),
+    ENCRYPT_SDK_STRICT: envBoolean,
 
     // ── Solana / on-chain ────────────────────────────────────────────────────
     SOLANA_RPC_ENDPOINT: z.string().optional(),
@@ -196,6 +208,32 @@ const envSchema = z
           path: ['ENCRYPT_PROGRAM_ID'],
           message: 'ENCRYPT_PROGRAM_ID is required when ENCRYPT_ENABLED=true',
         });
+      }
+      if (data.ENCRYPT_SDK_MODE === 'sdk-prealpha') {
+        if (data.ENCRYPT_SDK_DEMO_ACK !== ENCRYPT_SDK_DEMO_ACK_VALUE) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['ENCRYPT_SDK_DEMO_ACK'],
+            message: `ENCRYPT_SDK_DEMO_ACK must be exactly "${ENCRYPT_SDK_DEMO_ACK_VALUE}" when ENCRYPT_SDK_MODE=sdk-prealpha`,
+          });
+        }
+        if (data.ENCRYPT_GRPC_ENDPOINT === undefined || data.ENCRYPT_GRPC_ENDPOINT === '') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['ENCRYPT_GRPC_ENDPOINT'],
+            message: 'ENCRYPT_GRPC_ENDPOINT is required when ENCRYPT_SDK_MODE=sdk-prealpha',
+          });
+        }
+        if (
+          data.ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY === undefined ||
+          data.ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY === ''
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY'],
+            message: 'ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY is required when ENCRYPT_SDK_MODE=sdk-prealpha',
+          });
+        }
       }
     }
   });

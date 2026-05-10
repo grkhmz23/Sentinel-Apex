@@ -14,6 +14,7 @@
     "dev:rebuild-projections": "tsx src/scripts/rebuild-projections.ts"
   },
   "dependencies": {
+    "@encrypt.xyz/pre-alpha-solana-client": "^0.1.1",
     "@sentinel-apex/allocator": "workspace:*",
     "@sentinel-apex/backtest": "workspace:*",
     "@sentinel-apex/carry": "workspace:*",

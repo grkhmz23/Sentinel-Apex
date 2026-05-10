@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { createConfig, ENCRYPT_PRE_ALPHA_ACK_VALUE } from '../env.js';
+import { createConfig, ENCRYPT_PRE_ALPHA_ACK_VALUE, ENCRYPT_SDK_DEMO_ACK_VALUE } from '../env.js';
 import { ConfigValidationError } from '../errors.js';
 
 // =============================================================================
@@ -294,6 +294,7 @@ describe('config/env — Encrypt pre-alpha validation', () => {
     const cfg = createConfig(BASE_TEST_ENV);
     expect(cfg.ENCRYPT_ENABLED).toBe(false);
     expect(cfg.ENCRYPT_CLUSTER).toBe('devnet');
+    expect(cfg.ENCRYPT_SDK_MODE).toBe('adapter');
   });
 
   it('fails closed when Encrypt is enabled without the pre-alpha acknowledgement', () => {
@@ -331,5 +332,55 @@ describe('config/env — Encrypt pre-alpha validation', () => {
     expect(cfg.ENCRYPT_ENABLED).toBe(true);
     expect(cfg.ENCRYPT_CLUSTER).toBe('devnet');
     expect(cfg.ENCRYPT_PROGRAM_ID).toBe(validPublicKey);
+    expect(cfg.ENCRYPT_SDK_MODE).toBe('adapter');
+  });
+
+  it('fails closed when sdk-prealpha mode is enabled without the demo acknowledgement', () => {
+    expect(() =>
+      createConfig({
+        ...BASE_TEST_ENV,
+        ENCRYPT_ENABLED: 'true',
+        ENCRYPT_PRE_ALPHA_ACK: ENCRYPT_PRE_ALPHA_ACK_VALUE,
+        ENCRYPT_PROGRAM_ID: validPublicKey,
+        ENCRYPT_SDK_MODE: 'sdk-prealpha',
+        ENCRYPT_GRPC_ENDPOINT: 'pre-alpha-dev-1.encrypt.ika-network.net:443',
+        ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY: validPublicKey,
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it('rejects invalid sdk-prealpha public keys', () => {
+    expect(() =>
+      createConfig({
+        ...BASE_TEST_ENV,
+        ENCRYPT_ENABLED: 'true',
+        ENCRYPT_PRE_ALPHA_ACK: ENCRYPT_PRE_ALPHA_ACK_VALUE,
+        ENCRYPT_PROGRAM_ID: 'not-a-solana-public-key',
+        ENCRYPT_SDK_MODE: 'sdk-prealpha',
+        ENCRYPT_SDK_DEMO_ACK: ENCRYPT_SDK_DEMO_ACK_VALUE,
+        ENCRYPT_GRPC_ENDPOINT: 'pre-alpha-dev-1.encrypt.ika-network.net:443',
+        ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY: validPublicKey,
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it('accepts valid sdk-prealpha demo configuration', () => {
+    const cfg = createConfig({
+      ...BASE_TEST_ENV,
+      ENCRYPT_ENABLED: 'true',
+      ENCRYPT_CLUSTER: 'devnet',
+      ENCRYPT_PROGRAM_ID: validPublicKey,
+      ENCRYPT_PRE_ALPHA_ACK: ENCRYPT_PRE_ALPHA_ACK_VALUE,
+      ENCRYPT_SDK_MODE: 'sdk-prealpha',
+      ENCRYPT_GRPC_ENDPOINT: 'pre-alpha-dev-1.encrypt.ika-network.net:443',
+      ENCRYPT_SOLANA_RPC_URL: 'https://api.devnet.solana.com',
+      ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY: validPublicKey,
+      ENCRYPT_SDK_DEMO_ACK: ENCRYPT_SDK_DEMO_ACK_VALUE,
+    });
+
+    expect(cfg.ENCRYPT_SDK_MODE).toBe('sdk-prealpha');
+    expect(cfg.ENCRYPT_GRPC_ENDPOINT).toBe('pre-alpha-dev-1.encrypt.ika-network.net:443');
+    expect(cfg.ENCRYPT_SOLANA_RPC_URL).toBe('https://api.devnet.solana.com');
+    expect(cfg.ENCRYPT_SDK_STRICT).toBe(false);
   });
 });

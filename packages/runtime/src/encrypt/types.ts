@@ -4,9 +4,15 @@ export const ENCRYPT_FORBIDDEN_FIELDS = [
   'seedPhrase',
   'mnemonic',
   'walletJson',
+  'keypair',
+  'signer',
+  'rawStrategy',
+  'productionStrategy',
+  'inputs',
 ] as const;
 
 export type EncryptCluster = 'devnet' | 'testnet' | 'mainnet-beta';
+export type EncryptSdkMode = 'adapter' | 'sdk-prealpha';
 export type EncryptCiphertextStatus =
   | 'not_created'
   | 'pending'
@@ -22,7 +28,7 @@ export interface EncryptCapabilities {
   preAlphaMode: true;
   productionPrivacyReady: false;
   realEncryption: false;
-  adapterMode: 'pre-alpha-mock-adapter';
+  adapterMode: 'pre-alpha-mock-adapter' | 'sdk-prealpha';
 }
 
 export interface EncryptRuntimeConfig {
@@ -32,6 +38,12 @@ export interface EncryptRuntimeConfig {
   configPda: string | null;
   networkEncryptionKey: string | null;
   preAlphaAck: boolean;
+  sdkMode: EncryptSdkMode;
+  grpcEndpoint: string | null;
+  solanaRpcUrl: string | null;
+  networkEncryptionPublicKey: string | null;
+  sdkDemoAck: boolean;
+  sdkStrict: boolean;
 }
 
 export interface EncryptPrivateStrategyFields {
@@ -73,12 +85,53 @@ export interface EncryptedStrategyAdapterResult {
   ciphertextStatus: EncryptCiphertextStatus;
   publicSummary: Record<string, unknown>;
   capabilities: EncryptCapabilities;
+  sdkEvidence?: EncryptSdkDemoEvidence;
 }
 
 export interface RevealRequestInput {
   strategyStateId: string;
   requestedBy: string;
   reason: string;
+}
+
+export interface EncryptSdkDemoInput {
+  strategyId: string;
+  demoOnly: true;
+  nonSensitive: true;
+  preAlphaPlaintextRisk: true;
+  fields: {
+    allocationWeightBps: 2500;
+    rebalanceThresholdBps: 100;
+    maxIntentSizePusd: 1000;
+    riskLimitBps: 500;
+  };
+}
+
+export interface EncryptSdkDemoEvidence {
+  strategyId: string;
+  sdkMode: 'sdk-prealpha';
+  endpoint: string | null;
+  endpointHost: string | null;
+  chain: 'Solana';
+  programId: string | null;
+  success: boolean;
+  sdkAvailable: boolean;
+  sdkConfigured: boolean;
+  ciphertextIdentifiers: string[];
+  errorCode: string | null;
+  errorMessage: string | null;
+  requestedAt: string;
+  preAlphaMode: true;
+  productionPrivacyReady: false;
+  realEncryption: false;
+  demoOnly: true;
+  nonSensitive: true;
+  preAlphaPlaintextRisk: true;
+}
+
+export interface CreateEncryptSdkDemoInput {
+  strategyId?: string;
+  actorId: string;
 }
 
 export function rejectForbiddenEncryptFields(body: unknown): void {

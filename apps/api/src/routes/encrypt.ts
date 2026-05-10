@@ -1,7 +1,8 @@
-import { ENCRYPT_PRE_ALPHA_ACK_VALUE } from '@sentinel-apex/config';
+import { ENCRYPT_PRE_ALPHA_ACK_VALUE, ENCRYPT_SDK_DEMO_ACK_VALUE } from '@sentinel-apex/config';
 import type {
   CreateEncryptedStrategyStateRequest,
   CreateEncryptRevealRequestInput,
+  CreateEncryptSdkDemoRequest,
   RuntimeControlPlane,
 } from '@sentinel-apex/runtime';
 
@@ -10,7 +11,18 @@ import { getRequiredOperator, requireOperatorRole } from '../middleware/operator
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
-const forbiddenFields = ['privateKey', 'secretKey', 'seedPhrase', 'mnemonic', 'walletJson'] as const;
+const forbiddenFields = [
+  'privateKey',
+  'secretKey',
+  'seedPhrase',
+  'mnemonic',
+  'walletJson',
+  'keypair',
+  'signer',
+  'rawStrategy',
+  'productionStrategy',
+  'inputs',
+] as const;
 
 function assertObjectBody(body: unknown): Record<string, unknown> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -57,6 +69,21 @@ function validateRevealBody(body: unknown): CreateEncryptRevealRequestInput {
   };
 }
 
+function validateSdkDemoBody(body: unknown): CreateEncryptSdkDemoRequest {
+  const record = assertObjectBody(body);
+  if (record['demoValues'] !== undefined || record['privateFields'] !== undefined) {
+    throw new Error('SDK demo endpoint does not accept caller-supplied plaintext strategy values.');
+  }
+  if (process.env['ENCRYPT_SDK_DEMO_ACK'] !== ENCRYPT_SDK_DEMO_ACK_VALUE) {
+    throw new Error('ENCRYPT_SDK_DEMO_ACK is required before creating Encrypt SDK pre-alpha demo inputs.');
+  }
+  return {
+    ...(typeof record['strategyId'] === 'string' && record['strategyId'].trim() !== ''
+      ? { strategyId: record['strategyId'] }
+      : {}),
+  };
+}
+
 async function handleBadRequest(reply: FastifyReply, request: FastifyRequest, error: unknown): Promise<FastifyReply> {
   return reply.status(400).send({
     error: {
@@ -87,6 +114,19 @@ export async function encryptRoutes(
     async (request, reply) => {
       const limit = Math.min(Number.parseInt(request.query.limit ?? '50', 10), 200);
       const events = await controlPlane.listEncryptedStrategyAuditEvents(limit);
+      return reply.status(200).send({
+        data: events,
+        meta: { correlationId: request.id, count: events.length, limit },
+      });
+    },
+  );
+
+  app.get<{ Querystring: { limit?: string } }>(
+    '/api/v1/encrypt/sdk-demo/evidence',
+    { preHandler: authenticate },
+    async (request, reply) => {
+      const limit = Math.min(Number.parseInt(request.query.limit ?? '25', 10), 100);
+      const events = await controlPlane.listEncryptSdkDemoEvidence(limit);
       return reply.status(200).send({
         data: events,
         meta: { correlationId: request.id, count: events.length, limit },
@@ -128,6 +168,19 @@ export async function encryptRoutes(
       const body = validateRevealBody(request.body);
       const reveal = await controlPlane.createEncryptRevealRequest(operator.operatorId, body);
       return reply.status(201).send({ data: reveal, meta: { correlationId: request.id } });
+    } catch (error) {
+      return handleBadRequest(reply, request, error);
+    }
+  });
+
+  app.post('/api/v1/encrypt/sdk-demo/create-input', {
+    preHandler: [authenticate, requireOperatorRole('operator')],
+  }, async (request, reply) => {
+    try {
+      const operator = getRequiredOperator(request);
+      const body = validateSdkDemoBody(request.body);
+      const evidence = await controlPlane.createEncryptSdkDemoInput(operator.operatorId, body);
+      return reply.status(201).send({ data: evidence, meta: { correlationId: request.id } });
     } catch (error) {
       return handleBadRequest(reply, request, error);
     }

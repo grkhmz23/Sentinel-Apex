@@ -1455,7 +1455,7 @@ export interface EncryptCapabilitiesView {
   preAlphaMode: true;
   productionPrivacyReady: false;
   realEncryption: false;
-  adapterMode: 'pre-alpha-mock-adapter';
+  adapterMode: 'pre-alpha-mock-adapter' | 'sdk-prealpha';
 }
 
 export interface EncryptedStrategyStateView {
@@ -1506,11 +1506,17 @@ export interface EncryptedStrategyAuditEventView {
 export interface EncryptStatusView {
   enabled: boolean;
   cluster: string;
-  phase: 'Encrypt-1';
+  phase: 'Encrypt-1' | 'Encrypt-2A';
   title: 'Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha';
   preAlphaMode: true;
   productionPrivacyReady: false;
   realEncryption: false;
+  sdkMode: 'adapter' | 'sdk-prealpha';
+  sdkAvailable: boolean;
+  sdkConfigured: boolean;
+  sdkLastCheck: string | null;
+  grpcEndpointHost: string | null;
+  programId: string | null;
   capabilities: EncryptCapabilitiesView;
   latestState: EncryptedStrategyStateView | null;
   safety: {
@@ -1530,6 +1536,32 @@ export interface CreateEncryptedStrategyStateRequest {
 export interface CreateEncryptRevealRequestInput {
   strategyStateId: string;
   reason: string;
+}
+
+export interface EncryptSdkDemoEvidenceView {
+  strategyId: string;
+  sdkMode: 'sdk-prealpha';
+  endpoint: string | null;
+  endpointHost: string | null;
+  chain: 'Solana';
+  programId: string | null;
+  success: boolean;
+  sdkAvailable: boolean;
+  sdkConfigured: boolean;
+  ciphertextIdentifiers: string[];
+  errorCode: string | null;
+  errorMessage: string | null;
+  requestedAt: string;
+  preAlphaMode: true;
+  productionPrivacyReady: false;
+  realEncryption: false;
+  demoOnly: true;
+  nonSensitive: true;
+  preAlphaPlaintextRisk: true;
+}
+
+export interface CreateEncryptSdkDemoRequest {
+  strategyId?: string;
 }
 
 export interface CreatePusdOperatorIntentInput {
@@ -2767,6 +2799,11 @@ export interface RuntimeReadApi {
     input: CreateEncryptRevealRequestInput,
   ): Promise<EncryptedStrategyRevealRequestView>;
   listEncryptedStrategyAuditEvents(limit?: number): Promise<EncryptedStrategyAuditEventView[]>;
+  createEncryptSdkDemoInput(
+    actorId: string,
+    input: CreateEncryptSdkDemoRequest,
+  ): Promise<EncryptSdkDemoEvidenceView>;
+  listEncryptSdkDemoEvidence(limit?: number): Promise<EncryptSdkDemoEvidenceView[]>;
   getSubmissionDossier(): Promise<SubmissionDossierView>;
   listSubmissionEvidence(): Promise<SubmissionEvidenceRecordView[]>;
   getSubmissionExportBundle(): Promise<SubmissionExportBundleView>;

@@ -17,6 +17,7 @@ import type {
   ConnectorReadinessEvidenceView,
   EncryptedStrategyAuditEventView,
   EncryptedStrategyStateView,
+  EncryptSdkDemoEvidenceView,
   EncryptStatusView,
   RebalanceBundleDetailView,
   RebalanceBundleEscalationEventView,
@@ -1931,11 +1932,17 @@ export function createEncryptStatus(overrides: Partial<EncryptStatusView> = {}):
   return {
     enabled: true,
     cluster: 'devnet',
-    phase: 'Encrypt-1',
+    phase: 'Encrypt-2A',
     title: 'Sentinel Apex Private PUSD Treasury Vault — PUSD + Encrypt Pre-Alpha',
     preAlphaMode: true,
     productionPrivacyReady: false,
     realEncryption: false,
+    sdkMode: 'adapter',
+    sdkAvailable: true,
+    sdkConfigured: false,
+    sdkLastCheck: '2026-03-20T12:05:00.000Z',
+    grpcEndpointHost: null,
+    programId: 'So11111111111111111111111111111111111111112',
     capabilities: {
       supportsCiphertextAccounts: true,
       supportsGraphExecution: false,
@@ -1952,6 +1959,33 @@ export function createEncryptStatus(overrides: Partial<EncryptStatusView> = {}):
       sendTransactionEnabled: false,
       liveExecutionEnabled: false,
     },
+    ...overrides,
+  };
+}
+
+export function createEncryptSdkDemoEvidence(
+  overrides: Partial<EncryptSdkDemoEvidenceView> = {},
+): EncryptSdkDemoEvidenceView {
+  return {
+    strategyId: 'pusd-treasury-vault-sdk-prealpha-demo',
+    sdkMode: 'sdk-prealpha',
+    endpoint: 'pre-alpha-dev-1.encrypt.ika-network.net:443',
+    endpointHost: 'pre-alpha-dev-1.encrypt.ika-network.net',
+    chain: 'Solana',
+    programId: 'So11111111111111111111111111111111111111112',
+    success: true,
+    sdkAvailable: true,
+    sdkConfigured: true,
+    ciphertextIdentifiers: ['ciphertext-demo-1'],
+    errorCode: null,
+    errorMessage: null,
+    requestedAt: '2026-03-20T12:06:00.000Z',
+    preAlphaMode: true,
+    productionPrivacyReady: false,
+    realEncryption: false,
+    demoOnly: true,
+    nonSensitive: true,
+    preAlphaPlaintextRisk: true,
     ...overrides,
   };
 }
