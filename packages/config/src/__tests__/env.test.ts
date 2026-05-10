@@ -248,3 +248,41 @@ describe('config/env — production environment', () => {
     expect(cfg.DB_SSL).toBe(true);
   });
 });
+
+describe('config/env — PUSD base asset validation', () => {
+  const validMint = 'So11111111111111111111111111111111111111112';
+
+  it('fails closed when PUSD is selected without PUSD_MINT', () => {
+    expect(() =>
+      createConfig({
+        ...BASE_TEST_ENV,
+        VAULT_BASE_ASSET: 'PUSD',
+        PUSD_DECIMALS: '6',
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it('rejects an invalid PUSD mint', () => {
+    expect(() =>
+      createConfig({
+        ...BASE_TEST_ENV,
+        VAULT_BASE_ASSET: 'PUSD',
+        PUSD_MINT: 'not-a-solana-public-key',
+        PUSD_DECIMALS: '6',
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it('accepts valid PUSD configuration', () => {
+    const cfg = createConfig({
+      ...BASE_TEST_ENV,
+      VAULT_BASE_ASSET: 'PUSD',
+      PUSD_MINT: validMint,
+      PUSD_DECIMALS: '6',
+    });
+
+    expect(cfg.VAULT_BASE_ASSET).toBe('PUSD');
+    expect(cfg.PUSD_MINT).toBe(validMint);
+    expect(cfg.PUSD_DECIMALS).toBe(6);
+  });
+});

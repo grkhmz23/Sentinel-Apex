@@ -16,11 +16,8 @@ import Decimal from 'decimal.js';
 
 import { createLogger, type Logger } from '@sentinel-apex/observability';
 
-import {
-  captureCanonicalMarketIdentity,
-  createCanonicalMarketIdentity,
-  type CanonicalMarketIdentity,
-} from '../interfaces/market-identity.js';
+import { createCanonicalMarketIdentity } from '../interfaces/market-identity.js';
+
 import type { CarryVenueCapabilities } from '../interfaces/carry-venue-adapter.js';
 import type {
   VenueAdapter,
@@ -91,7 +88,7 @@ interface InternalPosition {
 
 export class JupiterPerpsAdapter implements VenueAdapter {
   readonly venueId: string;
-  readonly venueType: 'dex' = 'dex';
+  readonly venueType = 'dex' as const;
 
   private readonly config: JupiterPerpsAdapterConfig;
   private readonly logger: Logger;
@@ -470,8 +467,8 @@ export class JupiterPerpsAdapter implements VenueAdapter {
       healthState: status.healthy ? 'healthy' : 'degraded',
       degradedReason: status.healthy ? null : (status.message ?? null),
       metadata: {
-        network: this.config.network as string,
-        jupiterApiEndpoint: this.config.jupiterApiEndpoint as string,
+        network: this.config.network,
+        jupiterApiEndpoint: this.config.jupiterApiEndpoint,
       },
     };
   }
@@ -846,32 +843,13 @@ export class JupiterPerpsAdapter implements VenueAdapter {
     fees: string | null;
     executionReference: string | null;
   }> {
-    // In real implementation, this would:
-    // 1. Build the Jupiter Perps transaction
-    // 2. Sign with the private key
-    // 3. Submit to Solana
-    // 4. Wait for confirmation
-    // 5. Return the tx signature as executionReference
-
-    // For now, return mock success
-    const txSignature = `mock_tx_${Date.now()}`;
-    const fillPrice = await this._getMarkPrice(params.asset);
-    const sizeD = new Decimal(params.size);
-    const priceD = new Decimal(fillPrice);
-    const notional = sizeD.times(priceD);
-    const fee = notional.times('0.001'); // 0.1% taker fee
-
-    return {
-      venueOrderId: `${this.venueId}-${Date.now()}`,
-      status: 'filled',
-      filledSize: params.size,
-      averageFillPrice: fillPrice,
-      fees: fee.toFixed(),
-      executionReference: txSignature,
-    };
+    void params;
+    throw new Error(
+      'JupiterPerpsAdapter: live transaction submission is not implemented; refusing to return a fake execution reference.',
+    );
   }
 
-  private async _fetchOrderStatus(venueOrderId: string): Promise<PlaceOrderResult | null> {
+  private async _fetchOrderStatus(_venueOrderId: string): Promise<PlaceOrderResult | null> {
     // Jupiter uses IOC orders, so we check if the tx was confirmed
     // In real implementation, query Solana for tx status
     return null;

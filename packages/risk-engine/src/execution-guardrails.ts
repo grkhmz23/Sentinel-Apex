@@ -13,6 +13,7 @@
  */
 
 import { Decimal } from 'decimal.js';
+
 import { createLogger } from '@sentinel-apex/observability';
 import { Result, Ok, Err } from '@sentinel-apex/shared';
 
@@ -170,6 +171,15 @@ export class ExecutionGuardrailEngine {
     input: Omit<GuardrailConfig, 'id' | 'createdAt' | 'updatedAt'>
   ): GuardrailConfig {
     const now = new Date();
+    for (const [configId, existingConfig] of this.configs.entries()) {
+      if (
+        existingConfig.scopeType === input.scopeType &&
+        existingConfig.scopeId === input.scopeId
+      ) {
+        this.configs.delete(configId);
+      }
+    }
+
     const config: GuardrailConfig = {
       ...input,
       id: `guardrail_${input.scopeType}_${input.scopeId}_${Date.now()}`,
@@ -244,7 +254,7 @@ export class ExecutionGuardrailEngine {
           input.notionalUsd.gt(config.maxSingleActionNotionalUsd)) {
         violations.push({
           type: 'max_notional',
-          message: `Action notional ${input.notionalUsd} exceeds maximum ${config.maxSingleActionNotionalUsd}`,
+          message: `Action notional ${input.notionalUsd.toString()} exceeds maximum ${config.maxSingleActionNotionalUsd.toString()}`,
           blocked: true,
           details: {
             attempted: input.notionalUsd.toString(),
@@ -257,7 +267,7 @@ export class ExecutionGuardrailEngine {
           input.notionalUsd.lt(config.minActionNotionalUsd)) {
         violations.push({
           type: 'min_notional',
-          message: `Action notional ${input.notionalUsd} below minimum ${config.minActionNotionalUsd}`,
+          message: `Action notional ${input.notionalUsd.toString()} below minimum ${config.minActionNotionalUsd.toString()}`,
           blocked: true,
           details: {
             attempted: input.notionalUsd.toString(),
@@ -273,7 +283,7 @@ export class ExecutionGuardrailEngine {
         if (projectedDaily.gt(config.maxDailyNotionalUsd)) {
           violations.push({
             type: 'max_notional',
-            message: `Daily notional would exceed limit: ${projectedDaily} > ${config.maxDailyNotionalUsd}`,
+            message: `Daily notional would exceed limit: ${projectedDaily.toString()} > ${config.maxDailyNotionalUsd.toString()}`,
             blocked: true,
             details: {
               currentDaily: config.dailyNotionalUsd.toString(),
@@ -433,7 +443,7 @@ export class ExecutionGuardrailEngine {
       return Ok({ action: 'continue' });
     }
     
-    const reason = `Partial fill ${fillPct.toFixed(2)}% below minimum ${config.minFillPctRequired}%`;
+    const reason = `Partial fill ${fillPct.toFixed(2)}% below minimum ${config.minFillPctRequired.toString()}%`;
     
     switch (config.partialFillAction) {
       case 'block':

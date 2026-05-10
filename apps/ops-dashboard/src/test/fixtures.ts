@@ -3,6 +3,7 @@ import type {
   AllocatorRunView,
   AllocatorSleeveTargetView,
   AllocatorSummaryView,
+  AuditEventView,
   CarryActionDetailView,
   CarryActionView,
   CarryStrategyProfileView,
@@ -35,6 +36,9 @@ import type {
   RuntimeMismatchView,
   RuntimeOverviewView,
   InternalDerivativeSnapshotView,
+  PusdOperatorIntentView,
+  PusdVaultSnapshotView,
+  PusdVaultView,
   RuntimeReconciliationFindingView,
   RuntimeReconciliationRunView,
   RuntimeReconciliationSummaryView,
@@ -1815,6 +1819,87 @@ export function createTreasurySummary(
     concentrationLimitBreached: false,
     evaluatedAt: '2026-03-20T12:01:00.000Z',
     updatedAt: '2026-03-20T12:01:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createPusdVaultSnapshot(
+  overrides: Partial<PusdVaultSnapshotView> = {},
+): PusdVaultSnapshotView {
+  return {
+    snapshotId: 'pusd-snapshot-1',
+    sourceRunId: 'run-1',
+    baseAssetSymbol: 'PUSD',
+    baseAssetMint: 'So11111111111111111111111111111111111111112',
+    baseAssetDecimals: 6,
+    vaultOwnerAddress: null,
+    balanceRaw: '100000000',
+    balanceAmount: '100.000000',
+    navAmount: '100.000000',
+    treasuryState: { simulated: true },
+    riskStatus: 'normal',
+    readStatus: 'ok',
+    readError: null,
+    capturedAt: '2026-03-20T12:02:00.000Z',
+    createdAt: '2026-03-20T12:02:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createPusdOperatorIntent(
+  overrides: Partial<PusdOperatorIntentView> = {},
+): PusdOperatorIntentView {
+  return {
+    intentId: 'pusd-intent-1',
+    intentType: 'rebalance',
+    asset: 'PUSD',
+    amount: '25',
+    status: 'requested',
+    requestedBy: 'ops-user',
+    reason: 'test rebalance',
+    payload: { liveExecutionDisabled: true },
+    createdAt: '2026-03-20T12:03:00.000Z',
+    updatedAt: '2026-03-20T12:03:00.000Z',
+    ...overrides,
+  };
+}
+
+export function createPusdVault(
+  overrides: Partial<PusdVaultView> = {},
+): PusdVaultView {
+  const balance = createPusdVaultSnapshot();
+  return {
+    phase: 'PUSD-1',
+    title: 'Sentinel Apex Private PUSD Treasury Vault — Phase PUSD-1',
+    baseAsset: 'PUSD',
+    baseAssetMint: balance.baseAssetMint,
+    baseAssetDecimals: 6,
+    vaultOwnerAddress: null,
+    runtimeMode: 'dry-run',
+    liveExecutionEnabled: false,
+    balance,
+    latestTreasuryState: createTreasurySummary(),
+    latestIntents: [createPusdOperatorIntent()],
+    safety: {
+      signingEnabled: false,
+      sendTransactionEnabled: false,
+      liveExecutionEnabled: false,
+      simulationOnly: true,
+    },
+    ...overrides,
+  };
+}
+
+export function createAuditEvent(overrides: Partial<AuditEventView> = {}): AuditEventView {
+  return {
+    eventId: 'event-pusd-1',
+    eventType: 'pusd.vault_snapshot.captured',
+    occurredAt: '2026-03-20T12:04:00.000Z',
+    actorType: 'system',
+    actorId: 'sentinel-runtime',
+    sleeveId: 'treasury',
+    correlationId: 'run-1',
+    data: { liveExecutionDisabled: true },
     ...overrides,
   };
 }

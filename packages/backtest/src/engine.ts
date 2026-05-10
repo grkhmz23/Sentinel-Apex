@@ -3,7 +3,12 @@
 // =============================================================================
 
 import { Decimal } from 'decimal.js';
+
 import { createLogger } from '@sentinel-apex/observability';
+
+import { generateMarketData, calculateFundingPayment } from './market-data.js';
+import { createId } from './utils.js';
+
 import type {
   BacktestConfig,
   BacktestResults,
@@ -12,11 +17,8 @@ import type {
   BacktestPosition,
   BacktestTrade,
   MarketDataPoint,
-  BacktestStatus,
   BacktestValidationResult,
 } from './types.js';
-import { generateMarketData, calculateFundingPayment } from './market-data.js';
-import { createId } from './utils.js';
 
 const logger = createLogger('backtest-engine');
 
@@ -207,7 +209,12 @@ export class BacktestEngine {
           throw new Error('Backtest cancelled');
         }
 
-        const { date, dataPoints } = dataByDay[dayIndex]!;
+        const dayData = dataByDay[dayIndex];
+        if (dayData === undefined) {
+          continue;
+        }
+
+        const { date, dataPoints } = dayData;
         run.progress.currentDate = date;
         run.progress.processedDays = dayIndex + 1;
         run.progress.percentComplete = Math.round(((dayIndex + 1) / dataByDay.length) * 100);
@@ -217,14 +224,14 @@ export class BacktestEngine {
 
         for (const dataPoint of dataPoints) {
           // Check for entry/exit signals
-          const signal = this.generateSignal(dataPoint, config, positions);
+          const tradeSignal = this.generateSignal(dataPoint, config, positions);
           
-          if (signal.action === 'enter' && signal.asset) {
+          if (tradeSignal.action === 'enter' && tradeSignal.asset) {
             const entryResult = this.executeEntry(
               dataPoint,
               config,
               cashBalance,
-              signal.asset
+              tradeSignal.asset
             );
             
             if (entryResult.success && entryResult.trades) {
@@ -242,11 +249,11 @@ export class BacktestEngine {
                 totalFees = totalFees.plus(fees);
               }
             }
-          } else if (signal.action === 'exit' && signal.positionId) {
+          } else if (tradeSignal.action === 'exit' && tradeSignal.positionId) {
             const exitResult = this.executeExit(
               dataPoint,
               config,
-              positions.get(signal.positionId)
+              positions.get(tradeSignal.positionId)
             );
             
             if (exitResult.success && exitResult.trades) {
@@ -263,7 +270,8 @@ export class BacktestEngine {
               }
               
               // Remove position
-              positions.delete(signal.positionId);
+              const closedPositionId: string = tradeSignal.positionId;
+              positions.delete(closedPositionId);
             }
           }
 
@@ -362,7 +370,10 @@ export class BacktestEngine {
     const groups = new Map<string, MarketDataPoint[]>();
     
     for (const point of data) {
-      const dateKey = point.timestamp.toISOString().split('T')[0]!;
+      const [dateKey] = point.timestamp.toISOString().split('T');
+      if (dateKey === undefined) {
+        continue;
+      }
       const existing = groups.get(dateKey) || [];
       existing.push(point);
       groups.set(dateKey, existing);
@@ -615,8 +626,9 @@ export class BacktestEngine {
     durationMs: number
   ): BacktestResults {
     const initialCapital = new Decimal(config.initialCapitalUsd);
-    const finalValue = dailySnapshots.length > 0
-      ? new Decimal(dailySnapshots[dailySnapshots.length - 1]!.portfolioValue)
+    const lastSnapshot = dailySnapshots.at(-1);
+    const finalValue = lastSnapshot !== undefined
+      ? new Decimal(lastSnapshot.portfolioValue)
       : initialCapital;
     
     const totalReturnUsd = finalValue.minus(initialCapital);

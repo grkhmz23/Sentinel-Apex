@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { VaultBaseAssetEnum, isSolanaPublicKey } from './assets.js';
 import { ConfigValidationError } from './errors.js';
 
 // =============================================================================
@@ -38,6 +39,8 @@ export const ExecutionMode = {
   DRY_RUN: 'dry-run' as const satisfies ExecutionMode,
   LIVE: 'live' as const satisfies ExecutionMode,
 } as const;
+
+const assetDecimals = z.coerce.number().int().min(0).max(18).optional();
 
 export interface AuthConfig {
   NODE_ENV: NodeEnv;
@@ -89,6 +92,20 @@ const envSchema = z
     // ── Feature flags ────────────────────────────────────────────────────────
     FEATURE_FLAG_LIVE_EXECUTION: envBoolean,
 
+    // ── Vault base asset ─────────────────────────────────────────────────────
+    VAULT_BASE_ASSET: VaultBaseAssetEnum.default('USDC'),
+    USDC_MINT: z.string().refine(isSolanaPublicKey, {
+      message: 'USDC_MINT must be a valid Solana public key',
+    }).optional(),
+    USDC_DECIMALS: assetDecimals.default(6),
+    PUSD_MINT: z.string().refine(isSolanaPublicKey, {
+      message: 'PUSD_MINT must be a valid Solana public key',
+    }).optional(),
+    PUSD_DECIMALS: assetDecimals,
+    PUSD_VAULT_OWNER: z.string().refine(isSolanaPublicKey, {
+      message: 'PUSD_VAULT_OWNER must be a valid Solana public key',
+    }).optional(),
+
     // ── Solana / on-chain ────────────────────────────────────────────────────
     SOLANA_RPC_ENDPOINT: z.string().optional(),
 
@@ -129,6 +146,23 @@ const envSchema = z
         path: ['DB_POOL_MAX'],
         message: `DB_POOL_MAX (${data.DB_POOL_MAX}) must be >= DB_POOL_MIN (${data.DB_POOL_MIN})`,
       });
+    }
+
+    if (data.VAULT_BASE_ASSET === 'PUSD') {
+      if (data.PUSD_MINT === undefined || data.PUSD_MINT === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PUSD_MINT'],
+          message: 'PUSD_MINT is required when VAULT_BASE_ASSET=PUSD',
+        });
+      }
+      if (data.PUSD_DECIMALS === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PUSD_DECIMALS'],
+          message: 'PUSD_DECIMALS is required when VAULT_BASE_ASSET=PUSD',
+        });
+      }
     }
   });
 

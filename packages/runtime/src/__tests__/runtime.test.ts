@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyMigrations,
+  auditEvents,
   createDatabaseConnection,
+  orders as orderRowsTable,
+  pusdVaultSnapshots,
   venueConnectorSnapshots,
 } from '@sentinel-apex/db';
 import { createId } from '@sentinel-apex/domain';
@@ -848,5 +851,49 @@ describe('SentinelRuntime', () => {
     )).rejects.toThrow('already approved');
 
     await controlPlane.close();
+  });
+
+  it('runs a PUSD treasury cycle with snapshot and audit evidence and without live orders', async () => {
+    const previous = {
+      VAULT_BASE_ASSET: process.env['VAULT_BASE_ASSET'],
+      PUSD_MINT: process.env['PUSD_MINT'],
+      PUSD_DECIMALS: process.env['PUSD_DECIMALS'],
+      PUSD_VAULT_OWNER: process.env['PUSD_VAULT_OWNER'],
+      JUPITER_PERPS_ENABLED: process.env['JUPITER_PERPS_ENABLED'],
+    };
+    process.env['VAULT_BASE_ASSET'] = 'PUSD';
+    process.env['PUSD_MINT'] = 'So11111111111111111111111111111111111111112';
+    process.env['PUSD_DECIMALS'] = '6';
+    delete process.env['PUSD_VAULT_OWNER'];
+    process.env['JUPITER_PERPS_ENABLED'] = 'true';
+
+    const connectionString = await createRuntimeConnectionString();
+    const runtime = await SentinelRuntime.createDeterministic(connectionString);
+
+    try {
+      const outcome = await runtime.runCycle('pusd-test');
+      const runtimeStore = (runtime as unknown as { options: { store: RuntimeStore } }).options.store;
+
+      expect(outcome.intentsExecuted).toBe(0);
+      const snapshots = await runtimeStore.db.select().from(pusdVaultSnapshots);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]?.['baseAssetSymbol']).toBe('PUSD');
+      expect(snapshots[0]?.['readStatus']).toBe('unconfigured');
+
+      const events = await runtimeStore.db.select().from(auditEvents);
+      expect(events.some((event) => event.eventType === 'pusd.vault_snapshot.captured')).toBe(true);
+
+      const orderRows = await runtimeStore.db.select().from(orderRowsTable);
+      expect(orderRows).toHaveLength(0);
+    } finally {
+      await runtime.close();
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          Reflect.deleteProperty(process.env, key);
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
   });
 });

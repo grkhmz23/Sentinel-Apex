@@ -3,7 +3,8 @@
 // =============================================================================
 
 import { Decimal } from 'decimal.js';
-import type { MarketDataPoint, FundingRateEntry, BasisEntry } from './types.js';
+
+import type { BacktestPosition, MarketDataPoint, FundingRateEntry, BasisEntry } from './types.js';
 
 // =============================================================================
 // Synthetic Market Data Generation
@@ -55,8 +56,6 @@ export async function generateMarketData(
     
     for (const asset of assets) {
       const basePrice = DEFAULT_CONFIG.basePrices[asset]?.spot || 1000;
-      const basePerp = DEFAULT_CONFIG.basePrices[asset]?.perp || basePrice * 1.002;
-      
       // Generate realistic price movement with trend and noise
       const trend = Math.sin(dayProgress * Math.PI * 4) * 0.02; // Cyclical trend
       const noise = (Math.random() - 0.5) * (DEFAULT_CONFIG.volatilityPct / 100);
@@ -127,8 +126,6 @@ function generateHistoricalFunding(asset: string, timestamp: Date): number {
 // =============================================================================
 // Funding Payment Calculation
 // =============================================================================
-
-import type { BacktestPosition } from './types.js';
 
 /**
  * Calculate funding payment for a position
@@ -218,19 +215,21 @@ export function validateMarketData(data: MarketDataPoint[]): { valid: boolean; e
   for (const point of data) {
     if (!point.timestamp) errors.push(`Missing timestamp for ${point.asset}`);
     if (!point.spotPrice || new Decimal(point.spotPrice).lte(0)) {
-      errors.push(`Invalid spot price for ${point.asset} at ${point.timestamp}`);
+      errors.push(`Invalid spot price for ${point.asset} at ${point.timestamp.toISOString()}`);
     }
     if (!point.perpPrice || new Decimal(point.perpPrice).lte(0)) {
-      errors.push(`Invalid perp price for ${point.asset} at ${point.timestamp}`);
+      errors.push(`Invalid perp price for ${point.asset} at ${point.timestamp.toISOString()}`);
     }
     if (!point.fundingRate) {
-      errors.push(`Missing funding rate for ${point.asset} at ${point.timestamp}`);
+      errors.push(`Missing funding rate for ${point.asset} at ${point.timestamp.toISOString()}`);
     }
   }
   
   // Check chronological order
   for (let i = 1; i < data.length; i++) {
-    if (data[i]!.timestamp.getTime() < data[i - 1]!.timestamp.getTime()) {
+    const current = data[i];
+    const previous = data[i - 1];
+    if (current !== undefined && previous !== undefined && current.timestamp.getTime() < previous.timestamp.getTime()) {
       errors.push(`Data out of order at index ${i}`);
     }
   }

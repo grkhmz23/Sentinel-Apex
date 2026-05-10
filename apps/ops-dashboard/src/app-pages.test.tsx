@@ -7,6 +7,7 @@ import {
   createAllocatorRun,
   createAllocatorSummary,
   createAllocatorTarget,
+  createAuditEvent,
   createCarryAction,
   createCarryActionDetail,
   createCarryExecutionDetail,
@@ -17,8 +18,11 @@ import {
     createDashboardSession,
     createMismatch,
     createMismatchDetail,
-    createOverview,
-    createSubmissionDossier,
+  createOverview,
+  createPusdOperatorIntent,
+  createPusdVault,
+  createPusdVaultSnapshot,
+  createSubmissionDossier,
     createSubmissionEvidence,
     createSubmissionExportBundle,
     createRebalanceBundleDetail,
@@ -54,6 +58,7 @@ import CarryPage from '../app/carry/page';
 import MismatchDetailPage from '../app/mismatches/[mismatchId]/page';
 import MismatchesPage from '../app/mismatches/page';
 import OverviewPage from '../app/page';
+import PusdPage from '../app/pusd/page';
 import ReconciliationPage from '../app/reconciliation/page';
 import SubmissionPage from '../app/submission/page';
 import TreasuryActionDetailPage from '../app/treasury/actions/[actionId]/page';
@@ -254,6 +259,15 @@ vi.mock('./lib/runtime-api.server', () => ({
     },
     error: null,
   })),
+  loadPusdPageData: vi.fn(async () => ({
+    data: {
+      vault: createPusdVault(),
+      snapshots: [createPusdVaultSnapshot()],
+      intents: [createPusdOperatorIntent()],
+      auditEvents: [createAuditEvent()],
+    },
+    error: null,
+  })),
   loadTreasuryActionDetailPageData: vi.fn(async () => ({
     data: {
       detail: createTreasuryActionDetail(),
@@ -449,6 +463,16 @@ describe('ops dashboard pages', () => {
     expect(screen.getByText('Atlas Treasury T0')).toBeInTheDocument();
     expect(screen.getByText('Execution History')).toBeInTheDocument();
     expect(screen.getByText('Venue Readiness')).toBeInTheDocument();
+  });
+
+  it('renders PUSD vault state, simulation badge, and operator intents', async () => {
+    render(await PusdPage());
+
+    expect(screen.getByText('Sentinel Apex Private PUSD Treasury Vault')).toBeInTheDocument();
+    expect(screen.getAllByText('simulation/dry-run').length).toBeGreaterThan(0);
+    expect(screen.getByText('live execution disabled')).toBeInTheDocument();
+    expect(screen.getByText('Operator Intents')).toBeInTheDocument();
+    expect(screen.getByText('Audit Evidence')).toBeInTheDocument();
   });
 
   it('renders treasury action, execution, and venue detail workflows', async () => {

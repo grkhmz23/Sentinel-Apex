@@ -13,12 +13,6 @@ import { createLogger } from '@sentinel-apex/observability';
 import { Err, Ok, type Result } from '@sentinel-apex/shared';
 
 import type {
-  VaultConfig as VoltrVaultConfig,
-  VaultConfigField as VoltrVaultConfigField,
-  VoltrClient as VoltrClientType,
-} from '@voltr/vault-sdk';
-
-import type {
   AddAdaptorRequest,
   AllocateStrategyRequest,
   CalibrateHighWaterMarkRequest,
@@ -38,6 +32,11 @@ import type {
   WithdrawalReceipt,
   WithdrawalRequest,
 } from './types.js';
+import type {
+  VaultConfig as VoltrVaultConfig,
+  VaultConfigField as VoltrVaultConfigField,
+  VoltrClient as VoltrClientType,
+} from '@voltr/vault-sdk';
 
 const logger = createLogger('ranger-vault-client');
 const requireFromHere = createRequire(__filename);
@@ -825,12 +824,12 @@ export class RangerVaultClient {
 
   private toVoltrVaultConfig(
     config: VaultConfig,
-    BNImpl: BnConstructor,
+    bnConstructor: BnConstructor,
   ): VoltrVaultConfig {
     return {
-      maxCap: new BNImpl(config.maxCap === '0' ? UNCAPPED_U64_MAX : config.maxCap),
-      startAtTs: new BNImpl(config.startAtTs),
-      lockedProfitDegradationDuration: new BNImpl(
+      maxCap: new bnConstructor(config.maxCap === '0' ? UNCAPPED_U64_MAX : config.maxCap),
+      startAtTs: new bnConstructor(config.startAtTs),
+      lockedProfitDegradationDuration: new bnConstructor(
         config.lockedProfitDegradationDurationSeconds,
       ),
       managerPerformanceFee: config.managerPerformanceFeeBps,
@@ -839,7 +838,7 @@ export class RangerVaultClient {
       adminManagementFee: config.adminManagementFeeBps,
       redemptionFee: config.redemptionFeeBps,
       issuanceFee: config.issuanceFeeBps,
-      withdrawalWaitingPeriod: new BNImpl(config.withdrawalWaitingPeriodSeconds),
+      withdrawalWaitingPeriod: new bnConstructor(config.withdrawalWaitingPeriodSeconds),
     };
   }
 
@@ -874,7 +873,7 @@ export class RangerVaultClient {
   }
 
   private serializeConfigUpdateValue(
-    BNImpl: BnConstructor,
+    bnConstructor: BnConstructor,
     field: RangerVaultConfigField,
     value: string | number | PublicKey,
   ): Buffer {
@@ -883,7 +882,7 @@ export class RangerVaultClient {
       case 'startAtTs':
       case 'lockedProfitDegradationDuration':
       case 'withdrawalWaitingPeriod': {
-        const bnValue = new BNImpl(
+        const bnValue = new bnConstructor(
           typeof value === 'number' ? value : value.toString(),
         );
         return bnValue.toArrayLike(Buffer, 'le', 8);

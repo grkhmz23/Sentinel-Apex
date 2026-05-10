@@ -107,6 +107,16 @@ export type { JupiterPerpsAdapterConfig } from './real/jupiter-perps-adapter.js'
 export { JupiterPerpsAdapter } from './real/jupiter-perps-adapter.js';
 export type { SolanaRpcReadonlyTruthAdapterConfig } from './real/solana-rpc-readonly-truth-adapter.js';
 export { SolanaRpcReadonlyTruthAdapter } from './real/solana-rpc-readonly-truth-adapter.js';
+export {
+  PusdTokenReader,
+  PusdTreasuryAdapter,
+} from './pusd/index.js';
+export type {
+  PusdTokenBalance,
+  PusdTokenBalanceStatus,
+  PusdTokenReaderConfig,
+  PusdTreasuryAdapterConfig,
+} from './pusd/index.js';
 
 export type { VenueAdapterConfig } from './factory.js';
 export { createVenueAdapter, registerLiveAdapter } from './factory.js';

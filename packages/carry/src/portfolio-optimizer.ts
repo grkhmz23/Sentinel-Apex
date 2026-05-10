@@ -1,8 +1,9 @@
 import Decimal from 'decimal.js';
 
+import { computeMaxAllowedSize, computePositionSize } from './position-sizer.js';
+
 import type { CarryConfig } from './config.js';
 import type { CarryOpportunityCandidate } from './opportunity-detector.js';
-import { computeMaxAllowedSize, computePositionSize } from './position-sizer.js';
 
 export interface OpportunityScoreBreakdown {
   yieldScore: number;

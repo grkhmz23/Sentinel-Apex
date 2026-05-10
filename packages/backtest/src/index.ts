@@ -29,6 +29,8 @@
  * ```
  */
 
+import type { BacktestConfig } from './types.js';
+
 // Core exports
 export { createBacktestEngine, BacktestEngine, validateBacktestConfig } from './engine.js';
 export { generateReport, generateDossierSummary } from './report-generator.js';
@@ -57,8 +59,6 @@ export type {
 // =============================================================================
 // Default Configuration Helpers
 // =============================================================================
-
-import type { BacktestConfig } from './types.js';
 
 export interface DefaultConfigOptions {
   backtestId: string;

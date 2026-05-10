@@ -58,6 +58,8 @@ export {
   executionEvents,
   internalDerivativeCurrent,
   internalDerivativeSnapshots,
+  pusdOperatorIntents,
+  pusdVaultSnapshots,
   runtimeCommands,
   runtimeMismatchRemediations,
   runtimeMismatches,

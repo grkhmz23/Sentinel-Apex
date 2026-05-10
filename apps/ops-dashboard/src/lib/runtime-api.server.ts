@@ -17,6 +17,7 @@ import type {
   RebalanceExecutionGraphView,
   RebalanceProposalView,
   RuntimeCommandView,
+  AuditEventView,
   RuntimeMismatchDetailView,
   RuntimeMismatchView,
   RuntimeOverviewView,
@@ -41,6 +42,9 @@ import type {
   VenueTruthSummaryView,
   TreasuryVenueDetailView,
   TreasuryVenueView,
+  PusdOperatorIntentView,
+  PusdVaultSnapshotView,
+  PusdVaultView,
 } from '@sentinel-apex/runtime';
 
 import { getDashboardApiBaseUrl, getDashboardApiKey } from './env.server';
@@ -65,6 +69,7 @@ import type {
   TreasuryExecutionDetailPageData,
   TreasuryExecutionsPageData,
   TreasuryPageData,
+  PusdPageData,
   RebalanceProposalPageData,
   RebalanceBundlePageData,
   VenuesPageData,
@@ -76,8 +81,10 @@ import type {
 const ALLOCATOR_API_PREFIX = '/api/v1/allocator';
 const CARRY_API_PREFIX = '/api/v1/carry';
 const API_PREFIX = '/api/v1/runtime';
+const EVENTS_API_PREFIX = '/api/v1/events';
 const SUBMISSION_API_PREFIX = '/api/v1/submission';
 const TREASURY_API_PREFIX = '/api/v1/treasury';
+const PUSD_API_PREFIX = '/api/v1/pusd';
 const VENUES_API_PREFIX = '/api/v1/venues';
 
 async function fetchRuntimeApi<T>(
@@ -150,6 +157,56 @@ async function fetchTreasuryApi<T>(
 
   if (!response.ok) {
     throw new Error(payload.error?.message ?? `Runtime API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+async function fetchPusdApi<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${PUSD_API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `PUSD API request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
+async function fetchEventsApi<T>(
+  path = '',
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${getDashboardApiBaseUrl()}${EVENTS_API_PREFIX}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': getDashboardApiKey(),
+      ...(init.headers ?? {}),
+    },
+    cache: 'no-store',
+  });
+
+  const payload = (await response.json()) as ApiEnvelope<T> & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Events API request failed: ${response.status}`);
   }
 
   return payload.data;
@@ -244,6 +301,22 @@ function buildSearchParams(params: Record<string, string | number | undefined>):
 
 export async function getRuntimeOverview(): Promise<RuntimeOverviewView> {
   return fetchRuntimeApi<RuntimeOverviewView>('/status');
+}
+
+export async function getPusdVault(): Promise<PusdVaultView> {
+  return fetchPusdApi<PusdVaultView>('/vault');
+}
+
+export async function listPusdVaultSnapshots(limit = 20): Promise<PusdVaultSnapshotView[]> {
+  return fetchPusdApi<PusdVaultSnapshotView[]>(`/snapshots${buildSearchParams({ limit })}`);
+}
+
+export async function listPusdOperatorIntents(limit = 20): Promise<PusdOperatorIntentView[]> {
+  return fetchPusdApi<PusdOperatorIntentView[]>(`/intents${buildSearchParams({ limit })}`);
+}
+
+export async function listAuditEvents(limit = 20): Promise<AuditEventView[]> {
+  return fetchEventsApi<AuditEventView[]>(buildSearchParams({ limit }));
 }
 
 export async function getAllocatorSummary(): Promise<AllocatorSummaryView | null> {
@@ -796,6 +869,32 @@ export async function loadTreasuryPageData(): Promise<DashboardPageState<Treasur
     return {
       data: null,
       error: error instanceof Error ? error.message : 'Failed to load treasury data.',
+    };
+  }
+}
+
+export async function loadPusdPageData(): Promise<DashboardPageState<PusdPageData>> {
+  try {
+    const [vault, snapshots, intents, auditEvents] = await Promise.all([
+      getPusdVault(),
+      listPusdVaultSnapshots(20),
+      listPusdOperatorIntents(20),
+      listAuditEvents(30),
+    ]);
+
+    return {
+      data: {
+        vault,
+        snapshots,
+        intents,
+        auditEvents: auditEvents.filter((event) => event.eventType.startsWith('pusd.')).slice(0, 12),
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to load PUSD vault data.',
     };
   }
 }

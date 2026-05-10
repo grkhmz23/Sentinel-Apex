@@ -39,6 +39,7 @@ const navigation: NavigationSection[] = [
     items: [
       { href: '/carry', label: 'Carry', shortCode: 'CY', matches: ['/carry/actions', '/carry/executions'] },
       { href: '/treasury', label: 'Treasury', shortCode: 'TR', matches: ['/treasury/actions', '/treasury/executions', '/treasury/venues'] },
+      { href: '/pusd', label: 'PUSD Vault', shortCode: 'PV' },
       { href: '/venues', label: 'Venues', shortCode: 'VN' },
     ],
   },

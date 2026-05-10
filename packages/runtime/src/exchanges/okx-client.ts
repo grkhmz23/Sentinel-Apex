@@ -134,7 +134,17 @@ export class OkxApiClient {
         };
       }
 
-      const account = accountInfo.data[0]!;
+      const [account] = accountInfo.data;
+      if (account === undefined) {
+        return {
+          valid: false,
+          canReadTrades: false,
+          canReadBalances: false,
+          isReadOnly: false,
+          accountId: null,
+          error: 'No account data returned from OKX',
+        };
+      }
 
       // OKX read-only API keys can read trades and balances
       // We verify this by attempting to fetch recent trades (will fail if no permission)

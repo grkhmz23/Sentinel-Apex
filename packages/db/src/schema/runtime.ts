@@ -784,6 +784,54 @@ export const treasuryCurrent = pgTable('treasury_current', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const pusdVaultSnapshots = pgTable(
+  'pusd_vault_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    snapshotId: text('snapshot_id').notNull().unique(),
+    sourceRunId: text('source_run_id').references(() => strategyRuns.runId),
+    baseAssetSymbol: text('base_asset_symbol').notNull(),
+    baseAssetMint: text('base_asset_mint').notNull(),
+    baseAssetDecimals: integer('base_asset_decimals').notNull(),
+    vaultOwnerAddress: text('vault_owner_address'),
+    balanceRaw: text('balance_raw').notNull(),
+    balanceAmount: text('balance_amount').notNull(),
+    navAmount: text('nav_amount').notNull(),
+    treasuryState: jsonb('treasury_state').notNull().default({}),
+    riskStatus: text('risk_status').notNull(),
+    readStatus: text('read_status').notNull(),
+    readError: text('read_error'),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    sourceRunIdIdx: index('pusd_vault_snapshots_source_run_id_idx').on(t.sourceRunId),
+    capturedAtIdx: index('pusd_vault_snapshots_captured_at_idx').on(t.capturedAt),
+  }),
+);
+
+export const pusdOperatorIntents = pgTable(
+  'pusd_operator_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    intentId: text('intent_id').notNull().unique(),
+    intentType: text('intent_type').notNull(),
+    asset: text('asset').notNull(),
+    amount: text('amount').notNull(),
+    status: text('status').notNull().default('requested'),
+    requestedBy: text('requested_by').notNull(),
+    reason: text('reason'),
+    payload: jsonb('payload').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    intentTypeIdx: index('pusd_operator_intents_type_idx').on(t.intentType),
+    statusIdx: index('pusd_operator_intents_status_idx').on(t.status),
+    createdAtIdx: index('pusd_operator_intents_created_at_idx').on(t.createdAt),
+  }),
+);
+
 export const runtimeCommands = pgTable(
   'runtime_commands',
   {

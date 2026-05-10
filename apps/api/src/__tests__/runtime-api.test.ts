@@ -908,6 +908,9 @@ describe('runtime-backed API routes', () => {
   afterEach(async () => {
     await app.close();
     await worker.stop();
+    delete process.env['VAULT_BASE_ASSET'];
+    delete process.env['PUSD_MINT'];
+    delete process.env['PUSD_DECIMALS'];
   });
 
   it('queues a real runtime cycle through the worker and exposes persisted data through the API', async () => {
@@ -990,6 +993,54 @@ describe('runtime-backed API routes', () => {
     expect(runtimeStatusBody.data.worker.lifecycleState).toMatch(/ready|degraded/);
     expect(runtimeStatusBody.data.openMismatchCount).toBeGreaterThanOrEqual(0);
     expect(workerBody.data.schedulerState).toMatch(/waiting|running|paused/);
+  });
+
+  it('exposes configured PUSD vault state and protects PUSD mutating endpoints', async () => {
+    process.env['VAULT_BASE_ASSET'] = 'PUSD';
+    process.env['PUSD_MINT'] = 'So11111111111111111111111111111111111111112';
+    process.env['PUSD_DECIMALS'] = '6';
+
+    const vaultResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/pusd/vault',
+      headers: { 'x-api-key': TEST_API_KEY },
+    });
+    expect(vaultResponse.statusCode).toBe(200);
+    expect(vaultResponse.json<{ data: { baseAsset: string; baseAssetMint: string } }>().data).toMatchObject({
+      baseAsset: 'PUSD',
+      baseAssetMint: 'So11111111111111111111111111111111111111112',
+    });
+
+    const invalidResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/pusd/deposit-intent',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/pusd/deposit-intent'),
+      payload: { amount: '-1' },
+    });
+    expect(invalidResponse.statusCode).toBe(400);
+
+    const unauthenticatedResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/pusd/withdraw-intent',
+      headers: { 'x-api-key': TEST_API_KEY },
+      payload: { amount: '10' },
+    });
+    expect(unauthenticatedResponse.statusCode).toBe(403);
+
+    const intentResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/pusd/rebalance-intent',
+      headers: operatorHeaders('operator', 'POST', '/api/v1/pusd/rebalance-intent'),
+      payload: { amount: '42.5', reason: 'rebalance dry-run test' },
+    });
+    expect(intentResponse.statusCode).toBe(201);
+    expect(intentResponse.json<{ data: { asset: string; intentType: string } }>().data).toMatchObject({
+      asset: 'PUSD',
+      intentType: 'rebalance',
+    });
+
+    const events = await controlPlane.listRecentEvents(10);
+    expect(events.some((event) => event.eventType === 'pusd.operator_intent.rebalance')).toBe(true);
   });
 
   it('exposes protocol vault state and persists deposit lots plus lock-aware redemption requests through the API', async () => {

@@ -28,6 +28,10 @@ import type {
   RuntimeReconciliationSummaryView,
   RuntimeRemediationActionType,
   RuntimeRecoveryEventView,
+  AuditEventView,
+  PusdOperatorIntentView,
+  PusdVaultSnapshotView,
+  PusdVaultView,
   SubmissionDossierView,
   SubmissionEvidenceRecordView,
   SubmissionExportBundleView,
@@ -146,6 +150,13 @@ export interface TreasuryPageData {
   actions: TreasuryActionView[];
   executions: TreasuryExecutionView[];
   venues: TreasuryVenueView[];
+}
+
+export interface PusdPageData {
+  vault: PusdVaultView;
+  snapshots: PusdVaultSnapshotView[];
+  intents: PusdOperatorIntentView[];
+  auditEvents: AuditEventView[];
 }
 
 export interface CarryPageData {

@@ -63,6 +63,7 @@ export function QuickActions(): JSX.Element {
     <>
       <div className="quick-actions">
         <button
+          aria-label={state.name === 'run_cycle' ? 'Queueing cycle...' : 'Run Cycle'}
           className="quick-actions__card quick-actions__card--primary"
           disabled={disabled}
           onClick={() => setPendingAction({
@@ -78,6 +79,7 @@ export function QuickActions(): JSX.Element {
           <span className="quick-actions__detail">Advance runtime state against the latest persisted inputs.</span>
         </button>
         <button
+          aria-label={state.name === 'rebuild_projections' ? 'Queueing rebuild...' : 'Rebuild Projections'}
           className="quick-actions__card quick-actions__card--primary"
           disabled={disabled}
           onClick={() => setPendingAction({
@@ -93,6 +95,7 @@ export function QuickActions(): JSX.Element {
           <span className="quick-actions__detail">Refresh dashboard-facing state from durable control-plane records.</span>
         </button>
         <button
+          aria-label={state.name === 'run_allocator_evaluation' ? 'Queueing allocator...' : 'Evaluate Allocator'}
           className="quick-actions__card"
           disabled={disabled}
           onClick={() => setPendingAction({
@@ -108,6 +111,7 @@ export function QuickActions(): JSX.Element {
           <span className="quick-actions__detail">Recompute sleeve budget pressure and current target mix.</span>
         </button>
         <button
+          aria-label={state.name === 'run_reconciliation' ? 'Queueing reconciliation...' : 'Run Reconciliation'}
           className="quick-actions__card"
           disabled={disabled}
           onClick={() => setPendingAction({

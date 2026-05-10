@@ -2,15 +2,17 @@
 // Sentinel Apex — Backtest API Routes
 // =============================================================================
 
-import type { FastifyInstance } from 'fastify';
 import type { RuntimeControlPlane } from '@sentinel-apex/runtime';
+
 import { authenticate } from '../middleware/auth.js';
 import { getRequiredOperator, requireOperatorRole } from '../middleware/operator-auth.js';
+
+import type { FastifyInstance } from 'fastify';
 
 export async function backtestRoutes(
   app: FastifyInstance,
   options: { controlPlane: RuntimeControlPlane },
-) {
+): Promise<void> {
   const { controlPlane } = options;
 
   // Run a backtest

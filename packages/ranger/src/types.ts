@@ -1,6 +1,7 @@
-import type { Keypair, PublicKey } from '@solana/web3.js';
 import { Decimal } from 'decimal.js';
 import { z } from 'zod';
+
+import type { Keypair, PublicKey } from '@solana/web3.js';
 
 export type VaultId = string;
 export type StrategyId = string;

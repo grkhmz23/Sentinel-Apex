@@ -2,8 +2,6 @@
 // Sentinel Apex — Backtesting Types
 // =============================================================================
 
-import type { Decimal } from 'decimal.js';
-
 /**
  * Backtest execution mode - truthful labeling
  */

@@ -2,14 +2,14 @@
 // Strategy pipeline — signal → intent → risk → execution
 // =============================================================================
 
-import type { CarryConfig, CarryOpportunityCandidate } from '@sentinel-apex/carry';
 import {
-  detectFundingRateOpportunities,
   detectCrossVenueOpportunities,
+  detectFundingRateOpportunities,
+  optimizeCarryPortfolio,
+  type CarryConfig,
+  type CarryOpportunityCandidate,
   type OpportunityScoreBreakdown,
   type PortfolioCapitalAllocation,
-  type OpportunityRejectionDecision,
-  optimizeCarryPortfolio,
 } from '@sentinel-apex/carry';
 import type { RiskAssessment, OrderIntent } from '@sentinel-apex/domain';
 import type { Logger, AuditWriter, MetricsRegistry } from '@sentinel-apex/observability';

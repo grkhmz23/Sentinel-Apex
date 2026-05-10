@@ -2,8 +2,9 @@
 // Sentinel Apex — Backtest Report Generator
 // =============================================================================
 
-import type { BacktestResults, BacktestReport, BacktestExportFormat } from './types.js';
 import { formatDate, formatNumber, formatPercent, formatDuration } from './utils.js';
+
+import type { BacktestResults, BacktestReport, BacktestExportFormat } from './types.js';
 
 /**
  * Generate a backtest report in the specified format
@@ -22,7 +23,7 @@ export function generateReport(
     case 'csv':
       return generateCsvReport(results, timestamp);
     default:
-      throw new Error(`Unsupported format: ${format}`);
+      throw new Error(`Unsupported format: ${String(format)}`);
   }
 }
 

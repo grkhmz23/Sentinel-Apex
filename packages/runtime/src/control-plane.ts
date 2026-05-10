@@ -1,3 +1,5 @@
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+
 import {
   applyMigrations,
   createDatabaseConnection,
@@ -5,7 +7,6 @@ import {
 } from '@sentinel-apex/db';
 import { createId } from '@sentinel-apex/domain';
 import { RangerVaultClient } from '@sentinel-apex/ranger';
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 
 import {
   acknowledgeNextStatus,
@@ -36,12 +37,17 @@ import type {
   ConnectorPromotionEventView,
   ConnectorPromotionOverviewView,
   ConnectorReadinessEvidenceView,
+  CreatePusdOperatorIntentInput,
   OpportunityView,
   OrderView,
   PnlSummaryView,
   PortfolioSnapshotView,
   PortfolioSummaryView,
   PositionView,
+  PusdOperatorIntentType,
+  PusdOperatorIntentView,
+  PusdVaultSnapshotView,
+  PusdVaultView,
   RecordSubmissionEvidenceInput,
   RecordVaultDepositInput,
   RebalanceBundleRecoveryActionType,
@@ -107,7 +113,6 @@ import type {
   TreasuryVenueDetailView,
   TreasuryVenueView,
   InternalDerivativeSnapshotView,
-  PortfolioPnlResult,
   RangerAddAdaptorInput,
   RangerAllocateStrategyInput,
   RangerCreateVaultInput,
@@ -144,6 +149,33 @@ function canSatisfyApprovalRequirement(
   return actorRole === 'admin';
 }
 
+function toMultiLegPlanStatus(status: string): MultiLegPlanView['status'] {
+  switch (status) {
+    case 'pending':
+    case 'executing':
+    case 'completed':
+    case 'failed':
+    case 'partial':
+      return status;
+    default:
+      throw new Error(`Unknown multi-leg plan status: ${status}`);
+  }
+}
+
+function toHedgeImbalanceDirection(
+  direction: string | null,
+): HedgeStateView['imbalanceDirection'] {
+  switch (direction) {
+    case null:
+    case 'spot_heavy':
+    case 'perp_heavy':
+    case 'balanced':
+      return direction;
+    default:
+      throw new Error(`Unknown hedge imbalance direction: ${direction}`);
+  }
+}
+
 function parseKeypairFromEnv(name: string): Keypair | null {
   const raw = process.env[name];
   if (!raw) {
@@ -151,7 +183,7 @@ function parseKeypairFromEnv(name: string): Keypair | null {
   }
 
   try {
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
       throw new Error(`Expected ${name} to be a JSON array of secret key bytes.`);
     }
@@ -267,6 +299,65 @@ export class RuntimeControlPlane implements RuntimeReadApi {
 
   async getVaultSummary(): Promise<VaultSummaryView> {
     return this.store.getVaultSummary();
+  }
+
+  async getPusdVault(): Promise<PusdVaultView> {
+    return this.store.getPusdVault();
+  }
+
+  async getPusdTreasuryState(): Promise<TreasurySummaryView | null> {
+    return this.store.getTreasurySummary();
+  }
+
+  async listPusdVaultSnapshots(limit = 50): Promise<PusdVaultSnapshotView[]> {
+    return this.store.listPusdVaultSnapshots(limit);
+  }
+
+  async listPusdOperatorIntents(limit = 50): Promise<PusdOperatorIntentView[]> {
+    return this.store.listPusdOperatorIntents(limit);
+  }
+
+  async createPusdOperatorIntent(
+    actorId: string,
+    intentType: PusdOperatorIntentType,
+    input: CreatePusdOperatorIntentInput,
+  ): Promise<PusdOperatorIntentView> {
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('PUSD intent amount must be a positive number.');
+    }
+    if (input.amount.length > 80) {
+      throw new Error('PUSD intent amount is too long.');
+    }
+
+    const intent = await this.store.createPusdOperatorIntent({
+      intentType,
+      amount: input.amount,
+      requestedBy: actorId,
+      reason: input.reason ?? null,
+      payload: {
+        requestedAction: input.requestedAction ?? intentType,
+        liveExecutionDisabled: true,
+        phase: 'PUSD-1',
+      },
+    });
+
+    await this.store.auditWriter.write({
+      eventId: createId(),
+      eventType: `pusd.operator_intent.${intentType}`,
+      occurredAt: new Date().toISOString(),
+      actorType: 'operator',
+      actorId,
+      sleeveId: 'treasury',
+      data: {
+        intentId: intent.intentId,
+        amount: intent.amount,
+        asset: 'PUSD',
+        liveExecutionDisabled: true,
+      },
+    });
+
+    return intent;
   }
 
   async getSubmissionDossier(): Promise<SubmissionDossierView> {
@@ -3043,11 +3134,6 @@ export class RuntimeControlPlane implements RuntimeReadApi {
     const plan = await this.store.getMultiLegPlan(planId);
     if (!plan) return null;
 
-    // Get leg counts
-    const legs = await this.store.getLegExecutionsForPlan(planId);
-    const completed = legs.filter((l) => l.status === 'completed').length;
-    const failed = legs.filter((l) => l.status === 'failed').length;
-
     return {
       id: plan.id,
       carryActionId: plan.carryActionId,
@@ -3055,8 +3141,8 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       asset: plan.asset,
       notionalUsd: plan.notionalUsd,
       legCount: plan.legCount,
-      status: plan.status as 'pending' | 'executing' | 'completed' | 'failed' | 'partial',
-      executionOrder: plan.executionOrder as number[],
+      status: toMultiLegPlanStatus(plan.status),
+      executionOrder: plan.executionOrder,
       coordinationConfig: plan.coordinationConfig as {
         allowPartialExecution: boolean;
         requireAllLegsForCompletion: boolean;
@@ -3116,7 +3202,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       failedAt: leg.failedAt?.toISOString() ?? null,
       lastError: leg.lastError,
       retryCount: leg.retryCount,
-      metadata: leg.metadata as Record<string, unknown>,
+      metadata: leg.metadata,
       createdAt: leg.createdAt.toISOString(),
       updatedAt: leg.updatedAt.toISOString(),
     }));
@@ -3146,10 +3232,10 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       hedgeDeviationPct: state.hedgeDeviationPct,
       maxAllowedDeviationPct: state.maxAllowedDeviationPct,
       status: state.status,
-      imbalanceDirection: state.imbalanceDirection as 'spot_heavy' | 'perp_heavy' | 'balanced' | null,
+      imbalanceDirection: toHedgeImbalanceDirection(state.imbalanceDirection),
       imbalanceThresholdBreached: state.imbalanceThresholdBreached,
       rebalanceTriggeredAt: state.rebalanceTriggeredAt?.toISOString() ?? null,
-      metadata: state.metadata as Record<string, unknown>,
+      metadata: state.metadata,
       createdAt: state.createdAt.toISOString(),
       updatedAt: state.updatedAt.toISOString(),
     }));
@@ -3195,7 +3281,7 @@ export class RuntimeControlPlane implements RuntimeReadApi {
       legId: v.legId,
       attemptedNotionalUsd: v.attemptedNotionalUsd,
       limitNotionalUsd: v.limitNotionalUsd,
-      violationDetails: v.violationDetails as Record<string, unknown>,
+      violationDetails: v.violationDetails,
       blocked: v.blocked,
       overridden: v.overridden,
       overriddenBy: v.overriddenBy,

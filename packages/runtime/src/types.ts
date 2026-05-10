@@ -1386,6 +1386,66 @@ export interface TreasurySummaryView {
   updatedAt: string;
 }
 
+export interface PusdVaultSnapshotView {
+  snapshotId: string;
+  sourceRunId: string | null;
+  baseAssetSymbol: 'PUSD';
+  baseAssetMint: string;
+  baseAssetDecimals: number;
+  vaultOwnerAddress: string | null;
+  balanceRaw: string;
+  balanceAmount: string;
+  navAmount: string;
+  treasuryState: Record<string, unknown>;
+  riskStatus: string;
+  readStatus: 'ok' | 'unconfigured' | 'rpc_error' | 'invalid_input';
+  readError: string | null;
+  capturedAt: string;
+  createdAt: string;
+}
+
+export type PusdOperatorIntentType = 'deposit' | 'withdraw' | 'rebalance';
+export type PusdOperatorIntentStatus = 'requested' | 'cancelled' | 'completed';
+
+export interface PusdOperatorIntentView {
+  intentId: string;
+  intentType: PusdOperatorIntentType;
+  asset: 'PUSD';
+  amount: string;
+  status: PusdOperatorIntentStatus;
+  requestedBy: string;
+  reason: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PusdVaultView {
+  phase: 'PUSD-1';
+  title: string;
+  baseAsset: 'PUSD';
+  baseAssetMint: string;
+  baseAssetDecimals: number;
+  vaultOwnerAddress: string | null;
+  runtimeMode: 'dry-run' | 'live';
+  liveExecutionEnabled: false;
+  balance: PusdVaultSnapshotView | null;
+  latestTreasuryState: TreasurySummaryView | null;
+  latestIntents: PusdOperatorIntentView[];
+  safety: {
+    signingEnabled: false;
+    sendTransactionEnabled: false;
+    liveExecutionEnabled: false;
+    simulationOnly: true;
+  };
+}
+
+export interface CreatePusdOperatorIntentInput {
+  amount: string;
+  reason?: string;
+  requestedAction?: string;
+}
+
 export interface TreasuryAllocationView {
   treasuryRunId: string;
   venueId: string;
@@ -2087,6 +2147,8 @@ export interface VaultSummaryView {
   managerName: string | null;
   managerWalletAddress: string | null;
   baseAsset: string;
+  baseAssetMint: string | null;
+  baseAssetDecimals: number | null;
   lockPeriodMonths: number;
   rolling: boolean;
   reassessmentCadenceMonths: number;
@@ -2594,6 +2656,10 @@ export interface RuntimeReadApi {
   getPortfolioSummary(): Promise<PortfolioSummaryView | null>;
   listPortfolioSnapshots(limit?: number): Promise<PortfolioSnapshotView[]>;
   getVaultSummary(): Promise<VaultSummaryView>;
+  getPusdVault(): Promise<PusdVaultView>;
+  getPusdTreasuryState(): Promise<TreasurySummaryView | null>;
+  listPusdVaultSnapshots(limit?: number): Promise<PusdVaultSnapshotView[]>;
+  listPusdOperatorIntents(limit?: number): Promise<PusdOperatorIntentView[]>;
   getSubmissionDossier(): Promise<SubmissionDossierView>;
   listSubmissionEvidence(): Promise<SubmissionEvidenceRecordView[]>;
   getSubmissionExportBundle(): Promise<SubmissionExportBundleView>;

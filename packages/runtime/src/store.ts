@@ -37,10 +37,7 @@ import {
   carryLegExecutions,
   carryMultiLegPlans,
   carryVenueSnapshots,
-  cexApiCredentials,
-  cexCrossValidations,
   cexImportedTrades,
-  cexPnlSnapshots,
   cexTradeImports,
   executionEvents,
   executionGuardrailsConfig,
@@ -54,6 +51,8 @@ import {
   portfolioCurrent,
   portfolioSnapshots,
   positions,
+  pusdOperatorIntents,
+  pusdVaultSnapshots,
   realizedTradePnl,
   riskCurrent,
   riskBreaches,
@@ -141,7 +140,10 @@ import type {
   OpportunityView,
   OrderView,
   PnlSummaryView,
-  PortfolioPnlResult,
+  PusdOperatorIntentType,
+  PusdOperatorIntentView,
+  PusdVaultSnapshotView,
+  PusdVaultView,
   ProjectionStatus,
   PortfolioSnapshotView,
   PortfolioSummaryView,
@@ -374,6 +376,8 @@ interface VaultDefaultConfig {
   managerName: string | null;
   managerWalletAddress: string | null;
   baseAsset: string;
+  baseAssetMint: string | null;
+  baseAssetDecimals: number | null;
   lockPeriodMonths: number;
   rolling: boolean;
   reassessmentCadenceMonths: number;
@@ -1642,6 +1646,31 @@ function mapVaultExecutionEnvironmentToSubmissionCluster(
 
 function buildDefaultVaultConfig(): VaultDefaultConfig {
   const profile = buildCarryStrategyProfile();
+  if (process.env['VAULT_BASE_ASSET'] === 'PUSD') {
+    return {
+      vaultId: 'sentinel-pusd-private-treasury-vault',
+      vaultName: 'Sentinel Apex Private PUSD Treasury Vault',
+      strategyId: 'pusd-private-treasury',
+      strategyName: 'PUSD Treasury Accounting',
+      managerName: DEFAULT_PROTOCOL_MANAGER_NAME,
+      managerWalletAddress: null,
+      baseAsset: 'PUSD',
+      baseAssetMint: process.env['PUSD_MINT'] ?? null,
+      baseAssetDecimals: process.env['PUSD_DECIMALS'] === undefined
+        ? null
+        : Number.parseInt(process.env['PUSD_DECIMALS'], 10),
+      lockPeriodMonths: 0,
+      rolling: true,
+      reassessmentCadenceMonths: 1,
+      targetApyFloorPct: '0',
+      metadata: {
+        phase: 'PUSD-1',
+        strategyFamily: 'pusd_treasury_accounting',
+        liveExecutionDisabled: true,
+      },
+    };
+  }
+
   return {
     vaultId: DEFAULT_PROTOCOL_VAULT_ID,
     vaultName: 'Apex USDC Delta-Neutral Carry Vault',
@@ -1650,6 +1679,10 @@ function buildDefaultVaultConfig(): VaultDefaultConfig {
     managerName: DEFAULT_PROTOCOL_MANAGER_NAME,
     managerWalletAddress: null,
     baseAsset: profile.vaultBaseAsset,
+    baseAssetMint: process.env['USDC_MINT'] ?? null,
+    baseAssetDecimals: process.env['USDC_DECIMALS'] === undefined
+      ? 6
+      : Number.parseInt(process.env['USDC_DECIMALS'], 10),
     lockPeriodMonths: profile.tenor.lockPeriodMonths,
     rolling: profile.tenor.rolling,
     reassessmentCadenceMonths: profile.tenor.reassessmentCadenceMonths,
@@ -2866,6 +2899,41 @@ function mapTreasuryActionRow(row: typeof treasuryActions.$inferSelect): Treasur
     simulated: row.simulated,
     executionMode: row.executionMode as TreasuryActionView['executionMode'],
     lastError: row.lastError ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapPusdVaultSnapshotRow(row: typeof pusdVaultSnapshots.$inferSelect): PusdVaultSnapshotView {
+  return {
+    snapshotId: row.snapshotId,
+    sourceRunId: row.sourceRunId ?? null,
+    baseAssetSymbol: 'PUSD',
+    baseAssetMint: row.baseAssetMint,
+    baseAssetDecimals: row.baseAssetDecimals,
+    vaultOwnerAddress: row.vaultOwnerAddress ?? null,
+    balanceRaw: row.balanceRaw,
+    balanceAmount: row.balanceAmount,
+    navAmount: row.navAmount,
+    treasuryState: asJsonObject(row.treasuryState),
+    riskStatus: row.riskStatus,
+    readStatus: row.readStatus as PusdVaultSnapshotView['readStatus'],
+    readError: row.readError ?? null,
+    capturedAt: row.capturedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapPusdOperatorIntentRow(row: typeof pusdOperatorIntents.$inferSelect): PusdOperatorIntentView {
+  return {
+    intentId: row.intentId,
+    intentType: row.intentType as PusdOperatorIntentType,
+    asset: 'PUSD',
+    amount: row.amount,
+    status: row.status as PusdOperatorIntentView['status'],
+    requestedBy: row.requestedBy,
+    reason: row.reason ?? null,
+    payload: asJsonObject(row.payload),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -7282,6 +7350,8 @@ export class RuntimeStore {
       managerName: defaults.managerName,
       managerWalletAddress: defaults.managerWalletAddress,
       baseAsset: defaults.baseAsset,
+      baseAssetMint: defaults.baseAssetMint,
+      baseAssetDecimals: defaults.baseAssetDecimals,
       lockPeriodMonths: defaults.lockPeriodMonths,
       rolling: defaults.rolling,
       reassessmentCadenceMonths: defaults.reassessmentCadenceMonths,
@@ -7438,6 +7508,8 @@ export class RuntimeStore {
         managerName: defaults.managerName,
         managerWalletAddress: defaults.managerWalletAddress,
         baseAsset: defaults.baseAsset,
+        baseAssetMint: defaults.baseAssetMint,
+        baseAssetDecimals: defaults.baseAssetDecimals,
         lockPeriodMonths: defaults.lockPeriodMonths,
         rolling: defaults.rolling,
         reassessmentCadenceMonths: defaults.reassessmentCadenceMonths,
@@ -7453,6 +7525,8 @@ export class RuntimeStore {
           strategyId: defaults.strategyId,
           strategyName: defaults.strategyName,
           baseAsset: defaults.baseAsset,
+          baseAssetMint: defaults.baseAssetMint,
+          baseAssetDecimals: defaults.baseAssetDecimals,
           lockPeriodMonths: defaults.lockPeriodMonths,
           rolling: defaults.rolling,
           reassessmentCadenceMonths: defaults.reassessmentCadenceMonths,
@@ -7589,6 +7663,8 @@ export class RuntimeStore {
       managerName: vaultRecord.managerName ?? null,
       managerWalletAddress: vaultRecord.managerWalletAddress ?? null,
       baseAsset: vaultRecord.baseAsset,
+      baseAssetMint: vaultRecord.baseAssetMint ?? null,
+      baseAssetDecimals: vaultRecord.baseAssetDecimals ?? null,
       lockPeriodMonths: vaultRecord.lockPeriodMonths,
       rolling: vaultRecord.rolling,
       reassessmentCadenceMonths: vaultRecord.reassessmentCadenceMonths,
@@ -12649,6 +12725,150 @@ export class RuntimeStore {
     };
   }
 
+  async persistPusdVaultSnapshot(input: {
+    snapshotId: string;
+    sourceRunId: string | null;
+    baseAssetMint: string;
+    baseAssetDecimals: number;
+    vaultOwnerAddress: string | null;
+    balanceRaw: string;
+    balanceAmount: string;
+    navAmount: string;
+    treasuryState: Record<string, unknown>;
+    riskStatus: string;
+    readStatus: PusdVaultSnapshotView['readStatus'];
+    readError: string | null;
+    capturedAt: Date;
+  }): Promise<PusdVaultSnapshotView> {
+    const [row] = await this.db
+      .insert(pusdVaultSnapshots)
+      .values({
+        snapshotId: input.snapshotId,
+        sourceRunId: input.sourceRunId,
+        baseAssetSymbol: 'PUSD',
+        baseAssetMint: input.baseAssetMint,
+        baseAssetDecimals: input.baseAssetDecimals,
+        vaultOwnerAddress: input.vaultOwnerAddress,
+        balanceRaw: input.balanceRaw,
+        balanceAmount: input.balanceAmount,
+        navAmount: input.navAmount,
+        treasuryState: input.treasuryState,
+        riskStatus: input.riskStatus,
+        readStatus: input.readStatus,
+        readError: input.readError,
+        capturedAt: input.capturedAt,
+        createdAt: new Date(),
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.persistPusdVaultSnapshot: snapshot was not persisted');
+    }
+
+    return mapPusdVaultSnapshotRow(row);
+  }
+
+  async getLatestPusdVaultSnapshot(): Promise<PusdVaultSnapshotView | null> {
+    const [row] = await this.db
+      .select()
+      .from(pusdVaultSnapshots)
+      .orderBy(desc(pusdVaultSnapshots.capturedAt))
+      .limit(1);
+
+    return row === undefined ? null : mapPusdVaultSnapshotRow(row);
+  }
+
+  async listPusdVaultSnapshots(limit = 50): Promise<PusdVaultSnapshotView[]> {
+    const rows = await this.db
+      .select()
+      .from(pusdVaultSnapshots)
+      .orderBy(desc(pusdVaultSnapshots.capturedAt))
+      .limit(limit);
+
+    return rows.map(mapPusdVaultSnapshotRow);
+  }
+
+  async createPusdOperatorIntent(input: {
+    intentType: PusdOperatorIntentType;
+    amount: string;
+    requestedBy: string;
+    reason: string | null;
+    payload: Record<string, unknown>;
+  }): Promise<PusdOperatorIntentView> {
+    const now = new Date();
+    const [row] = await this.db
+      .insert(pusdOperatorIntents)
+      .values({
+        intentId: createId(),
+        intentType: input.intentType,
+        asset: 'PUSD',
+        amount: input.amount,
+        status: 'requested',
+        requestedBy: input.requestedBy,
+        reason: input.reason,
+        payload: input.payload,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error('RuntimeStore.createPusdOperatorIntent: intent was not persisted');
+    }
+
+    return mapPusdOperatorIntentRow(row);
+  }
+
+  async listPusdOperatorIntents(limit = 50): Promise<PusdOperatorIntentView[]> {
+    const rows = await this.db
+      .select()
+      .from(pusdOperatorIntents)
+      .orderBy(desc(pusdOperatorIntents.createdAt))
+      .limit(limit);
+
+    return rows.map(mapPusdOperatorIntentRow);
+  }
+
+  async getPusdVault(): Promise<PusdVaultView> {
+    const [vaultRecord, latestSnapshot, latestTreasuryState, latestIntents, runtimeStatus] =
+      await Promise.all([
+        this.getVaultCurrentRecord(),
+        this.getLatestPusdVaultSnapshot(),
+        this.getTreasurySummary(),
+        this.listPusdOperatorIntents(20),
+        this.getRuntimeStatus(),
+      ]);
+
+    const baseAssetMint = vaultRecord.baseAssetMint ?? process.env['PUSD_MINT'];
+    const baseAssetDecimals = vaultRecord.baseAssetDecimals
+      ?? (process.env['PUSD_DECIMALS'] === undefined
+        ? undefined
+        : Number.parseInt(process.env['PUSD_DECIMALS'], 10));
+    if (vaultRecord.baseAsset !== 'PUSD' || baseAssetMint === undefined || baseAssetDecimals === undefined) {
+      throw new Error('PUSD vault is not configured. Set VAULT_BASE_ASSET=PUSD, PUSD_MINT, and PUSD_DECIMALS.');
+    }
+
+    return {
+      phase: 'PUSD-1',
+      title: 'Sentinel Apex Private PUSD Treasury Vault — Phase PUSD-1',
+      baseAsset: 'PUSD',
+      baseAssetMint,
+      baseAssetDecimals,
+      vaultOwnerAddress: process.env['PUSD_VAULT_OWNER'] ?? null,
+      runtimeMode: runtimeStatus.executionMode,
+      liveExecutionEnabled: false,
+      balance: latestSnapshot,
+      latestTreasuryState,
+      latestIntents,
+      safety: {
+        signingEnabled: false,
+        sendTransactionEnabled: false,
+        liveExecutionEnabled: false,
+        simulationOnly: true,
+      },
+    };
+  }
+
   async getTreasuryCashBalanceUsd(): Promise<string | null> {
     const [row] = await this.db
       .select({ cashBalanceUsd: treasuryCurrent.cashBalanceUsd })
@@ -13337,11 +13557,11 @@ export class RuntimeStore {
     }
 
     // Calculate metrics
-    const totalPnl = trades.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'] as string)), new Decimal(0));
-    const totalFundingPnl = trades.reduce((sum, t) => sum['plus'](new Decimal(t['fundingPnl'] as string)), new Decimal(0));
-    const totalFees = trades.reduce((sum, t) => sum['plus'](new Decimal(t['feeCost'] as string)), new Decimal(0));
+    const totalPnl = trades.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'])), new Decimal(0));
+    const totalFundingPnl = trades.reduce((sum, t) => sum['plus'](new Decimal(t['fundingPnl'])), new Decimal(0));
+    const totalFees = trades.reduce((sum, t) => sum['plus'](new Decimal(t['feeCost'])), new Decimal(0));
     
-    const winningTrades = trades.filter(t => new Decimal(t['netPnl'] as string).gt(0));
+    const winningTrades = trades.filter(t => new Decimal(t['netPnl']).gt(0));
     const winRate = new Decimal(winningTrades.length).div(trades.length).times(100);
     const avgPnl = totalPnl['div'](trades.length);
 
@@ -13372,8 +13592,8 @@ export class RuntimeStore {
     const trades7d = trades.filter(t => t['closedAt'] >= sevenDaysAgo);
     const trades30d = trades.filter(t => t['closedAt'] >= thirtyDaysAgo);
 
-    const pnl7d = trades7d.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'] as string)), new Decimal(0));
-    const pnl30d = trades30d.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'] as string)), new Decimal(0));
+    const pnl7d = trades7d.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'])), new Decimal(0));
+    const pnl30d = trades30d.reduce((sum, t) => sum['plus'](new Decimal(t['netPnl'])), new Decimal(0));
 
     const apy7d = trades7d.length > 0
       ? pnl7d['div'](totalCapitalUsd).times(365 / 7).times(100)['toFixed'](4)

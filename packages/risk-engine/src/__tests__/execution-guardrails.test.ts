@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { Decimal } from 'decimal.js';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   ExecutionGuardrailEngine,

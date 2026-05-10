@@ -19,6 +19,8 @@ export const vaultCurrent = pgTable(
     managerName: text('manager_name'),
     managerWalletAddress: text('manager_wallet_address'),
     baseAsset: text('base_asset').notNull(),
+    baseAssetMint: text('base_asset_mint'),
+    baseAssetDecimals: integer('base_asset_decimals'),
     lockPeriodMonths: integer('lock_period_months').notNull(),
     rolling: boolean('rolling').notNull().default(true),
     reassessmentCadenceMonths: integer('reassessment_cadence_months').notNull(),

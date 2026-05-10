@@ -169,7 +169,6 @@ export async function cexVerificationRoutes(
       preHandler: [authenticate, requireOperatorRole('operator')],
     },
     async (request, reply) => {
-      const operator = getRequiredOperator(request);
       const { sessionId } = request.params;
       const { method = 'fifo', includeFees = true } = request.body;
 

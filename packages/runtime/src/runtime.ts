@@ -1,3 +1,4 @@
+import { Connection } from '@solana/web3.js';
 import Decimal from 'decimal.js';
 
 import {
@@ -19,8 +20,8 @@ import {
   type CarryExecutionRecommendation,
   type CarryOpportunityCandidate,
   type CarryPositionSnapshot,
-  type LegStatus,
 } from '@sentinel-apex/carry';
+import { buildVaultAssetConfig, type VaultAssetConfig } from '@sentinel-apex/config';
 import {
   applyMigrations,
   createDatabaseConnection,
@@ -50,6 +51,8 @@ import {
 } from '@sentinel-apex/treasury';
 import {
   JupiterPerpsAdapter,
+  PusdTokenReader,
+  PusdTreasuryAdapter,
   VENUE_EXECUTION_MODE_METADATA_KEY,
   VENUE_EXECUTION_REFERENCE_METADATA_KEY,
   readCanonicalMarketIdentityFromMetadata,
@@ -1152,6 +1155,7 @@ export interface SentinelRuntimeOptions {
   treasuryPolicyEngine: TreasuryPolicyEngine;
   treasuryExecutionPlanner: TreasuryExecutionPlanner;
   treasuryPolicy: TreasuryPolicy;
+  vaultAssetConfig: VaultAssetConfig;
   executionMode: 'dry-run' | 'live';
   liveExecutionEnabled: boolean;
   sleeveId: string;
@@ -1183,13 +1187,30 @@ export class SentinelRuntime {
     connectionString: string,
     overrides: DeterministicRuntimeScenario = {},
   ): Promise<SentinelRuntime> {
-    const sleeveId = overrides.sleeveId ?? 'carry';
     const executionMode = overrides.executionMode ?? 'dry-run';
     const liveExecutionEnabled = overrides.liveExecutionEnabled ?? false;
     const logger = createLogger('runtime');
+    const assetConfigInput: Parameters<typeof buildVaultAssetConfig>[0] = {
+      VAULT_BASE_ASSET: process.env['VAULT_BASE_ASSET'] === 'PUSD' ? 'PUSD' : 'USDC',
+    };
+    if (process.env['USDC_MINT'] !== undefined) {
+      assetConfigInput.USDC_MINT = process.env['USDC_MINT'];
+    }
+    if (process.env['USDC_DECIMALS'] !== undefined) {
+      assetConfigInput.USDC_DECIMALS = Number.parseInt(process.env['USDC_DECIMALS'], 10);
+    }
+    if (process.env['PUSD_MINT'] !== undefined) {
+      assetConfigInput.PUSD_MINT = process.env['PUSD_MINT'];
+    }
+    if (process.env['PUSD_DECIMALS'] !== undefined) {
+      assetConfigInput.PUSD_DECIMALS = Number.parseInt(process.env['PUSD_DECIMALS'], 10);
+    }
+    const vaultAssetConfig = buildVaultAssetConfig(assetConfigInput);
+    const pusdMode = vaultAssetConfig.baseAsset.symbol === 'PUSD';
+    const sleeveId = overrides.sleeveId ?? (pusdMode ? 'treasury' : 'carry');
 
     const defaultVenues: SimulatedVenueConfig[] = overrides.venues ?? (
-      shouldUseSimulatedCarryVenues(liveExecutionEnabled)
+      !pusdMode && shouldUseSimulatedCarryVenues(liveExecutionEnabled)
         ? [
           {
             venueId: 'sim-venue-a',
@@ -1214,7 +1235,7 @@ export class SentinelRuntime {
         ]
         : []
     );
-    const defaultTreasuryVenues: SimulatedTreasuryVenueConfig[] = overrides.treasuryVenues ?? [
+    const defaultTreasuryVenues: SimulatedTreasuryVenueConfig[] = overrides.treasuryVenues ?? (pusdMode ? [] : [
       {
         venueId: 'atlas-t0-sim',
         venueName: 'Atlas Treasury T0',
@@ -1233,7 +1254,7 @@ export class SentinelRuntime {
         currentAllocationUsd: '5000',
         withdrawalAvailableUsd: '5000',
       },
-    ];
+    ]);
 
     const adapters = new Map<string, VenueAdapter>();
     for (const venue of defaultVenues) {
@@ -1248,6 +1269,14 @@ export class SentinelRuntime {
       const adapter = new SimulatedTreasuryVenueAdapter(venue);
       treasuryAdapters.set(venue.venueId, adapter);
     }
+    if (pusdMode) {
+      const adapter = new PusdTreasuryAdapter({
+        idleBalancePusd: '0',
+        simulatedLiquidityCarryPusd: '250000',
+        simulatedLendingCarryPusd: '250000',
+      });
+      treasuryAdapters.set(adapter.venueId, adapter);
+    }
     const truthAdapters = new Map<string, VenueTruthAdapter>();
     for (const adapter of overrides.truthAdapters ?? []) {
       truthAdapters.set(adapter.venueId, adapter);
@@ -1256,7 +1285,7 @@ export class SentinelRuntime {
       (overrides.internalDerivativeTargets ?? []).map((target) => [target.venueId, target] as const),
     );
     // Initialize Jupiter Perps adapter if enabled
-    if (process.env['JUPITER_PERPS_ENABLED'] === 'true') {
+    if (!pusdMode && process.env['JUPITER_PERPS_ENABLED'] === 'true') {
       const jupiterRpcEndpoint = process.env['JUPITER_PERPS_RPC_ENDPOINT'] 
         ?? process.env['SOLANA_RPC_ENDPOINT'] 
         ?? 'https://api.devnet.solana.com';
@@ -1369,6 +1398,7 @@ export class SentinelRuntime {
       treasuryPolicyEngine: new TreasuryPolicyEngine(),
       treasuryExecutionPlanner: new TreasuryExecutionPlanner(),
       treasuryPolicy,
+      vaultAssetConfig,
       executionMode,
       liveExecutionEnabled,
       sleeveId,
@@ -1711,6 +1741,13 @@ export class SentinelRuntime {
         },
       });
       const finalRiskSummary = this.options.riskEngine.getRiskSummary(refreshedPortfolio);
+      if (this.options.vaultAssetConfig.baseAsset.symbol === 'PUSD') {
+        await this.capturePusdVaultSnapshot({
+          sourceRunId: runId,
+          treasurySummary,
+          riskStatus: finalRiskSummary.riskLevel,
+        });
+      }
       const cumulativePnl = await this.computeCumulativePnl();
       const dailyPnl = cumulativePnl;
 
@@ -3270,6 +3307,78 @@ export class SentinelRuntime {
     return summary;
   }
 
+  private async capturePusdVaultSnapshot(input: {
+    sourceRunId: string | null;
+    treasurySummary: TreasurySummaryView;
+    riskStatus: string;
+  }): Promise<void> {
+    const asset = this.options.vaultAssetConfig.baseAsset;
+    if (asset.symbol !== 'PUSD') {
+      return;
+    }
+    if (asset.mint === null) {
+      throw new Error('PUSD_MINT is required to capture a PUSD vault snapshot.');
+    }
+
+    const vaultOwnerAddress = process.env['PUSD_VAULT_OWNER'] ?? null;
+    const rpcEndpoint = process.env['SOLANA_RPC_ENDPOINT'];
+    let balanceRaw = '0';
+    let balanceAmount = '0';
+    let readStatus: 'ok' | 'unconfigured' | 'rpc_error' | 'invalid_input' = 'unconfigured';
+    let readError: string | null = null;
+
+    if (vaultOwnerAddress !== null && rpcEndpoint !== undefined && rpcEndpoint.trim() !== '') {
+      const reader = new PusdTokenReader({
+        connection: new Connection(rpcEndpoint),
+        ownerPublicKey: vaultOwnerAddress,
+        mintPublicKey: asset.mint,
+        decimals: asset.decimals,
+      });
+      const balance = await reader.readBalance();
+      balanceRaw = balance.rawAmount;
+      balanceAmount = balance.amount;
+      readStatus = balance.status;
+      readError = balance.errorMessage;
+    }
+
+    await this.options.store.persistPusdVaultSnapshot({
+      snapshotId: createId(),
+      sourceRunId: input.sourceRunId,
+      baseAssetMint: asset.mint,
+      baseAssetDecimals: asset.decimals,
+      vaultOwnerAddress,
+      balanceRaw,
+      balanceAmount,
+      navAmount: balanceAmount,
+      treasuryState: {
+        treasuryRunId: input.treasurySummary.treasuryRunId,
+        reserveStatus: input.treasurySummary.reserveStatus,
+        simulated: input.treasurySummary.simulated,
+        liveExecutionDisabled: true,
+      },
+      riskStatus: input.riskStatus,
+      readStatus,
+      readError,
+      capturedAt: new Date(),
+    });
+
+    await this.options.store.auditWriter.write({
+      eventId: createId(),
+      eventType: 'pusd.vault_snapshot.captured',
+      occurredAt: new Date().toISOString(),
+      actorType: 'system',
+      actorId: 'sentinel-runtime',
+      sleeveId: 'treasury',
+      ...(input.sourceRunId === null ? {} : { correlationId: input.sourceRunId }),
+      data: {
+        baseAsset: 'PUSD',
+        readStatus,
+        sourceRunId: input.sourceRunId,
+        liveExecutionDisabled: true,
+      },
+    });
+  }
+
   async executeRebalanceProposal(input: {
     proposalId: string;
     actorId: string;
@@ -3750,7 +3859,7 @@ export class SentinelRuntime {
     
     // Check kill switch
     if (guardrailConfig?.killSwitchTriggered) {
-      const violation = await this.options.store.recordGuardrailViolation({
+      await this.options.store.recordGuardrailViolation({
         guardrailConfigId: guardrailConfig.id,
         violationType: 'kill_switch_triggered',
         violationMessage: 'Execution blocked: kill switch is triggered',
@@ -3782,7 +3891,7 @@ export class SentinelRuntime {
     // Check notional limits
     if (guardrailConfig?.maxSingleActionNotionalUsd && 
         totalNotional > parseFloat(guardrailConfig.maxSingleActionNotionalUsd)) {
-      const violation = await this.options.store.recordGuardrailViolation({
+      await this.options.store.recordGuardrailViolation({
         guardrailConfigId: guardrailConfig.id,
         violationType: 'max_notional_exceeded',
         violationMessage: `Execution blocked: notional ${totalNotional} exceeds limit ${guardrailConfig.maxSingleActionNotionalUsd}`,
@@ -3811,7 +3920,7 @@ export class SentinelRuntime {
     const executingCount = await this.options.store.getExecutingActionCount();
     if (guardrailConfig?.maxConcurrentExecutions && 
         executingCount >= guardrailConfig.maxConcurrentExecutions) {
-      const violation = await this.options.store.recordGuardrailViolation({
+      await this.options.store.recordGuardrailViolation({
         guardrailConfigId: guardrailConfig.id,
         violationType: 'max_concurrency_exceeded',
         violationMessage: `Execution blocked: concurrency ${executingCount} >= limit ${guardrailConfig.maxConcurrentExecutions}`,

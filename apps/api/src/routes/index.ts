@@ -11,6 +11,7 @@ import { opportunityRoutes } from './opportunities.js';
 import { orderRoutes } from './orders.js';
 import { portfolioRoutes } from './portfolio.js';
 import { positionRoutes } from './positions.js';
+import { pusdRoutes } from './pusd.js';
 import { riskRoutes } from './risk.js';
 import { runtimeRoutes } from './runtime.js';
 import { submissionRoutes } from './submission.js';
@@ -115,6 +116,7 @@ export async function registerRoutes(
   await riskRoutes(app, controlPlane);
   await orderRoutes(app, controlPlane);
   await positionRoutes(app, controlPlane);
+  await pusdRoutes(app, controlPlane);
   await opportunityRoutes(app, controlPlane);
   await eventRoutes(app, controlPlane);
   await runtimeRoutes(app, controlPlane);

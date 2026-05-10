@@ -6,6 +6,42 @@ API, runtime worker, ops dashboard, strategy engine, risk engine, treasury
 sleeve, allocator, venue truth adapters, controlled carry execution, and
 protocol-native vault accounting.
 
+## Phase PUSD-1 Configuration
+
+PUSD can be selected as the vault base asset without enabling live execution:
+
+```bash
+VAULT_BASE_ASSET=PUSD
+PUSD_MINT=<PUSD mint public key>
+PUSD_DECIMALS=<PUSD decimals>
+SOLANA_RPC_ENDPOINT=<optional read-only Solana RPC URL>
+PUSD_VAULT_OWNER=<optional vault/owner public key>
+```
+
+Phase PUSD-1 supports PUSD treasury accounting, read-only PUSD balance snapshots,
+dry-run PUSD treasury strategy evaluation, and operator intent workflow. Live
+execution, signing, and `sendTransaction` are intentionally disabled.
+
+Codespaces run path:
+
+```bash
+pnpm install
+VAULT_BASE_ASSET=PUSD PUSD_MINT=<public mint> PUSD_DECIMALS=6 pnpm dev
+```
+
+PUSD API surface:
+
+- `GET /api/v1/pusd/vault`
+- `GET /api/v1/pusd/treasury-state`
+- `GET /api/v1/pusd/snapshots`
+- `POST /api/v1/pusd/deposit-intent`
+- `POST /api/v1/pusd/withdraw-intent`
+- `POST /api/v1/pusd/rebalance-intent`
+
+The ops dashboard exposes the PUSD vault at `/pusd`.
+
+See `docs/PHASE_PUSD_1_PRIVATE_TREASURY_VAULT.md`.
+
 The current in-repo vault profile is:
 
 - Vault: `Apex USDC Delta-Neutral Carry Vault`
