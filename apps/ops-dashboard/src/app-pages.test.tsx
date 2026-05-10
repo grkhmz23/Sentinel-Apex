@@ -137,6 +137,10 @@ vi.mock('./components/mismatch-action-panel', () => ({
   MismatchActionPanel: () => <div>Mismatch actions</div>,
 }));
 
+vi.mock('./components/encrypt-sdk-demo-actions', () => ({
+  EncryptSdkDemoActions: () => <button type="button">Create demo ciphertext input</button>,
+}));
+
 vi.mock('./components/app-shell', () => ({
   AppShell: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));

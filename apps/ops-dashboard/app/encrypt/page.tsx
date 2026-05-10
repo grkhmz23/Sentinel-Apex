@@ -1,6 +1,7 @@
 import { AppShell } from '../../src/components/app-shell';
 import { DefinitionList } from '../../src/components/definition-list';
 import { EmptyState } from '../../src/components/empty-state';
+import { EncryptSdkDemoActions } from '../../src/components/encrypt-sdk-demo-actions';
 import { ErrorState } from '../../src/components/error-state';
 import { MetricCard } from '../../src/components/metric-card';
 import { Panel } from '../../src/components/panel';
@@ -123,7 +124,7 @@ export default async function EncryptPage(): Promise<JSX.Element> {
               ]}
             />
             <div className="stack">
-              <button className="button" type="button">Create demo ciphertext input</button>
+              <EncryptSdkDemoActions />
               <p className="muted">
                 Operator API: POST /api/v1/encrypt/sdk-demo/create-input. The endpoint uses a fixed
                 demo input builder and rejects arbitrary plaintext strategy payloads.

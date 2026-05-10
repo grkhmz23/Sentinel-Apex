@@ -1,4 +1,5 @@
 import type {
+  EncryptSdkDemoEvidenceView,
   RangerAddAdaptorInput,
   RangerAllocateStrategyInput,
   RangerCreateVaultInput,
@@ -74,6 +75,27 @@ async function requestSubmission<T>(path: string, init: RequestInit): Promise<T>
   return payload.data;
 }
 
+async function requestEncrypt<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(`/api/encrypt${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+
+  const payload = (await response.json()) as {
+    data?: T;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.data === undefined) {
+    throw new Error(payload.error?.message ?? `Dashboard request failed: ${response.status}`);
+  }
+
+  return payload.data;
+}
+
 export async function triggerCycle(): Promise<unknown> {
   return request('/cycles/run', { method: 'POST' });
 }
@@ -129,6 +151,13 @@ export async function triggerCarryEvaluation(): Promise<unknown> {
   }
 
   return payload.data;
+}
+
+export async function createEncryptSdkDemoInput(): Promise<EncryptSdkDemoEvidenceView> {
+  return requestEncrypt<EncryptSdkDemoEvidenceView>('/sdk-demo/create-input', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
 }
 
 export async function createRangerVault(
