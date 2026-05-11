@@ -1,21 +1,24 @@
 export const SUPPORTED_EXECUTION_SCOPE = Object.freeze([
-  'Jupiter Perps devnet only',
-  'USDC-collateralized perp trading',
-  'BTC-PERP, ETH-PERP, SOL-PERP markets',
+  'PUSD accounting and treasury state',
+  'PUSD operator intent workflow',
+  'Encrypt pre-alpha strategy-state adapter when explicitly configured',
 ]);
 
 export const BLOCKED_EXECUTION_SCOPE = Object.freeze([
-  'No mainnet execution (Jupiter devnet only)',
-  'No spot market trading',
-  'No CEX execution',
-  'No legacy perps connector support outside Jupiter Perps',
+  'No PUSD live execution',
+  'No signing',
+  'No sendTransaction',
+  'No live trading',
+  'No production privacy claims',
+  'No real encryption claims',
+  'Jupiter Perps disabled in PUSD mode',
 ]);
 
 export const READINESS_TRUTH_STATEMENT =
-  'Jupiter Perpetuals devnet execution is available for hackathon demonstration. All trades use USDC collateral on devnet.';
+  'PUSD accounting and operator intents are enabled for demo. PUSD live execution, signing, sendTransaction, production privacy, and real encryption are disabled.';
 
 export const DEFAULT_ENVIRONMENT_LABEL = 'staging demo';
-export const DEFAULT_EXECUTION_BADGE = 'jupiter devnet';
+export const DEFAULT_EXECUTION_BADGE = 'dry-run only';
 
 function trimToNull(value: string | undefined | null): string | null {
   if (value === undefined || value === null) {

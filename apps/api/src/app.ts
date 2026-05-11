@@ -10,6 +10,49 @@ import { createControlPlaneFromEnv } from './runtime.js';
 
 import type { FastifyInstance } from 'fastify';
 
+const LOCAL_DEV_CORS_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+] as const;
+
+function parseCorsOrigins(): string[] {
+  const raw = process.env['CORS_ORIGIN'];
+  if (raw === undefined || raw.trim() === '') {
+    if (process.env['NODE_ENV'] === 'production') {
+      throw new Error('CORS_ORIGIN is required in production.');
+    }
+    return [...LOCAL_DEV_CORS_ORIGINS];
+  }
+
+  const origins = raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
+  if (origins.length === 0) {
+    throw new Error('CORS_ORIGIN must include at least one origin when set.');
+  }
+
+  for (const origin of origins) {
+    if (origin === '*') {
+      throw new Error('CORS_ORIGIN must not use wildcard "*".');
+    }
+    try {
+      const parsed = new URL(origin);
+      if (parsed.origin !== origin.replace(/\/$/, '')) {
+        throw new Error('origin must not include a path, query, or fragment');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid CORS_ORIGIN value "${origin}": ${message}`);
+    }
+  }
+
+  return origins.map((origin) => origin.replace(/\/$/, ''));
+}
+
 /**
  * Fastify application factory.
  *
@@ -36,8 +79,7 @@ export async function createApp(
   // ── CORS ───────────────────────────────────────────────────────────────────
 
   await app.register(cors, {
-    // Allow any origin by default (tighten per deployment environment via config).
-    origin: process.env['CORS_ORIGIN'] ?? true,
+    origin: parseCorsOrigins(),
     methods: ['GET', 'POST', 'OPTIONS'],
   });
 

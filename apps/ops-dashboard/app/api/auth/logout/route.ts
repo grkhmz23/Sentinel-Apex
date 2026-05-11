@@ -5,10 +5,16 @@ import {
   revokeDashboardSessionByToken,
 } from '../../../../src/lib/auth.server';
 import { getSessionCookieName } from '../../../../src/lib/env.server';
+import { rejectInvalidMutatingOrigin } from '../../../../src/lib/request-security.server';
 
 import type { NextRequest } from 'next/server';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const rejected = rejectInvalidMutatingOrigin(request);
+  if (rejected !== null) {
+    return rejected;
+  }
+
   const token = request.cookies.get(getSessionCookieName())?.value ?? null;
   if (token !== null) {
     await revokeDashboardSessionByToken(token);

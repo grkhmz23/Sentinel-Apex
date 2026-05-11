@@ -1,462 +1,389 @@
 # Sentinel Apex
 
-Sentinel Apex is an operator-run Solana yield protocol and control plane for a
-USDC-denominated delta-neutral carry vault. The repository includes the internal
-API, runtime worker, ops dashboard, strategy engine, risk engine, treasury
-sleeve, allocator, venue truth adapters, controlled carry execution, and
-protocol-native vault accounting.
-
-## Phase PUSD-1 Configuration
-
-PUSD can be selected as the vault base asset without enabling live execution:
-
-```bash
-VAULT_BASE_ASSET=PUSD
-PUSD_MINT=<PUSD mint public key>
-PUSD_DECIMALS=<PUSD decimals>
-SOLANA_RPC_ENDPOINT=<optional read-only Solana RPC URL>
-PUSD_VAULT_OWNER=<optional vault/owner public key>
-```
-
-Phase PUSD-1 supports PUSD treasury accounting, read-only PUSD balance snapshots,
-dry-run PUSD treasury strategy evaluation, and operator intent workflow. Live
-execution, signing, and `sendTransaction` are intentionally disabled.
-
-Codespaces run path:
-
-```bash
-pnpm install
-VAULT_BASE_ASSET=PUSD PUSD_MINT=<public mint> PUSD_DECIMALS=6 pnpm dev
-```
-
-PUSD API surface:
-
-- `GET /api/v1/pusd/vault`
-- `GET /api/v1/pusd/treasury-state`
-- `GET /api/v1/pusd/snapshots`
-- `POST /api/v1/pusd/deposit-intent`
-- `POST /api/v1/pusd/withdraw-intent`
-- `POST /api/v1/pusd/rebalance-intent`
-
-The ops dashboard exposes the PUSD vault at `/pusd`.
-
-See `docs/PHASE_PUSD_1_PRIVATE_TREASURY_VAULT.md`.
-
-## Phase Encrypt-1 Configuration
-
-Encrypt can be enabled as a pre-alpha strategy-state layer for the PUSD vault.
-This does not provide production privacy yet and must only use demo/test values:
-
-```bash
-ENCRYPT_ENABLED=true
-ENCRYPT_CLUSTER=devnet
-ENCRYPT_PROGRAM_ID=<Encrypt pre-alpha program public key>
-ENCRYPT_PRE_ALPHA_ACK=I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY
-```
-
-The Encrypt API surface is:
-
-- `GET /api/v1/encrypt/status`
-- `GET /api/v1/encrypt/strategy-state`
-- `POST /api/v1/encrypt/strategy-state`
-- `POST /api/v1/encrypt/strategy-state/update`
-- `POST /api/v1/encrypt/reveal-request`
-- `GET /api/v1/encrypt/audit`
-
-The ops dashboard exposes the Encrypt pre-alpha strategy-state surface at `/encrypt`.
-
-See `docs/PHASE_ENCRYPT_1_PRIVATE_STRATEGY_STATE.md`.
-
-## Phase Encrypt-2B SDK Pre-Alpha Demo
-
-The optional SDK-backed demo path is disabled by default. It uses
-`@encrypt.xyz/pre-alpha-solana-client` only with fixed, non-sensitive demo inputs.
-Adapter mode remains the default; `sdk-prealpha` is explicit demo mode.
-
-```bash
-ENCRYPT_ENABLED=true
-ENCRYPT_CLUSTER=devnet
-ENCRYPT_PRE_ALPHA_ACK=I_UNDERSTAND_ENCRYPT_PRE_ALPHA_IS_NOT_PRODUCTION_PRIVACY
-ENCRYPT_SDK_MODE=sdk-prealpha
-ENCRYPT_SDK_DEMO_ACK=I_UNDERSTAND_ENCRYPT_SDK_PREALPHA_USES_NON_SENSITIVE_DEMO_DATA_ONLY
-ENCRYPT_GRPC_ENDPOINT=pre-alpha-dev-1.encrypt.ika-network.net:443
-ENCRYPT_SOLANA_RPC_URL=https://api.devnet.solana.com
-ENCRYPT_PROGRAM_ID=4ebfzWdKnrnGseuQpezXdG8yCdHqwQ1SSBHD3bWArND8
-ENCRYPT_NETWORK_ENCRYPTION_PUBLIC_KEY=<Encrypt pre-alpha network encryption public key>
-ENCRYPT_SDK_STRICT=false
-```
-
-Run the Codespaces CLI demo:
-
-```bash
-pnpm encrypt:sdk-demo
-```
-
-The CLI prints sanitized evidence and writes `.tmp/encrypt-sdk-demo-evidence.json`.
-The file is ignored by git and must not contain raw strategy payloads or secrets.
-
-Additional SDK demo API:
-
-- `POST /api/v1/encrypt/sdk-demo/create-input`
-- `GET /api/v1/encrypt/sdk-demo/evidence`
-
-This proves a controlled Encrypt pre-alpha SDK touchpoint. It does not prove production privacy:
-`productionPrivacyReady=false` and `realEncryption=false` remain explicit.
-Live PUSD execution, signing, `sendTransaction`, and Ika remain disabled.
-
-See `docs/PHASE_ENCRYPT_2A_SDK_PREALPHA_SPIKE.md` and
-`docs/PHASE_ENCRYPT_2B_DEVNET_SDK_DEMO.md`.
-
-## Hackathon Demo Flow
-
-Seed deterministic, non-sensitive demo evidence before recording:
-
-```bash
-pnpm demo:seed
-pnpm dev
-```
-
-Then open the ops dashboard:
-
-- `/pusd`: show PUSD as the vault asset, read-only accounting evidence, a dry-run operator intent, and live execution disabled.
-- `/encrypt`: show Encrypt pre-alpha status, `productionPrivacyReady=false`, `realEncryption=false`, ciphertext refs, strategy commitment, and SDK demo evidence.
-
-The seed writes `.tmp/demo-evidence.json`, which is ignored by git. It does not
-create orders, sign transactions, call `sendTransaction`, enable Ika, or claim
-production privacy. See `docs/DEMO_VIDEO_SCRIPT.md` for the 60-second and
-90-second narration.
-
-The current in-repo vault profile is:
-
-- Vault: `Apex USDC Delta-Neutral Carry Vault`
-- Strategy: `Apex USDC Delta-Neutral Carry`
-- Base asset: `USDC`
-- Tenor: 3-month rolling lock
-- Reassessment cadence: every 3 months
-- Target APY floor: `10%`
-
-## Protocol
-
-Sentinel Apex is designed around one constrained carry product:
-
-- Capital is modeled as a USDC vault with depositor records, deposit lots, lock
-  expiry, redemption eligibility, and share accounting.
-- Strategy policy is explicit and fails closed when the product drifts outside
-  the allowed Build-A-Bear posture.
-- Carry deployment is gated by runtime health, risk checks, venue capability,
-  promotion/readiness evidence, and operator approval.
-- Treasury and allocator logic remain separate from carry deployment so capital
-  routing, execution, and recovery are auditable.
-
-### Strategy Constraints
-
-- Allowed yield profile: delta-neutral carry / basis-style funding capture
-- Disallowed yield sources: DEX LP, junior tranche, insurance pool, circular
-  stable-yield dependency
-- Leverage metadata must be explicit when leverage is present
-- Unsafe looping below health rate `1.05` on non-hardcoded oracle dependencies
-  is blocked
-
-## System Surfaces
-
-### Applications
-
-- `apps/api`: authenticated control-plane and read API
-- `apps/runtime-worker`: scheduled runtime execution and command processing
-- `apps/ops-dashboard`: internal operator dashboard
-
-### Core Packages
-
-- `packages/runtime`: persistence, orchestration, reconciliation, worker state
-- `packages/carry`: strategy policy, opportunity detection, controlled execution
-  planning
-- `packages/strategy-engine`: signal pipeline and intent generation
-- `packages/risk-engine`: risk checks and circuit-breaker logic
-- `packages/allocator`: sleeve budgeting and rebalance planning
-- `packages/treasury`: treasury policy and execution planning
-- `packages/venue-adapters`: simulated, read-only, and narrow real-execution
-  connectors
-- `packages/db`: schema, migrations, and DB client
-
-## Vault Model
-
-The protocol now exposes first-class internal vault state:
-
-- vault summary
-- depositor registry
-- deposit lots with mint price and lock expiry
-- redemption requests with eligibility timing
-
-Primary authenticated vault routes:
-
-- `GET /api/v1/vault`
-- `GET /api/v1/vault/depositors`
-- `GET /api/v1/vault/deposits`
-- `GET /api/v1/vault/redemptions`
-- `POST /api/v1/vault/deposits`
-- `POST /api/v1/vault/redemptions`
-
-Vault accounting is internal and operator-managed. This repo does not claim
-on-chain vault token issuance.
-
-## Execution Model
-
-**Jupiter Perpetuals is the current execution venue for live devnet demonstrations.**
-
-Dry-run is the default mode. Live execution is available on Jupiter Perps devnet.
-
-Current execution scope:
-
-- **Jupiter Perpetuals devnet** - BTC-PERP, ETH-PERP, SOL-PERP
-- **USDC collateral** - Matches vault base asset requirement
-- Backtesting framework for strategy validation
-- Multi-leg carry orchestration framework
-
-Blocked execution scope:
-
-- Mainnet execution (devnet only for hackathon)
-- CEX execution connectors
-
-## API Domains
-
-The API is organized by protocol concern:
-
-- `/api/v1/portfolio`: portfolio summary, snapshots, PnL
-- `/api/v1/vault`: vault accounting and redemption timing
-- `/api/v1/carry`: strategy profile, recommendations, actions, executions
-- `/api/v1/treasury`: treasury policy, actions, executions
-- `/api/v1/allocator`: allocator decisions, targets, rebalance workflow
-- `/api/v1/venues`: venue truth, readiness, comparison, promotion
-- `/api/v1/runtime`: runtime state, commands, reconciliation, mismatch workflows
-- `/api/v1/control`: kill switch and mode controls
-
-## Local Development
-
-Minimum environment:
-
-```bash
-export NODE_ENV=development
-export DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_apex
-export API_SECRET_KEY=replace-with-at-least-32-characters
-export OPS_AUTH_SHARED_SECRET=replace-with-at-least-32-characters
-export EXECUTION_MODE=dry-run
-export FEATURE_FLAG_LIVE_EXECUTION=false
-export SOLANA_RPC_ENDPOINT=https://api.mainnet-beta.solana.com
-export JUPITER_PERPS_ENABLED=true
-export JUPITER_PERPS_NETWORK=devnet
-export JUPITER_PERPS_RPC_ENDPOINT=https://api.devnet.solana.com
-export RUNTIME_WORKER_CYCLE_INTERVAL_MS=60000
-```
-
-**Jupiter Perps devnet execution:** Set `EXECUTION_MODE=live` and `FEATURE_FLAG_LIVE_EXECUTION=true` to enable real execution on Jupiter Perps devnet.
-
-Bootstrap the local stack:
-
-```bash
-pnpm db:start
-pnpm db:health
-pnpm db:migrate
-pnpm --filter @sentinel-apex/api dev
-pnpm --filter @sentinel-apex/runtime-worker dev
-PORT=3100 pnpm --filter @sentinel-apex/ops-dashboard dev
-```
-
-Run one deterministic cycle directly:
-
-```bash
-pnpm --filter @sentinel-apex/runtime dev:run-cycle
-```
-
-Rebuild projections:
-
-```bash
-pnpm --filter @sentinel-apex/runtime dev:rebuild-projections
-```
-
-## Validation
-
-Canonical validation commands:
-
-```bash
-pnpm build
-pnpm typecheck
-pnpm lint
-pnpm test
-```
-
-Preferred repo-wide entrypoints:
-
-```bash
-pnpm validate
-pnpm validate:ci
-pnpm release:check
-```
-
-## Current Boundaries
-
-Sentinel Apex is materially stronger than a mockup, but it is not a complete
-production deployment stack yet.
-
-### Implemented (Phase R1 - Ranger + Vault Foundation)
-
-- ✅ **Ranger integration layer** (`packages/ranger`) with:
-  - Vault client for lifecycle operations (create, deposit, withdraw, NAV)
-  - Strategy adapter for delta-neutral carry strategies
-  - Simulated mode for development/testing
-  - Full TypeScript types and interfaces
-  - Comprehensive test coverage (19 tests passing)
-- ✅ **On-chain vault database schema** for:
-  - Vault addresses and program IDs
-  - On-chain deposit/withdrawal receipts
-  - Ranger integration state tracking
-  - Submission verification tracking
-
-### Implemented (Phase R2 - Execution + Multi-Leg Orchestration)
-
-- ✅ **Multi-leg carry orchestration** (`packages/carry`):
-  - Multi-leg plan creation with dependency management
-  - Leg sequencing and execution ordering
-  - Hedge deviation tracking for delta-neutral positions
-  - Partial failure handling (continue/rollback/wait)
-  - Database schema for plan/leg persistence
-  - 82 tests passing
-- ✅ **Execution guardrails** (`packages/risk-engine`):
-  - Kill switch for emergency execution halt
-  - Circuit breaker for failure tolerance
-  - Notional limits (max/min, daily, position)
-  - Concurrency limits
-  - Partial fill policies
-  - Scoped configurations (global/venue/sleeve/strategy)
-  - 146 tests passing
-- ✅ **Database schema** (Migration 0027):
-  - Multi-leg plan and leg execution tables
-  - Hedge state tracking
-  - Guardrail configuration and violations
-
-### Implemented (Phase R3 - Submission Dossier + Performance Reporting)
-
-- ✅ **CEX verification pipeline** (`packages/cex-verification`):
-  - CSV import for Binance, OKX, Bybit, Coinbase trade history
-  - PnL calculation with FIFO, LIFO, and Average Cost methods
-  - Read-only API verification (OKX implemented)
-  - Cross-validation with internal signals
-  - 26 tests passing
-- ✅ **Submission dossier system** (`packages/runtime`):
-  - Vault identity and on-chain address tracking
-  - Strategy configuration and eligibility evidence
-  - Execution evidence with real vs simulated labeling
-  - Multi-leg execution evidence with hedge state
-  - Completeness assessment with category breakdown
-  - Missing evidence tracking (truthful about gaps)
-  - 66 tests passing
-- ✅ **Performance reports** (`packages/runtime`):
-  - Date-range configurable report generation
-  - JSON (machine-readable) and Markdown (human-readable) formats
-  - Execution summary with notional and APY
-  - Multi-leg execution summary with completion rates
-  - Hedge deviation statistics
-  - Explicit truth labels (devnet/simulated/backtest)
-  - Missing data visibility (never hidden)
-- ✅ **API endpoints** (`apps/api`):
-  - `GET /api/v1/submission` - Dossier summary
-  - `GET /api/v1/submission/completeness` - Completeness assessment
-  - `POST /api/v1/submission/report` - Generate performance report
-  - `GET /api/v1/submission/reports` - List reports
-  - `GET /api/v1/submission/report/:id` - Get specific report
-  - `POST /api/v1/submission/multi-leg-evidence` - Record ML evidence
-  - `GET /api/v1/submission/export` - Export judge bundle
-- ✅ **Dashboard** (`apps/ops-dashboard`):
-  - Submission profile page with readiness checks
-  - Supported/blocked scope visibility
-  - Verification evidence panel
-  - Export bundle artifact checklist
-- ✅ **Database schema** (Migration 0028):
-  - Performance reports table with metadata
-  - Multi-leg evidence summary table
-  - Submission evidence categories reference data
-
-### Implemented (Phase R4 - Backtesting + Final Polish)
-
-- ✅ **Backtesting framework** (`packages/backtest`):
-  - Historical simulation for delta-neutral carry strategies
-  - Deterministic run configuration
-  - Funding rate and basis replay
-  - Performance metrics (return, drawdown, Sharpe)
-  - Trade statistics and funding capture analysis
-  - Truthful labeling as "historical_simulation"
-  - Exportable reports (JSON, Markdown, CSV)
-  - Integrated with submission evidence system
-  - API endpoint: `POST /api/v1/backtest/run`
-- ✅ **Devnet demo runbook** (`docs/runbooks/hackathon-demo-runbook.md`):
-  - Step-by-step reproducible demo flow
-  - Prerequisite checklist
-  - Environment validation steps
-  - Expected outcome artifacts
-  - Troubleshooting guide
-- ✅ **Final truthfulness sweep**:
-  - All docs audited for honest claims
-  - No mainnet execution claimed
-  - Backtests clearly labeled as simulations
-  - Devnet status explicitly stated
-
-### Blockers / Not Yet Available
-
-- 🔴 **Ranger SDK integration** - External blocker: Ranger SDK/program IDs not publicly available
-  - Integration boundary implemented and ready
-  - Simulated mode available for development
-- 🟡 **Live execution scope remains narrow** - Jupiter Perps devnet only
-  - No mainnet execution path yet
-  - No spot hedge execution path yet
-- ✅ **Multi-leg runtime integration** - Complete as of Phase R3 Part 4
-- 🔴 **CEX execution adapters** - Not implemented (optional for submission)
-- 🔴 **On-chain vault program** - Needs Ranger SDK or custom Solana program
-
-## Hackathon Submission Workflow
-
-The repo now supports producing credible hackathon submission packages:
-
-### For Operators
-
-1. **Configure vault addresses** via `POST /api/v1/submission`
-2. **Run backtests** to validate strategy performance
-3. **Check completeness** via `GET /api/v1/submission/completeness`
-4. **Generate performance report** via `POST /api/v1/submission/report`
-5. **Record strategy evidence** (backtest results, simulation data)
-6. **Export submission bundle** via `GET /api/v1/submission/export`
-
-### For Judges
-
-The export bundle includes:
-- Vault and wallet addresses with Solscan links
-- Execution evidence with transaction references
-- Performance report with truthful labels
-- Multi-leg proof with hedge deviation
-- Artifact checklist with pass/warn/fail status
-
-### Truthfulness Guarantees
-
-Every report explicitly labels:
-- **Simulated executions**: Mock venue execution
-- **Backtests**: Historical simulation
-- **Missing data**: Explicitly listed, never hidden
-- **Live execution status**: Narrow Jupiter Perps devnet scope only
-
-See `docs/runbooks/submission-dossier.md` for detailed workflow.
-- 🔴 **Historical backtest package** - Not implemented
-
-### Current Execution Capability
-
-**Simulation Only**:
-- All execution is dry-run / simulated
-- Backtesting framework for historical simulation
-- No live venue adapters configured
-
-**Infrastructure Ready**:
-- Multi-leg orchestration types and logic
-- Execution guardrails with kill switch
-- Database schema for coordination
-
-Use the repo as an honest protocol/control-plane implementation with explicit
-boundaries, not as a claim that unsupported scope already exists.
-
-See [Phase R1 Architecture](/docs/architecture/phase-r1-ranger-vault-foundation.md) and [Phase R2 Completion Report](/docs/audit/phase-r2-completion-report.md) for details.
+Sentinel Apex is an operator-run control plane for vault accounting, risk-managed
+strategy operations, treasury workflows, allocator decisions, venue readiness,
+and submission evidence. The system is built as a TypeScript monorepo with a
+Fastify API, a Next.js operator dashboard, a runtime worker, Drizzle/Postgres
+persistence, and domain packages for carry, treasury, risk, allocation, venue
+adapters, PUSD, and Encrypt pre-alpha strategy-state evidence.
+
+The current public demo is intentionally dry-run only. It supports PUSD
+accounting and operator intents, Encrypt pre-alpha strategy-state workflows, and
+auditable runtime evidence. It does not enable PUSD live execution, signing,
+`sendTransaction`, mainnet trading, Ika, production privacy, or real encryption
+claims.
+
+## Product Overview
+
+Sentinel Apex gives an operator a single system for monitoring and controlling a
+vault strategy lifecycle:
+
+- Account for vault assets, deposit lots, redemption timing, treasury state, and
+  operator intents.
+- Evaluate carry, treasury, allocator, and risk decisions before any action is
+  considered executable.
+- Keep execution posture explicit with dry-run, simulated, read-only, blocked,
+  and evidence-only states.
+- Track venue readiness, connector promotion, reconciliation findings, mismatch
+  recovery, and operational escalations.
+- Produce submission-ready evidence with clear truth labels for simulated runs,
+  backtests, missing data, and blocked production scope.
+- Surface all major workflows through an internal operator dashboard and
+  authenticated API.
+
+## Core Products
+
+### PUSD Vault and Treasury State
+
+PUSD is implemented as a first-class vault base asset for the current demo. The
+PUSD product supports accounting, read-only balance checks, treasury state,
+operator intent capture, runtime/API integration, and dashboard visibility.
+
+Features:
+
+- PUSD base-asset configuration through validated environment settings.
+- Vault summary, treasury state, snapshots, and read-only token balance checks.
+- Missing token accounts treated as zero balance rather than runtime crashes.
+- Deposit, withdrawal, and rebalance intent workflows.
+- Operator-authenticated PUSD mutations.
+- Audit records for operator intents.
+- Runtime and dashboard evidence showing live execution is disabled.
+- Safety rejection for private keys, seed phrases, mnemonics, wallet JSON, and
+  signing material in PUSD API payloads.
+
+Current boundary:
+
+- PUSD live execution is disabled.
+- PUSD does not submit orders.
+- PUSD does not sign transactions.
+- PUSD does not call `sendTransaction`.
+- Jupiter Perps is disabled in PUSD mode.
+
+### Encrypt Pre-Alpha Strategy State
+
+Encrypt is integrated as a pre-alpha strategy-state evidence layer. It is used to
+represent a controlled public/private split for strategy-state records without
+claiming production confidentiality.
+
+Features:
+
+- Encrypt enablement is explicit and defaults off.
+- Adapter mode is the default SDK mode.
+- SDK pre-alpha mode requires explicit acknowledgement flags.
+- Strategy-state creation and update workflows.
+- Reveal request and audit surfaces.
+- Deterministic non-sensitive SDK demo inputs.
+- Sanitized SDK demo evidence for success and failure paths.
+- Dashboard pages for Encrypt status, strategy-state evidence, public fields,
+  private-state references, and safety posture.
+- API guards that reject arbitrary plaintext production strategy payloads and
+  forbidden signing/key material fields.
+
+Current boundary:
+
+- `productionPrivacyReady=false`.
+- `realEncryption=false`.
+- SDK demo data is deterministic and non-sensitive.
+- Encrypt does not enable PUSD movement, signing, `sendTransaction`, live
+  trading, or Ika.
+
+### Operator Dashboard
+
+The operator dashboard is the primary control surface for reviewing strategy
+state, vault status, allocator decisions, treasury actions, venue posture,
+submission evidence, and runtime health.
+
+Features:
+
+- PUSD vault page with accounting state, snapshots, safety indicators, and
+  operator intents.
+- Encrypt page with pre-alpha readiness, strategy-state evidence, and SDK demo
+  status.
+- Runtime overview with cycle state, commands, health, pause/resume/halt
+  controls, reconciliation, and mismatch workflows.
+- Allocator pages for target allocations, rebalance proposals, recovery
+  candidates, escalation handling, and approval workflows.
+- Treasury pages for policy, action recommendations, approvals, execution
+  history, and venue readiness.
+- Carry pages for strategy profile, recommendations, actions, executions, and
+  venue state.
+- Venue pages for inventory, readiness, promotion workflow, snapshots, and
+  internal-versus-external truth comparisons.
+- Submission pages for readiness checks, evidence categories, export bundles,
+  performance reports, and judge-facing completeness.
+- Authenticated operator sessions with HttpOnly cookies.
+- Server-side API proxy signing for protected backend operations.
+- Production Origin/Referer checks on mutating dashboard route handlers.
+- Demo login rate limiting by email and IP.
+
+### Backend API
+
+The API is the authenticated backend for dashboard, runtime, vault, treasury,
+allocator, submission, carry, venue, and Encrypt/PUSD workflows.
+
+API domains:
+
+- `/api/v1/health` and `/readyz`: service and runtime readiness.
+- `/api/v1/pusd`: PUSD vault state, treasury state, snapshots, and operator
+  intents.
+- `/api/v1/encrypt`: Encrypt pre-alpha status, strategy-state records, reveal
+  requests, audits, and SDK demo evidence.
+- `/api/v1/vault`: internal vault accounting, depositors, deposit lots, and
+  redemption requests.
+- `/api/v1/portfolio`: portfolio summary, snapshots, and PnL surfaces.
+- `/api/v1/runtime`: runtime state, cycles, commands, reconciliation, mismatch
+  recovery, and operational history.
+- `/api/v1/control`: pause, resume, halt, and mode controls.
+- `/api/v1/allocator`: allocator decisions, targets, proposals, approvals,
+  recovery, and escalations.
+- `/api/v1/treasury`: treasury policy, actions, approvals, executions, and venue
+  readiness.
+- `/api/v1/carry`: carry strategy profile, recommendations, actions,
+  executions, and evidence.
+- `/api/v1/venues`: venue inventory, readiness, connector promotion, snapshots,
+  and comparison data.
+- `/api/v1/submission`: submission dossier, completeness, reports, evidence,
+  and export bundles.
+- `/api/v1/backtest`: historical simulation entrypoints for strategy evidence.
+
+Security posture:
+
+- API key protection for backend routes.
+- Operator HMAC authorization for sensitive operator actions.
+- Production CORS fail-closed behavior.
+- Runtime validation on critical request bodies.
+- Explicit rejection of forbidden signing material in PUSD and Encrypt paths.
+- Safe error handling with correlation identifiers.
+
+### Runtime Worker and Control Plane
+
+The runtime package and worker coordinate scheduled cycles, command processing,
+strategy evidence, reconciliation, mismatch handling, and projection rebuilds.
+
+Features:
+
+- Runtime cycle orchestration.
+- Worker metadata and health state.
+- Pause, resume, halt, and command lifecycle handling.
+- Carry evaluation and controlled execution planning.
+- Treasury evaluation and action tracking.
+- Allocator target calculation and rebalance proposal lifecycle.
+- PUSD mode support without live order submission.
+- Encrypt pre-alpha state creation during configured demo flows.
+- Reconciliation runs, findings, mismatch records, remediation attempts, and
+  escalation workflow.
+- Idempotent projection rebuilds from persisted records.
+- Explicit execution posture labels for simulated, dry-run, blocked, and
+  evidence-only states.
+
+Current deployment stance:
+
+- The API can run without a separate worker for the public demo.
+- The worker is deployable as a separate background service when continuous
+  scheduled cycles are required.
+- The worker should remain dry-run for the PUSD/Encrypt demo.
+
+### Vault Accounting
+
+Sentinel Apex includes internal vault accounting for operator-managed strategy
+evidence and protocol state.
+
+Features:
+
+- Vault summary and asset denomination.
+- Depositor registry.
+- Deposit lots with mint price and lock expiry.
+- Redemption requests with eligibility timing.
+- Share accounting.
+- Protocol vault state for submission evidence.
+
+Current boundary:
+
+- The repo does not claim on-chain vault token issuance for the current demo.
+- Vault accounting is internal and operator-managed.
+
+### Carry Strategy Product
+
+The carry product models a constrained delta-neutral carry strategy and its
+operational checks.
+
+Features:
+
+- Strategy profile and policy enforcement.
+- Opportunity detection and recommendation generation.
+- Multi-leg execution planning model.
+- Hedge deviation tracking.
+- Carry action approval workflow.
+- Execution history with truth labels.
+- Strategy constraints for yield source, tenor, leverage metadata, and unsafe
+  looping behavior.
+
+Allowed strategy profile:
+
+- Delta-neutral carry and basis-style funding capture.
+- Explicit strategy policy and eligibility checks.
+- Dry-run and simulation evidence for public demo workflows.
+
+Blocked strategy profile:
+
+- DEX LP yield claims.
+- Junior tranche yield claims.
+- Insurance pool yield claims.
+- Circular stable-yield dependencies.
+- Unsafe looping leverage on non-hardcoded oracle dependencies.
+
+### Risk Engine
+
+The risk engine evaluates whether proposed actions fit the system's configured
+limits and operating posture.
+
+Features:
+
+- Gross and net exposure checks.
+- Venue and asset concentration checks.
+- Notional limits.
+- Circuit-breaker and halt controls.
+- Failure tolerance checks.
+- Risk breach records.
+- Risk assessment evidence for runtime decisions.
+
+### Allocator
+
+The allocator manages sleeve targets, proposed rebalances, approvals, recovery
+states, and operational escalations.
+
+Features:
+
+- Target allocation modeling.
+- Allocation history.
+- Rebalance proposals and approval workflow.
+- Bundle recovery candidates.
+- Manual resolution paths for partially applied plans.
+- Escalation ownership, acknowledgement, review, and closure workflow.
+
+### Treasury
+
+The treasury module keeps capital routing, treasury policy, and execution
+planning separate from strategy generation.
+
+Features:
+
+- Treasury summary and policy surfaces.
+- Treasury action recommendations.
+- Operator approval workflow.
+- Execution history.
+- Venue readiness and blocked execution reasons.
+- PUSD treasury state integration.
+
+### Venue Readiness and Adapters
+
+Venue adapters represent simulated, read-only, and narrowly scoped connector
+capabilities while keeping live execution claims explicit.
+
+Features:
+
+- Venue inventory.
+- Connector readiness.
+- Real-versus-internal truth comparison.
+- Read-only snapshots where supported.
+- Connector promotion and suspension workflow.
+- Reconciliation evidence.
+- Simulated venue execution for tests and demo evidence.
+
+Current boundary:
+
+- PUSD mode does not select Jupiter Perps.
+- Ranger and Jupiter private-key environment variables must remain unset for the
+  PUSD/Encrypt demo.
+- CEX execution adapters are not part of the current demo scope.
+
+### Submission and Evidence
+
+Sentinel Apex includes a submission dossier system designed to make demo and
+hackathon evidence explicit rather than implied.
+
+Features:
+
+- Submission readiness profile.
+- Evidence category tracking.
+- Completeness assessment.
+- Performance report generation.
+- Backtest evidence.
+- Multi-leg evidence summaries.
+- Export bundle checklist.
+- Truth labels for simulated runs, dry-run posture, missing data, and blocked
+  production scope.
+
+### Backtesting
+
+The backtesting package provides historical simulation evidence for strategy
+evaluation.
+
+Features:
+
+- Deterministic run configuration.
+- Funding and basis replay.
+- Return, drawdown, and Sharpe-style metrics.
+- Trade statistics.
+- Funding capture analysis.
+- JSON, Markdown, and CSV-style report outputs.
+- Explicit historical-simulation truth labels.
+
+## System Architecture
+
+Applications:
+
+- `apps/api`: authenticated Fastify backend API.
+- `apps/ops-dashboard`: Next.js operator dashboard.
+- `apps/runtime-worker`: background runtime worker for scheduled cycles.
+
+Core packages:
+
+- `packages/config`: environment validation and configuration.
+- `packages/db`: Drizzle schema, migrations, and database access.
+- `packages/runtime`: control plane, runtime state, projection store, and
+  orchestration.
+- `packages/venue-adapters`: simulated, read-only, and narrow real connector
+  adapters.
+- `packages/risk-engine`: risk checks, limits, and guardrails.
+- `packages/carry`: carry strategy policy and planning.
+- `packages/allocator`: allocation and rebalance planning.
+- `packages/treasury`: treasury policy and action planning.
+- `packages/ranger`: Ranger integration boundary and simulated client.
+- `packages/observability`: structured logging and redaction helpers.
+- `packages/shared`: shared deployment truth and utility helpers.
+- `packages/domain`: domain event types and factories.
+- `packages/backtest`: historical simulation and reporting.
+- `packages/cex-verification`: import, verification, and reporting helpers for
+  CEX evidence.
+- `packages/strategy-engine`: strategy signal and intent pipeline.
+- `packages/execution`: order-management and reconciliation primitives.
+
+## Current Product Truth
+
+Implemented for the current public demo:
+
+- PUSD as a first-class vault/base asset.
+- PUSD accounting, read-only token balance checks, treasury state, operator
+  intents, API/runtime/dashboard integration.
+- Encrypt pre-alpha strategy-state integration.
+- Optional Encrypt SDK demo with deterministic non-sensitive inputs.
+- Operator dashboard and authenticated API.
+- Runtime evidence, risk checks, allocator workflows, treasury workflows, venue
+  readiness, reconciliation, submission dossier, and backtesting.
+
+Not implemented or intentionally disabled for the current public demo:
+
+- PUSD live execution.
+- Signing.
+- `sendTransaction`.
+- Live trading.
+- Ika.
+- Production privacy.
+- Real encryption claims.
+- Mainnet execution.
+- CEX execution adapters.
+
+Sentinel Apex should be evaluated as a dry-run, operator-controlled protocol and
+evidence system with strict safety boundaries, not as a production live-trading
+deployment.

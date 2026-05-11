@@ -133,22 +133,19 @@
 
 ### 6. CORS Issues
 
-**Status:** ⚠️ LOW RISK
+**Status:** Fixed for public demo deployment
 
 **Evidence:**
 ```typescript
-// apps/api/src/app.ts:38-42
-await app.register(cors, {
-  origin: process.env['CORS_ORIGIN'] ?? true,  // true = allow all
-  methods: ['GET', 'POST', 'OPTIONS'],
-});
+// apps/api/src/app.ts
+origin: parseCorsOrigins(),
 ```
 
-**Risk:** Defaults to permissive in development.  
-**Mitigation:** Production deployments set `CORS_ORIGIN` explicitly.  
-**Action:** Documented in `.env.example`.
+**Risk:** Production API startup now fails closed if `CORS_ORIGIN` is missing, wildcard, or invalid.  
+**Mitigation:** Production deployments must set `CORS_ORIGIN` to the exact Vercel dashboard origin.  
+**Action:** Documented in `.env.example` and deployment checklists.
 
-**Verdict:** Acceptable for devnet submission. Production hardening tracked.
+**Verdict:** Acceptable for dry-run public demo deployment.
 
 ---
 

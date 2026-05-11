@@ -35,6 +35,29 @@ export function getOpsAuthSharedSecret(): string {
   return getRequiredEnv('OPS_AUTH_SHARED_SECRET');
 }
 
+export function getDashboardOrigin(fallbackOrigin: string): string {
+  const configured = getOptionalEnv('OPS_DASHBOARD_ORIGIN');
+  if (configured === null) {
+    if (isProductionEnv()) {
+      throw new Error('OPS_DASHBOARD_ORIGIN is required in production.');
+    }
+    return fallbackOrigin;
+  }
+
+  const normalized = configured.replace(/\/$/, '');
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.origin !== normalized) {
+      throw new Error('origin must not include a path, query, or fragment');
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`OPS_DASHBOARD_ORIGIN is invalid: ${message}`);
+  }
+
+  return normalized;
+}
+
 export function getSessionCookieName(): string {
   return getOptionalEnv('OPS_DASHBOARD_SESSION_COOKIE_NAME') ?? 'sentinel_apex_ops_session';
 }

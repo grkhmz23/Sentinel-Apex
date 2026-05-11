@@ -5,6 +5,7 @@ import {
   getDashboardSession,
 } from '../../../../src/lib/auth.server';
 import { getDashboardApiBaseUrl, getDashboardApiKey } from '../../../../src/lib/env.server';
+import { rejectInvalidMutatingOrigin } from '../../../../src/lib/request-security.server';
 
 import type { NextRequest } from 'next/server';
 
@@ -65,5 +66,9 @@ export async function POST(
   request: NextRequest,
   context: { params: { path: string[] } },
 ): Promise<NextResponse> {
+  const rejected = rejectInvalidMutatingOrigin(request);
+  if (rejected !== null) {
+    return rejected;
+  }
   return proxyRequest(request, context.params.path);
 }

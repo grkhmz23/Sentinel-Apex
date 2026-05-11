@@ -10,6 +10,7 @@ Set these variables before running the app:
 export OPS_DASHBOARD_API_BASE_URL=http://localhost:3000
 export OPS_DASHBOARD_API_KEY=replace-with-the-runtime-api-key
 export OPS_AUTH_SHARED_SECRET=replace-with-the-operator-shared-secret
+export OPS_DASHBOARD_ORIGIN=http://localhost:3001
 export DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel_apex
 ```
 
@@ -18,12 +19,26 @@ Optional:
 ```bash
 export PORT=3100
 export NEXT_PUBLIC_ENVIRONMENT_LABEL="staging demo"
-export NEXT_PUBLIC_EXECUTION_BADGE="devnet only"
+export NEXT_PUBLIC_EXECUTION_BADGE="dry-run only"
 ```
 
 `OPS_DASHBOARD_API_KEY` must match the backend `API_SECRET_KEY`.
 
 The dashboard remains frontend-only in deployment shape, but the current auth/session model still uses server-side DB access from Next.js. That is preserved intentionally for this demo/staging deployment.
+
+## Operator Bootstrap
+
+Use the TypeScript bootstrap only as an explicit one-time operation:
+
+```bash
+BOOTSTRAP_OPERATOR_ENABLED=true \
+BOOTSTRAP_OPERATOR_EMAIL=operator@example.com \
+BOOTSTRAP_OPERATOR_PASSWORD='use-a-generated-password' \
+DATABASE_URL=postgresql://... \
+pnpm --filter @sentinel-apex/ops-dashboard exec tsx ../../scripts/bootstrap-operator.ts
+```
+
+The script never prints the plaintext password or generated hash. Rotate any operator account created by older bootstrap scripts that used hardcoded credentials.
 
 ## Local Development
 

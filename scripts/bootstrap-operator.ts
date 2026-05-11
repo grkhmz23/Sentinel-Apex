@@ -2,13 +2,20 @@
 // =============================================================================
 // Bootstrap Operator - One-time setup script
 // =============================================================================
-// Run this script to create the initial operator account:
-//   npx tsx scripts/bootstrap-operator.ts
+// This script is disabled unless BOOTSTRAP_OPERATOR_ENABLED=true.
+// Required env:
+//   DATABASE_URL
+//   BOOTSTRAP_OPERATOR_ENABLED=true
+//   BOOTSTRAP_OPERATOR_EMAIL
+//   BOOTSTRAP_OPERATOR_PASSWORD
 // =============================================================================
 
 import { createHash, randomBytes, scryptSync } from 'node:crypto';
-import postgres from 'postgres';
+
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+
 import * as schema from '../packages/db/src/schema/index.js';
 
 const PASSWORD_PREFIX = 'scrypt';
@@ -16,79 +23,107 @@ const PASSWORD_COST = 16_384;
 const PASSWORD_BLOCK_SIZE = 8;
 const PASSWORD_PARALLELIZATION = 1;
 const PASSWORD_KEY_LENGTH = 64;
+const ENABLED_VALUE = 'true';
 
 function hashPassword(password: string): string {
   const salt = randomBytes(32);
   const saltHex = salt.toString('hex');
-  
+
   const derived = scryptSync(password, salt, PASSWORD_KEY_LENGTH, {
     N: PASSWORD_COST,
     r: PASSWORD_BLOCK_SIZE,
     p: PASSWORD_PARALLELIZATION,
   });
-  
+
   return `${PASSWORD_PREFIX}$${PASSWORD_COST}$${PASSWORD_BLOCK_SIZE}$${PASSWORD_PARALLELIZATION}$${saltHex}$${derived.toString('hex')}`;
 }
 
-async function bootstrap() {
-  const databaseUrl = process.env['DATABASE_URL'];
-  
-  if (!databaseUrl) {
-    console.error('ERROR: DATABASE_URL environment variable is required');
-    process.exit(1);
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (value === undefined || value === '') {
+    throw new Error(`${name} environment variable is required.`);
   }
+  return value;
+}
 
-  const email = 'gorkhmazb23@gmail.com';
-  const password = 'Leon070124!!';
-  const operatorId = 'operator-1';
-  const displayName = 'Operator';
-  
+function assertBootstrapEnabled(): void {
+  if (process.env['BOOTSTRAP_OPERATOR_ENABLED'] !== ENABLED_VALUE) {
+    throw new Error('Operator bootstrap is disabled. Set BOOTSTRAP_OPERATOR_ENABLED=true to run it intentionally.');
+  }
+}
+
+function normalizeEmail(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized.includes('@') || normalized.startsWith('@') || normalized.endsWith('@')) {
+    throw new Error('BOOTSTRAP_OPERATOR_EMAIL must be a valid email address.');
+  }
+  return normalized;
+}
+
+function assertSafePassword(password: string): void {
+  if (password.length < 12) {
+    throw new Error('BOOTSTRAP_OPERATOR_PASSWORD must be at least 12 characters.');
+  }
+}
+
+function operatorIdForEmail(email: string): string {
+  const digest = createHash('sha256').update(email).digest('hex').slice(0, 12);
+  return `operator-${digest}`;
+}
+
+function displayNameForEmail(email: string): string {
+  return email.split('@')[0] ?? 'operator';
+}
+
+async function bootstrap(): Promise<void> {
+  assertBootstrapEnabled();
+
+  const databaseUrl = requiredEnv('DATABASE_URL');
+  const email = normalizeEmail(requiredEnv('BOOTSTRAP_OPERATOR_EMAIL'));
+  const password = requiredEnv('BOOTSTRAP_OPERATOR_PASSWORD');
+  assertSafePassword(password);
+
+  const operatorId = operatorIdForEmail(email);
+  const displayName = displayNameForEmail(email);
+
   console.log('Connecting to database...');
   const client = postgres(databaseUrl);
   const db = drizzle(client, { schema });
-  
+
   try {
-    // Check if operator already exists
     const existing = await db.query.opsOperators.findFirst({
-      where: (ops, { eq }) => eq(ops.email, email),
+      where: (ops, { eq: equals }) => equals(ops.email, email),
     });
-    
+
+    const passwordHash = hashPassword(password);
+
     if (existing) {
-      console.log(`Operator ${email} already exists. Updating password...`);
-      
-      await db.update(schema.opsOperators)
+      await db
+        .update(schema.opsOperators)
         .set({
-          passwordHash: hashPassword(password),
+          passwordHash,
           active: true,
           updatedAt: new Date(),
         })
-        .where(schema.opsOperators.id.equals(existing.id));
-      
-      console.log('✅ Password updated successfully!');
+        .where(eq(schema.opsOperators.id, existing.id));
+
+      console.log(`Operator ${email} updated. Password was not printed.`);
     } else {
-      console.log(`Creating operator ${email}...`);
-      
       await db.insert(schema.opsOperators).values({
         operatorId,
         email,
         displayName,
-        passwordHash: hashPassword(password),
+        passwordHash,
         role: 'operator',
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      
-      console.log('✅ Operator created successfully!');
+
+      console.log(`Operator ${email} created. Password was not printed.`);
     }
-    
-    console.log('');
-    console.log('Login credentials:');
-    console.log(`  Email: ${email}`);
-    console.log(`  Password: ${password}`);
-    console.log('');
-    console.log('You can now sign in at: https://www.sentinelapex.com/sign-in');
-    
+
+    console.log('Rotate any operator previously created by older bootstrap scripts with hardcoded credentials.');
   } catch (error) {
     console.error('ERROR:', error);
     process.exit(1);
@@ -97,4 +132,7 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  console.error('ERROR:', error);
+  process.exit(1);
+});
